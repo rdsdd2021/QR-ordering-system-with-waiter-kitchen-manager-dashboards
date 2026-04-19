@@ -1,0 +1,142 @@
+"use client";
+
+import { RefreshCw, Wifi, WifiOff, LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import OrderCard from "@/components/kitchen/OrderCard";
+import { useKitchenOrders } from "@/hooks/useKitchenOrders";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import type { Restaurant } from "@/types/database";
+
+type Props = {
+  restaurant: Restaurant;
+};
+
+// Status columns shown on the board — left to right = workflow order
+// Kitchen flow now ends at 'ready' (waiters handle 'served')
+const COLUMNS = [
+  { status: "pending",   label: "New",       emptyText: "No new orders" },
+  { status: "confirmed", label: "Confirmed", emptyText: "Nothing confirmed" },
+  { status: "preparing", label: "Preparing", emptyText: "Nothing in progress" },
+  { status: "ready",     label: "Ready",     emptyText: "Nothing ready yet" },
+] as const;
+
+function KitchenClientContent({ restaurant }: Props) {
+  const { signOut, profile } = useAuth();
+  const { orders, loading, error, advanceStatus, newOrderIds, refetch } =
+    useKitchenOrders(restaurant.id);
+
+  return (
+    <div className="flex min-h-screen flex-col bg-background">
+      {/* ── Header ──────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div>
+            <h1 className="font-semibold tracking-tight">{restaurant.name}</h1>
+            <p className="text-xs text-muted-foreground">
+              Kitchen Dashboard • {profile?.name}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Real-time connection indicator */}
+            {error ? (
+              <span className="flex items-center gap-1 text-xs text-destructive">
+                <WifiOff className="h-3.5 w-3.5" />
+                Offline
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Wifi className="h-3.5 w-3.5 text-green-500" />
+                Live
+              </span>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refetch}
+              className="h-8 gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </Button>
+
+            <Button variant="outline" size="sm" onClick={signOut} className="h-8">
+              <LogOut className="mr-2 h-3.5 w-3.5" />
+              Sign Out
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Loading skeleton ─────────────────────────────────────────── */}
+      {loading && (
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-muted-foreground animate-pulse">
+            Loading orders…
+          </p>
+        </div>
+      )}
+
+      {/* ── Kanban board ─────────────────────────────────────────────── */}
+      {!loading && (
+        <div className="flex flex-1 gap-3 overflow-x-auto p-4">
+          {COLUMNS.map(({ status, label, emptyText }) => {
+            const col = orders.filter((o) => o.status === status);
+            return (
+              <div
+                key={status}
+                className="flex w-72 shrink-0 flex-col gap-3"
+              >
+                {/* Column header */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    {label}
+                  </p>
+                  {col.length > 0 && (
+                    <span
+                      className={cn(
+                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
+                        status === "pending"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-muted text-muted-foreground"
+                      )}
+                    >
+                      {col.length}
+                    </span>
+                  )}
+                </div>
+
+                {/* Cards */}
+                {col.length === 0 ? (
+                  <div className="flex h-24 items-center justify-center rounded-xl border border-dashed">
+                    <p className="text-xs text-muted-foreground">{emptyText}</p>
+                  </div>
+                ) : (
+                  col.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      order={order}
+                      isNew={newOrderIds.has(order.id)}
+                      onAdvance={advanceStatus}
+                    />
+                  ))
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function KitchenClient({ restaurant }: Props) {
+  return (
+    <ProtectedRoute requiredRole="kitchen" restaurantId={restaurant.id}>
+      <KitchenClientContent restaurant={restaurant} />
+    </ProtectedRoute>
+  );
+}
