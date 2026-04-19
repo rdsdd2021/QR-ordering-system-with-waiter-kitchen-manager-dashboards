@@ -35,13 +35,32 @@ export default function OnboardingPage() {
     e.preventDefault();
     setError(""); setBusy(true);
     const supabase = getSupabaseClient();
-    const { error: authError } = await supabase.auth.signUp({ email, password });
-    if (authError) {
-      if (authError.message.includes("already registered")) {
+
+    // Step 1: Try to sign up
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+
+    if (signUpError) {
+      // Already registered — just sign in
+      if (signUpError.message.toLowerCase().includes("already registered")) {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) { setError(signInError.message); setBusy(false); return; }
-      } else { setError(authError.message); setBusy(false); return; }
+        setBusy(false); setStep("restaurant"); return;
+      }
+      setError(signUpError.message); setBusy(false); return;
     }
+
+    // Step 2: signUp succeeded — but if email confirmation is required,
+    // there's no session yet. Always sign in to get a real session.
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      // Email confirmation is required and user hasn't confirmed yet.
+      // This happens on hosted Supabase when "Confirm email" is enabled.
+      setError(
+        "Account created! Please check your inbox for a confirmation email, then return here to sign in."
+      );
+      setBusy(false); return;
+    }
+
     setBusy(false);
     setStep("restaurant");
   }
