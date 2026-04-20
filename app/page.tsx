@@ -1,6 +1,7 @@
 import { QrCode, Zap, Users, BarChart3, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import PricingSection from "@/components/PricingSection";
+import HomeNav from "@/components/HomeNav";
 
 const features = [
   { icon: QrCode,    title: "QR Ordering",       desc: "Customers scan and order instantly from their phone" },
@@ -21,14 +22,7 @@ export default function Home() {
             </div>
             <span className="font-semibold text-sm tracking-tight">QR Order</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5">
-              Sign in
-            </Link>
-            <Link href="/onboarding" className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
-              Get started
-            </Link>
-          </div>
+          <HomeNav />
         </div>
       </header>
 

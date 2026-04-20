@@ -1,24 +1,29 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, QrCode, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
+import AuthRedirect from "@/components/AuthRedirect";
 
 export default function LoginPage() {
-  const { signIn, loading, error, isAuthenticated, redirectToDashboard } = useAuth();
+  return (
+    <AuthRedirect>
+      <LoginForm />
+    </AuthRedirect>
+  );
+}
+
+function LoginForm() {
+  const { signIn, redirectToDashboard } = useAuth();
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loginError, setLoginError] = useState("");
-
-  useEffect(() => {
-    if (isAuthenticated && !loading) redirectToDashboard();
-  }, [isAuthenticated, loading]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,14 +36,6 @@ export default function LoginPage() {
       setLoginError(result.error || "Login failed");
       setSubmitting(false);
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
   }
 
   return (

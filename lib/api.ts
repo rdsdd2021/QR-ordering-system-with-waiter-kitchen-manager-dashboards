@@ -679,25 +679,34 @@ export async function getBilledOrders(
 
 /**
  * Generate bill for an order.
- * After billing, checks if all orders for the table are now billed and
- * closes the table session if so.
+ * Accepts optional payment method and discount.
+ * After billing, closes the table session if all served orders are billed.
  */
-export async function generateBill(orderId: string): Promise<{
+export async function generateBill(
+  orderId: string,
+  options?: {
+    paymentMethod?: "cash" | "card" | "upi";
+    discountAmount?: number;
+    discountNote?: string;
+  }
+): Promise<{
   success: boolean;
-  total?: number;
+  gross?: number;
+  net?: number;
   error?: string;
 }> {
   try {
-    // Get the table_id before billing so we can check session closure
     const { data: orderRow } = await supabase
       .from("orders")
       .select("table_id")
       .eq("id", orderId)
       .maybeSingle();
 
-    // Call the database function to generate bill
     const { data, error } = await supabase.rpc("generate_bill", {
-      p_order_id: orderId,
+      p_order_id:        orderId,
+      p_payment_method:  options?.paymentMethod  ?? null,
+      p_discount_amount: options?.discountAmount  ?? 0,
+      p_discount_note:   options?.discountNote    ?? null,
     });
 
     if (error) {
@@ -711,17 +720,8 @@ export async function generateBill(orderId: string): Promise<{
 
     const result = data[0];
 
-    // If billing succeeded and we know the table, check if all orders are billed
     if (result.success && orderRow) {
       const tableId = (orderRow as any).table_id;
-      const { data: unbilled } = await supabase
-        .from("orders")
-        .select("id")
-        .eq("table_id", tableId)
-        .is("billed_at", null)
-        .neq("status", "served"); // ignore orders not yet served
-
-      // Also check for any served-but-unbilled orders
       const { data: servedUnbilled } = await supabase
         .from("orders")
         .select("id")
@@ -729,17 +729,15 @@ export async function generateBill(orderId: string): Promise<{
         .is("billed_at", null)
         .eq("status", "served");
 
-      const remainingUnbilled = (servedUnbilled ?? []).length;
-
-      if (remainingUnbilled === 0) {
-        // All served orders are billed — close the session
+      if ((servedUnbilled ?? []).length === 0) {
         await supabase.rpc("close_table_session", { p_table_id: tableId });
       }
     }
 
     return {
       success: result.success,
-      total: parseFloat(result.total_amount),
+      gross:   parseFloat(result.total_amount),
+      net:     parseFloat(result.net_amount ?? result.total_amount),
     };
   } catch (err) {
     console.error("Exception generating bill:", err);

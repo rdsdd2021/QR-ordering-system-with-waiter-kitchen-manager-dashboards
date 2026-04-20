@@ -18,10 +18,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-type Waiter = {
+type StaffRole = 'waiter' | 'kitchen';
+
+type StaffMember = {
   id: string;
   name: string;
   email: string | null;
+  role: StaffRole;
   is_active: boolean;
   active_orders: number;
   status: 'available' | 'busy' | 'inactive';
@@ -30,7 +33,7 @@ type Waiter = {
 type FormMode = 'add' | 'edit' | null;
 
 export default function StaffManager({ restaurantId }: { restaurantId: string }) {
-  const [waiters, setWaiters] = useState<Waiter[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [pageLoading, setPageLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -41,57 +44,50 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
+  const [formRole, setFormRole] = useState<StaffRole>('waiter');
   const [formBusy, setFormBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>['channel']> | null>(null);
 
   useEffect(() => {
-    fetchWaiters();
+    fetchStaff();
 
-    // Real-time: refresh when orders or users change
     const client = getSupabaseClient();
     if (channelRef.current) client.removeChannel(channelRef.current);
 
     const channel = client
       .channel(`staff-manager:${restaurantId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, fetchWaiters)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `restaurant_id=eq.${restaurantId}` }, fetchWaiters)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
       .subscribe();
 
     channelRef.current = channel;
     return () => { client.removeChannel(channel); channelRef.current = null; };
   }, [restaurantId]);
 
-  async function fetchWaiters() {
-    // Join users with active order counts
+  async function fetchStaff() {
     const { data, error } = await supabase
       .from('users')
-      .select(`
-        id, name, email, is_active,
-        active_orders:orders(id)
-      `)
+      .select(`id, name, email, role, is_active, active_orders:orders(id)`)
       .eq('restaurant_id', restaurantId)
-      .eq('role', 'waiter')
+      .in('role', ['waiter', 'kitchen'])
       .order('name');
 
     if (error) { console.error(error); return; }
 
-    const mapped: Waiter[] = (data ?? []).map((u: any) => {
+    const mapped: StaffMember[] = (data ?? []).map((u: any) => {
       const activeCount = Array.isArray(u.active_orders) ? u.active_orders.length : 0;
-      let status: Waiter['status'] = 'inactive';
+      let status: StaffMember['status'] = 'inactive';
       if (u.is_active) status = activeCount > 0 ? 'busy' : 'available';
       return {
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        is_active: u.is_active,
-        active_orders: activeCount,
-        status,
+        id: u.id, name: u.name, email: u.email,
+        role: u.role as StaffRole,
+        is_active: u.is_active, active_orders: activeCount, status,
       };
     });
 
-    setWaiters(mapped);
+    setStaff(mapped);
     setPageLoading(false);
   }
 
@@ -102,16 +98,18 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
     setFormName('');
     setFormEmail('');
     setFormPassword('');
+    setFormRole('waiter');
     setFormError(null);
     setDialogOpen(true);
   }
 
-  function openEdit(w: Waiter) {
+  function openEdit(w: StaffMember) {
     setFormMode('edit');
     setEditingId(w.id);
     setFormName(w.name);
     setFormEmail(w.email ?? '');
     setFormPassword('');
+    setFormRole(w.role);
     setFormError(null);
     setDialogOpen(true);
   }
@@ -145,20 +143,20 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
           name: formName.trim(),
           email: formEmail.trim().toLowerCase(),
           password: formPassword.trim(),
-          role: 'waiter',
+          role: formRole,
           restaurantId,
         }),
       });
 
       const json = await res.json();
       if (!res.ok) {
-        setFormError(json.error ?? 'Failed to create waiter.');
+        setFormError(json.error ?? 'Failed to create staff member.');
         setFormBusy(false);
         return;
       }
 
       closeDialog();
-      fetchWaiters();
+      fetchStaff();
     } else if (formMode === 'edit' && editingId) {
       const updates: any = { name: formName.trim() };
       if (formEmail.trim()) updates.email = formEmail.trim().toLowerCase();
@@ -175,41 +173,38 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
       }
 
       closeDialog();
-      fetchWaiters();
+      fetchStaff();
     }
 
     setFormBusy(false);
   }
 
-  async function handleToggleActive(waiter: Waiter) {
-    setBusy(waiter.id);
-    await supabase
-      .from('users')
-      .update({ is_active: !waiter.is_active })
-      .eq('id', waiter.id);
-    await fetchWaiters();
+  async function handleToggleActive(member: StaffMember) {
+    setBusy(member.id);
+    await supabase.from('users').update({ is_active: !member.is_active }).eq('id', member.id);
+    await fetchStaff();
     setBusy(null);
   }
 
-  async function handleDelete(waiter: Waiter) {
-    if (waiter.active_orders > 0) {
-      alert(`${waiter.name} has ${waiter.active_orders} active order(s). Reassign or complete them first.`);
+  async function handleDelete(member: StaffMember) {
+    if (member.active_orders > 0) {
+      alert(`${member.name} has ${member.active_orders} active order(s). Reassign or complete them first.`);
       return;
     }
-    if (!confirm(`Remove ${waiter.name}? This cannot be undone.`)) return;
-
-    setBusy(waiter.id);
-    await supabase.from('users').delete().eq('id', waiter.id);
-    await fetchWaiters();
+    if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
+    setBusy(member.id);
+    await supabase.from('users').delete().eq('id', member.id);
+    await fetchStaff();
     setBusy(null);
   }
 
   // ── Stats ──────────────────────────────────────────────────────────
-  const available = waiters.filter(w => w.status === 'available').length;
-  const busyCount = waiters.filter(w => w.status === 'busy').length;
-  const inactive  = waiters.filter(w => w.status === 'inactive').length;
+  const waiters  = staff.filter(s => s.role === 'waiter');
+  const kitchen  = staff.filter(s => s.role === 'kitchen');
+  const available = staff.filter(s => s.status === 'available').length;
+  const busyCount = staff.filter(s => s.status === 'busy').length;
 
-  function StatusBadge({ status }: { status: Waiter['status'] }) {
+  function StatusBadge({ status }: { status: StaffMember['status'] }) {
     if (status === 'available') return <Badge className="bg-green-500 text-white">Available</Badge>;
     if (status === 'busy')      return <Badge className="bg-orange-500 text-white">Busy</Badge>;
     return <Badge variant="secondary">Inactive</Badge>;
@@ -229,21 +224,21 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Staff Management</h2>
-          <p className="text-sm text-muted-foreground">Manage waiters and view real-time availability</p>
+          <p className="text-sm text-muted-foreground">Manage waiters and kitchen staff</p>
         </div>
         <Button size="sm" onClick={openAdd}>
           <Plus className="h-4 w-4 mr-2" />
-          Add Waiter
+          Add Staff
         </Button>
       </div>
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total', value: waiters.length, color: '' },
-          { label: 'Available', value: available, color: 'text-green-600' },
-          { label: 'Busy', value: busyCount, color: 'text-orange-600' },
-          { label: 'Inactive', value: inactive, color: 'text-muted-foreground' },
+          { label: 'Total',     value: staff.length,  color: '' },
+          { label: 'Waiters',   value: waiters.length, color: '' },
+          { label: 'Kitchen',   value: kitchen.length, color: '' },
+          { label: 'Available', value: available,      color: 'text-green-600' },
         ].map(({ label, value, color }) => (
           <Card key={label} className="p-4">
             <p className="text-xs text-muted-foreground">{label}</p>
@@ -252,123 +247,128 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
         ))}
       </div>
 
-      {/* Waiter cards */}
-      {waiters.length === 0 ? (
+      {staff.length === 0 ? (
         <Card className="p-10 text-center">
-          <p className="text-muted-foreground">No waiters yet.</p>
-          <Button className="mt-4" size="sm" onClick={openAdd}>Add your first waiter</Button>
+          <p className="text-muted-foreground">No staff yet.</p>
+          <Button className="mt-4" size="sm" onClick={openAdd}>Add your first staff member</Button>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {waiters.map((w) => (
-            <Card key={w.id} className="p-4">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <p className="font-semibold">{w.name}</p>
-                  {w.email && <p className="text-xs text-muted-foreground mt-0.5">{w.email}</p>}
-                </div>
-                <StatusBadge status={w.status} />
+        <div className="space-y-6">
+          {/* Waiters section */}
+          {waiters.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Waiters ({waiters.length})
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {waiters.map((w) => (
+                  <StaffCard
+                    key={w.id} member={w} busy={busy === w.id}
+                    onEdit={() => openEdit(w)}
+                    onToggle={() => handleToggleActive(w)}
+                    onDelete={() => handleDelete(w)}
+                    StatusBadge={StatusBadge}
+                  />
+                ))}
               </div>
+            </div>
+          )}
 
-              <div className="text-sm space-y-1 mb-4">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Active orders</span>
-                  <span className="font-medium">{w.active_orders}</span>
-                </div>
+          {/* Kitchen section */}
+          {kitchen.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Kitchen ({kitchen.length})
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {kitchen.map((w) => (
+                  <StaffCard
+                    key={w.id} member={w} busy={busy === w.id}
+                    onEdit={() => openEdit(w)}
+                    onToggle={() => handleToggleActive(w)}
+                    onDelete={() => handleDelete(w)}
+                    StatusBadge={StatusBadge}
+                  />
+                ))}
               </div>
-
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => openEdit(w)}
-                  disabled={busy === w.id}
-                >
-                  <Edit2 className="h-3.5 w-3.5 mr-1.5" />
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant={w.is_active ? 'outline' : 'default'}
-                  className="flex-1"
-                  onClick={() => handleToggleActive(w)}
-                  disabled={busy === w.id}
-                >
-                  {busy === w.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : w.is_active ? (
-                    <><UserX className="h-3.5 w-3.5 mr-1.5" />Deactivate</>
-                  ) : (
-                    <><UserCheck className="h-3.5 w-3.5 mr-1.5" />Activate</>
-                  )}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10 px-2"
-                  onClick={() => handleDelete(w)}
-                  disabled={busy === w.id}
-                  title="Remove waiter"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </Card>
-          ))}
+            </div>
+          )}
         </div>
       )}
 
       <p className="text-xs text-muted-foreground">
-        Only active waiters can take orders. Deactivating a waiter won't affect their existing orders.
+        Only active staff can log in and take actions. Deactivating won't affect existing orders.
       </p>
 
       {/* Add / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{formMode === 'add' ? 'Add Waiter' : 'Edit Waiter'}</DialogTitle>
+            <DialogTitle>{formMode === 'add' ? 'Add Staff Member' : 'Edit Staff Member'}</DialogTitle>
             <DialogDescription>
               {formMode === 'add'
-                ? 'Create a new waiter account. They can log in at /login.'
-                : 'Update waiter details.'}
+                ? 'Create a new staff account. They can log in at /login.'
+                : 'Update staff details.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {/* Role selector — only on add */}
+            {formMode === 'add' && (
+              <div className="space-y-1.5">
+                <Label>Role</Label>
+                <div className="flex gap-2">
+                  {(['waiter', 'kitchen'] as StaffRole[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setFormRole(r)}
+                      className={`flex-1 rounded-lg border py-2 text-sm font-medium capitalize transition-colors ${
+                        formRole === r
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {r === 'kitchen' ? '🍳 Kitchen' : '🛎 Waiter'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label htmlFor="waiter-name">Name *</Label>
+              <Label htmlFor="staff-name">Name *</Label>
               <Input
-                id="waiter-name"
+                id="staff-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Alice"
+                placeholder="e.g. Ravi"
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="waiter-email">Email {formMode === 'add' ? '*' : ''}</Label>
+              <Label htmlFor="staff-email">Email {formMode === 'add' ? '*' : ''}</Label>
               <Input
-                id="waiter-email"
+                id="staff-email"
                 type="email"
                 value={formEmail}
                 onChange={(e) => setFormEmail(e.target.value)}
-                placeholder="alice@restaurant.com"
+                placeholder="ravi@restaurant.com"
               />
             </div>
 
             {formMode === 'add' && (
               <div className="space-y-1.5">
-                <Label htmlFor="waiter-password">Password *</Label>
+                <Label htmlFor="staff-password">Password *</Label>
                 <Input
-                  id="waiter-password"
+                  id="staff-password"
                   type="password"
                   value={formPassword}
                   onChange={(e) => setFormPassword(e.target.value)}
                   placeholder="Min 6 characters"
                 />
                 <p className="text-xs text-muted-foreground">
-                  The waiter will use this to log in. You can also confirm their account from the Supabase dashboard.
+                  They'll use this to log in at /login.
                 </p>
               </div>
             )}
@@ -382,16 +382,75 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
           <DialogFooter>
             <Button variant="outline" onClick={closeDialog} disabled={formBusy}>Cancel</Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={formBusy || !formName.trim()}
-            >
+            <Button onClick={handleSubmit} disabled={formBusy || !formName.trim()}>
               {formBusy && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {formMode === 'add' ? 'Add Waiter' : 'Save Changes'}
+              {formMode === 'add' ? 'Add Staff' : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ── Staff Card ────────────────────────────────────────────────────────────────
+
+function StaffCard({
+  member, busy, onEdit, onToggle, onDelete, StatusBadge,
+}: {
+  member: StaffMember;
+  busy: boolean;
+  onEdit: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+  StatusBadge: React.FC<{ status: StaffMember['status'] }>;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="font-semibold">{member.name}</p>
+          {member.email && <p className="text-xs text-muted-foreground mt-0.5">{member.email}</p>}
+        </div>
+        <StatusBadge status={member.status} />
+      </div>
+
+      <div className="text-sm space-y-1 mb-4">
+        {member.role === 'waiter' && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Active orders</span>
+            <span className="font-medium">{member.active_orders}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" className="flex-1" onClick={onEdit} disabled={busy}>
+          <Edit2 className="h-3.5 w-3.5 mr-1.5" />Edit
+        </Button>
+        <Button
+          size="sm"
+          variant={member.is_active ? 'outline' : 'default'}
+          className="flex-1"
+          onClick={onToggle}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : member.is_active ? (
+            <><UserX className="h-3.5 w-3.5 mr-1.5" />Deactivate</>
+          ) : (
+            <><UserCheck className="h-3.5 w-3.5 mr-1.5" />Activate</>
+          )}
+        </Button>
+        <Button
+          size="sm" variant="ghost"
+          className="text-destructive hover:text-destructive hover:bg-destructive/10 px-2"
+          onClick={onDelete} disabled={busy} title="Remove"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </Card>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Store, User, Mail, Lock, ArrowRight, CheckCircle2, QrCode, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { getSupabaseClient } from "@/lib/supabase";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import CouponInput, { type CouponResult } from "@/components/CouponInput";
+import AuthRedirect from "@/components/AuthRedirect";
 
 type Step = "account" | "restaurant" | "plan" | "loading" | "done";
 
@@ -17,9 +18,16 @@ const FREE_FEATURES = ["5 tables", "20 menu items", "QR ordering", "Kitchen & wa
 const PRO_FEATURES  = ["Unlimited tables & menu items", "Advanced analytics", "Floor-based pricing", "Priority support", "Geo-fencing"];
 
 export default function OnboardingPage() {
+  return (
+    <AuthRedirect allowNoRestaurant>
+      <OnboardingForm />
+    </AuthRedirect>
+  );
+}
+
+function OnboardingForm() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("account");
-  const [checking, setChecking] = useState(true); // true until auth check completes
 
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
@@ -60,37 +68,6 @@ export default function OnboardingPage() {
   function skipToFree() {
     if (newRestaurantId) router.push(`/manager/${newRestaurantId}`);
   }
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-    
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user) {
-        setChecking(false);
-        return;
-      }
-
-      // User is logged in — check if they already have a restaurant
-      const { data: profile } = await supabase
-        .from("users")
-        .select("id, role, restaurant_id")
-        .eq("auth_id", session.user.id)
-        .maybeSingle();
-
-      if (profile?.restaurant_id) {
-        // User already has a restaurant — redirect to their dashboard (checking stays true = no flash)
-        const role = profile.role;
-        if (role === "manager") router.push(`/manager/${profile.restaurant_id}`);
-        else if (role === "waiter") router.push(`/waiter/${profile.restaurant_id}`);
-        else if (role === "kitchen") router.push(`/kitchen/${profile.restaurant_id}`);
-        return;
-      }
-
-      // User is logged in but has no restaurant — proceed to restaurant step
-      setStep("restaurant");
-      setChecking(false);
-    });
-  }, [router]);
 
   async function handleAccountSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -160,13 +137,6 @@ export default function OnboardingPage() {
     setNewRestaurantId(restaurantId);
     setStep("plan");
   }
-
-  // Block render entirely until auth check completes — prevents flash of onboarding form
-  if (checking) return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>
-  );
 
   if (step === "loading") return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">

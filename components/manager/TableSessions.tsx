@@ -1,31 +1,17 @@
 "use client";
 
-/**
- * TableSessions
- *
- * Replaces the separate Billing and Order Log tabs with a unified view.
- *
- * CONCEPT:
- * A "session" = all unbilled orders from the same table grouped together.
- * One table → one session card → multiple orders inside → one "Bill All" action.
- *
- * ACTIVE SESSIONS  — tables with at least one unbilled order
- * PAST SESSIONS    — recently billed sessions (collapsed by default)
- *
- * Real-time: patches in-place via postgres_changes, no full reload on updates.
- */
-
-import { useEffect, useRef, useState, Fragment } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Receipt, ChevronDown, ChevronUp, RefreshCw, Loader2,
-  User, Phone, Users, Clock, CheckCircle2
+  User, Phone, Users, Clock, CheckCircle2, LayoutGrid, List,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getSupabaseClient } from "@/lib/supabase";
+import { getTableAvailability, getFloors } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { generateBill } from "@/lib/api";
+import BillDialog from "@/components/manager/BillDialog";
 
 type Props = { restaurantId: string };
 
@@ -44,22 +30,57 @@ type OrderRow = {
 };
 
 type TableSession = {
-  // Table identity
   table_id: string;
   table_number: number;
   floor_name: string | null;
-  // Session info (from first order with customer data)
+  floor_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   party_size: number | null;
   waiter_name: string | null;
-  // Orders in this session
   orders: OrderRow[];
-  // Computed
   session_total: number;
   session_start: string;
   all_served: boolean;
   is_billed: boolean;
+};
+
+type TableTile = {
+  table_id: string;
+  table_number: number;
+  floor_id: string | null;
+  floor_name: string | null;
+  capacity: number | null;
+  // live session data (null = free)
+  session: TableSession | null;
+};
+
+type Floor = { id: string; name: string };
+
+// ── Table tile state ──────────────────────────────────────────────────────────
+
+type TileState = "free" | "active" | "ready" | "billed";
+
+function getTileState(session: TableSession | null): TileState {
+  if (!session) return "free";
+  if (session.is_billed) return "billed";
+  const servable = session.orders.filter((o) => o.status === "served" && !o.billed_at).length;
+  if (servable > 0 && session.orders.every((o) => o.status === "served" || !!o.billed_at)) return "ready";
+  return "active";
+}
+
+const TILE_STYLES: Record<TileState, string> = {
+  free:   "bg-muted/40 border-border text-muted-foreground hover:bg-muted/70",
+  active: "bg-blue-50 border-blue-300 text-blue-900 hover:bg-blue-100",
+  ready:  "bg-green-50 border-green-400 text-green-900 hover:bg-green-100",
+  billed: "bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100",
+};
+
+const TILE_DOT: Record<TileState, string> = {
+  free:   "bg-gray-300",
+  active: "bg-blue-500",
+  ready:  "bg-green-500",
+  billed: "bg-gray-300",
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -87,59 +108,54 @@ function fmt(iso: string | null) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtDate(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
-async function fetchSessions(restaurantId: string): Promise<{
+async function fetchData(restaurantId: string): Promise<{
+  tiles: TableTile[];
+  floors: Floor[];
   active: TableSession[];
   past: TableSession[];
 }> {
-  const { data, error } = await supabase
-    .from("orders")
-    .select(`
-      id, status, created_at, billed_at,
-      customer_name, customer_phone, party_size, total_amount,
-      table:tables(id, table_number, floor:floors(name)),
-      waiter:users(name),
-      order_items(id, quantity, price, menu_item:menu_items(name))
-    `)
-    .eq("restaurant_id", restaurantId)
-    .order("created_at", { ascending: false })
-    .limit(300);
+  // Fetch all tables + active orders in parallel
+  const [tableRows, orderData, floorData] = await Promise.all([
+    getTableAvailability(restaurantId),
+    supabase
+      .from("orders")
+      .select(`
+        id, status, created_at, billed_at,
+        customer_name, customer_phone, party_size, total_amount,
+        table:tables(id, table_number, floor_id, floor:floors(id, name)),
+        waiter:users(name),
+        order_items(id, quantity, price, menu_item:menu_items(name))
+      `)
+      .eq("restaurant_id", restaurantId)
+      .order("created_at", { ascending: false })
+      .limit(300),
+    getFloors(restaurantId),
+  ]);
 
-  if (error || !data) return { active: [], past: [] };
+  const orders = (orderData.data ?? []) as any[];
 
-  // Group by table_id, split into unbilled (active) and billed (past)
+  // Build session maps
   const activeMap = new Map<string, TableSession>();
   const pastMap   = new Map<string, TableSession>();
 
-  for (const o of data as any[]) {
-    const tableId     = o.table?.id ?? o.table_id;
+  for (const o of orders) {
+    const tableId     = o.table?.id ?? "";
     const tableNumber = o.table?.table_number ?? 0;
     const floorName   = o.table?.floor?.name ?? null;
+    const floorId     = o.table?.floor_id ?? o.table?.floor?.id ?? null;
     const waiterName  = o.waiter?.name ?? null;
     const items       = (o.order_items ?? []).map((oi: any) => ({
-      id:       oi.id,
-      name:     oi.menu_item?.name ?? "Item",
-      quantity: oi.quantity,
-      price:    parseFloat(oi.price),
+      id: oi.id, name: oi.menu_item?.name ?? "Item",
+      quantity: oi.quantity, price: parseFloat(oi.price),
     }));
     const orderTotal = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
 
     const orderRow: OrderRow = {
-      id:            o.id,
-      status:        o.status,
-      created_at:    o.created_at,
-      billed_at:     o.billed_at,
-      customer_name: o.customer_name,
-      customer_phone:o.customer_phone,
-      party_size:    o.party_size,
-      order_total:   orderTotal,
-      items,
+      id: o.id, status: o.status, created_at: o.created_at, billed_at: o.billed_at,
+      customer_name: o.customer_name, customer_phone: o.customer_phone,
+      party_size: o.party_size, order_total: orderTotal, items,
     };
 
     const isBilled = !!o.billed_at;
@@ -147,46 +163,44 @@ async function fetchSessions(restaurantId: string): Promise<{
 
     if (!map.has(tableId)) {
       map.set(tableId, {
-        table_id:      tableId,
-        table_number:  tableNumber,
-        floor_name:    floorName,
-        customer_name: o.customer_name,
-        customer_phone:o.customer_phone,
-        party_size:    o.party_size,
-        waiter_name:   waiterName,
-        orders:        [],
-        session_total: 0,
-        session_start: o.created_at,
-        all_served:    false,
-        is_billed:     isBilled,
+        table_id: tableId, table_number: tableNumber,
+        floor_name: floorName, floor_id: floorId,
+        customer_name: o.customer_name, customer_phone: o.customer_phone,
+        party_size: o.party_size, waiter_name: waiterName,
+        orders: [], session_total: 0, session_start: o.created_at,
+        all_served: false, is_billed: isBilled,
       });
     }
 
     const session = map.get(tableId)!;
     session.orders.push(orderRow);
     session.session_total += orderTotal;
-
-    // Use earliest order time as session start
     if (o.created_at < session.session_start) session.session_start = o.created_at;
-
-    // Use first available customer info
     if (!session.customer_name && o.customer_name) session.customer_name = o.customer_name;
     if (!session.customer_phone && o.customer_phone) session.customer_phone = o.customer_phone;
     if (!session.party_size && o.party_size) session.party_size = o.party_size;
     if (!session.waiter_name && waiterName) session.waiter_name = waiterName;
   }
 
-  // Compute all_served for active sessions
-  for (const session of activeMap.values()) {
-    session.all_served = session.orders.every(
-      (o) => o.status === "served" || o.status === "billed"
-    );
+  for (const s of activeMap.values()) {
+    s.all_served = s.orders.every((o) => o.status === "served" || !!o.billed_at);
   }
 
-  const sortByTable = (a: TableSession, b: TableSession) =>
-    a.table_number - b.table_number;
+  // Build tiles — one per physical table
+  const tiles: TableTile[] = (tableRows as any[]).map((t) => ({
+    table_id:    t.table_id,
+    table_number:t.table_number,
+    floor_id:    t.floor_id ?? null,
+    floor_name:  t.floor_name ?? null,
+    capacity:    t.capacity ?? null,
+    session:     activeMap.get(t.table_id) ?? null,
+  }));
+
+  const sortByTable = (a: TableSession, b: TableSession) => a.table_number - b.table_number;
 
   return {
+    tiles,
+    floors: (floorData as any[]).map((f: any) => ({ id: f.id, name: f.name })),
     active: [...activeMap.values()].sort(sortByTable),
     past:   [...pastMap.values()].sort(sortByTable),
   };
@@ -195,71 +209,56 @@ async function fetchSessions(restaurantId: string): Promise<{
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TableSessions({ restaurantId }: Props) {
+  const [tiles,          setTiles]          = useState<TableTile[]>([]);
+  const [floors,         setFloors]         = useState<Floor[]>([]);
   const [activeSessions, setActiveSessions] = useState<TableSession[]>([]);
   const [pastSessions,   setPastSessions]   = useState<TableSession[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
+  const [viewMode,       setViewMode]       = useState<"grid" | "list">("grid");
+  const [activeFloor,    setActiveFloor]    = useState<string>("all");
   const [showPast,       setShowPast]       = useState(false);
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
-  const [billingTable,   setBillingTable]   = useState<string | null>(null);
+  const [billDialogSession, setBillDialogSession] = useState<TableSession | null>(null);
+  const [selectedTile,   setSelectedTile]   = useState<TableTile | null>(null);
 
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
-  const loadRef    = useRef<(silent?: boolean) => Promise<void>>(undefined);
 
   async function load(silent = false) {
-    if (!silent) {
-      if (activeSessions.length === 0 && pastSessions.length === 0) setLoading(true);
-      else setRefreshing(true);
-    }
-    const { active, past } = await fetchSessions(restaurantId);
-    setActiveSessions(active);
-    setPastSessions(past);
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    const result = await fetchData(restaurantId);
+    setTiles(result.tiles);
+    setFloors(result.floors);
+    setActiveSessions(result.active);
+    setPastSessions(result.past);
     setLoading(false);
     setRefreshing(false);
   }
 
-  loadRef.current = () => load(false);
-
   useEffect(() => { load(); }, [restaurantId]);
 
-  // Real-time
   useEffect(() => {
     const client = getSupabaseClient();
     if (channelRef.current) { client.removeChannel(channelRef.current); channelRef.current = null; }
-
     const channel = client
       .channel(`manager:${restaurantId}`)
       .on("postgres_changes" as any,
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
-        () => { load(true); }
+        () => load(true)
       )
-      .on("broadcast", { event: "order_changed" }, () => { load(true); })
+      .on("broadcast", { event: "order_changed" }, () => load(true))
       .subscribe((s: string) => { if (s === "SUBSCRIBED") load(true); });
-
     channelRef.current = channel;
     return () => { client.removeChannel(channel); channelRef.current = null; };
   }, [restaurantId]);
 
-  // ── Bill all served orders for a table ────────────────────────────
-  async function handleBillSession(session: TableSession) {
-    const servableOrders = session.orders.filter(
-      (o) => o.status === "served" && !o.billed_at
-    );
-    if (servableOrders.length === 0) return;
-
-    setBillingTable(session.table_id);
-
-    // Bill each served order sequentially
-    let allOk = true;
-    for (const order of servableOrders) {
-      const result = await generateBill(order.id);
-      if (!result.success) { allOk = false; break; }
-    }
-
-    if (!allOk) alert("Some orders could not be billed. Please try again.");
-    await load(true);
-    setBillingTable(null);
-  }
+  // Keep selectedTile in sync with live data
+  useEffect(() => {
+    if (!selectedTile) return;
+    const updated = tiles.find((t) => t.table_id === selectedTile.table_id);
+    if (updated) setSelectedTile(updated);
+  }, [tiles]);
 
   function toggleTable(tableId: string) {
     setExpandedTables((prev) => {
@@ -268,6 +267,23 @@ export default function TableSessions({ restaurantId }: Props) {
       return next;
     });
   }
+
+  // Floor tabs: only show floors that actually have tables assigned
+  const floorIdsWithTables = new Set(tiles.map((t) => t.floor_id).filter(Boolean));
+  const hasUnassigned = tiles.some((t) => !t.floor_id);
+  const floorTabs: Array<{ id: string; label: string }> = [
+    { id: "all", label: "All" },
+    ...floors.filter((f) => floorIdsWithTables.has(f.id)).map((f) => ({ id: f.id, label: f.name })),
+    ...(hasUnassigned ? [{ id: "none", label: "No Floor" }] : []),
+  ];
+
+  const visibleTiles = tiles.filter((t) => {
+    if (activeFloor === "all") return true;
+    if (activeFloor === "none") return !t.floor_id;
+    return t.floor_id === activeFloor;
+  });
+
+  const activeCount = activeSessions.length;
 
   if (loading) {
     return (
@@ -278,212 +294,473 @@ export default function TableSessions({ restaurantId }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
 
-      {/* ── Header ──────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      {/* Bill Dialog */}
+      {billDialogSession && (
+        <BillDialog
+          session={billDialogSession}
+          open={!!billDialogSession}
+          onClose={() => setBillDialogSession(null)}
+          onBilled={() => load(true)}
+        />
+      )}
+
+      {/* ── Header ───────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Table Sessions</h2>
           <p className="text-sm text-muted-foreground">
-            {activeSessions.length} active table{activeSessions.length !== 1 ? "s" : ""}
+            {activeCount} active table{activeCount !== 1 ? "s" : ""}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => load()} disabled={refreshing}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => load()} disabled={refreshing}>
+            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          </Button>
+          {/* View toggle */}
+          <div className="flex rounded-lg border overflow-hidden">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={cn(
+                "px-3 py-1.5 text-sm flex items-center gap-1.5 transition-colors",
+                viewMode === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              )}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Grid
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={cn(
+                "px-3 py-1.5 text-sm flex items-center gap-1.5 transition-colors border-l",
+                viewMode === "list" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              )}
+            >
+              <List className="h-3.5 w-3.5" />
+              List
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* ── Active sessions ──────────────────────────────────────────── */}
-      {activeSessions.length === 0 ? (
-        <div className="flex h-32 items-center justify-center rounded-xl border border-dashed">
-          <p className="text-sm text-muted-foreground">No active tables right now</p>
-        </div>
-      ) : (
+      {/* ── Grid View ────────────────────────────────────────────── */}
+      {viewMode === "grid" && (
         <div className="space-y-4">
-          {activeSessions.map((session) => (
-            <SessionCard
-              key={session.table_id}
-              session={session}
-              expanded={expandedTables.has(session.table_id)}
-              onToggle={() => toggleTable(session.table_id)}
-              onBill={() => handleBillSession(session)}
-              billing={billingTable === session.table_id}
+          {/* Legend */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {(["free", "active", "ready", "billed"] as TileState[]).map((state) => (
+              <span key={state} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className={cn("h-2.5 w-2.5 rounded-full", TILE_DOT[state])} />
+                {state === "free" ? "Free" : state === "active" ? "Active" : state === "ready" ? "Ready to bill" : "Billed"}
+              </span>
+            ))}
+          </div>
+
+          {/* Floor tabs */}
+          {floorTabs.length > 1 && (
+            <div className="flex gap-1 flex-wrap">
+              {floorTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveFloor(tab.id)}
+                  className={cn(
+                    "px-3 py-1 rounded-full text-sm font-medium transition-colors",
+                    activeFloor === tab.id
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Table grid */}
+          {visibleTiles.length === 0 ? (
+            <div className="flex h-32 items-center justify-center rounded-xl border border-dashed">
+              <p className="text-sm text-muted-foreground">No tables in this section</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
+              {visibleTiles.map((tile) => (
+                <TableTileCard
+                  key={tile.table_id}
+                  tile={tile}
+                  selected={selectedTile?.table_id === tile.table_id}
+                  onClick={() => setSelectedTile(
+                    selectedTile?.table_id === tile.table_id ? null : tile
+                  )}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Selected tile detail panel */}
+          {selectedTile && (
+            <TileDetailPanel
+              tile={selectedTile}
+              onBill={(session) => setBillDialogSession(session)}
+              onClose={() => setSelectedTile(null)}
             />
-          ))}
+          )}
+
+          {/* Past sessions toggle */}
+          <div>
+            <button
+              onClick={() => setShowPast((v) => !v)}
+              className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPast ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              Past sessions ({pastSessions.length})
+            </button>
+            {showPast && (
+              <div className="mt-3 space-y-3">
+                {pastSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground pl-6">No past sessions</p>
+                ) : (
+                  pastSessions.map((session) => (
+                    <SessionCard
+                      key={`past-${session.table_id}-${session.session_start}`}
+                      session={session}
+                      expanded={expandedTables.has(`past-${session.table_id}`)}
+                      onToggle={() => toggleTable(`past-${session.table_id}`)}
+                      onBill={() => {}}
+                      isPast
+                    />
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ── Past sessions ────────────────────────────────────────────── */}
-      <div>
-        <button
-          onClick={() => setShowPast((v) => !v)}
-          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {showPast ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          Past sessions ({pastSessions.length})
-        </button>
+      {/* ── List View ────────────────────────────────────────────── */}
+      {viewMode === "list" && (
+        <div className="space-y-4">
+          {activeSessions.length === 0 ? (
+            <div className="flex h-32 items-center justify-center rounded-xl border border-dashed">
+              <p className="text-sm text-muted-foreground">No active tables right now</p>
+            </div>
+          ) : (
+            activeSessions.map((session) => (
+              <SessionCard
+                key={session.table_id}
+                session={session}
+                expanded={expandedTables.has(session.table_id)}
+                onToggle={() => toggleTable(session.table_id)}
+                onBill={() => setBillDialogSession(session)}
+              />
+            ))
+          )}
 
-        {showPast && (
-          <div className="mt-3 space-y-3">
-            {pastSessions.length === 0 ? (
-              <p className="text-sm text-muted-foreground pl-6">No past sessions</p>
-            ) : (
-              pastSessions.map((session) => (
-                <SessionCard
-                  key={`past-${session.table_id}-${session.session_start}`}
-                  session={session}
-                  expanded={expandedTables.has(`past-${session.table_id}`)}
-                  onToggle={() => toggleTable(`past-${session.table_id}`)}
-                  onBill={() => {}}
-                  billing={false}
-                  isPast
-                />
-              ))
+          <div>
+            <button
+              onClick={() => setShowPast((v) => !v)}
+              className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPast ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              Past sessions ({pastSessions.length})
+            </button>
+            {showPast && (
+              <div className="mt-3 space-y-3">
+                {pastSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground pl-6">No past sessions</p>
+                ) : (
+                  pastSessions.map((session) => (
+                    <SessionCard
+                      key={`past-${session.table_id}-${session.session_start}`}
+                      session={session}
+                      expanded={expandedTables.has(`past-${session.table_id}`)}
+                      onToggle={() => toggleTable(`past-${session.table_id}`)}
+                      onBill={() => {}}
+                      isPast
+                    />
+                  ))
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Session Card ──────────────────────────────────────────────────────────────
+// ── Table Tile Card ───────────────────────────────────────────────────────────
+
+function TableTileCard({
+  tile,
+  selected,
+  onClick,
+}: {
+  tile: TableTile;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const state = getTileState(tile.session);
+  const servableCount = tile.session?.orders.filter(
+    (o) => o.status === "served" && !o.billed_at
+  ).length ?? 0;
+  const activeOrderCount = tile.session?.orders.filter(
+    (o) => !o.billed_at && o.status !== "served"
+  ).length ?? 0;
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "relative flex flex-col items-center justify-center rounded-xl border-2 p-2 aspect-square transition-all text-center",
+        TILE_STYLES[state],
+        selected && "ring-2 ring-primary ring-offset-2"
+      )}
+    >
+      {/* Status dot */}
+      <span className={cn("absolute top-1.5 right-1.5 h-2 w-2 rounded-full", TILE_DOT[state])} />
+
+      {/* Table number */}
+      <span className="font-bold text-xl leading-none">
+        {tile.table_number}
+      </span>
+      <span className="text-[10px] mt-0.5 opacity-60">Table</span>
+
+      {/* Sub-info */}
+      {state === "active" && activeOrderCount > 0 && (
+        <span className="mt-1 text-[10px] font-medium bg-blue-200 text-blue-800 rounded px-1.5 py-0.5 leading-tight">
+          {activeOrderCount} order{activeOrderCount !== 1 ? "s" : ""}
+        </span>
+      )}
+      {state === "ready" && (
+        <span className="mt-1 text-[10px] font-medium bg-green-200 text-green-800 rounded px-1.5 py-0.5 leading-tight">
+          Bill ready
+        </span>
+      )}
+      {state === "free" && tile.capacity && (
+        <span className="mt-1 text-[10px] opacity-40">{tile.capacity} seats</span>
+      )}
+      {state === "billed" && (
+        <span className="mt-1 text-[10px] opacity-40">Billed</span>
+      )}
+    </button>
+  );
+}
+
+// ── Tile Detail Panel ─────────────────────────────────────────────────────────
+
+function TileDetailPanel({
+  tile,
+  onBill,
+  onClose,
+}: {
+  tile: TableTile;
+  onBill: (session: TableSession) => void;
+  onClose: () => void;
+}) {
+  const session = tile.session;
+  const state   = getTileState(session);
+
+  const servableCount = session?.orders.filter(
+    (o) => o.status === "served" && !o.billed_at
+  ).length ?? 0;
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm overflow-hidden animate-in slide-in-from-top-2 duration-150">
+      {/* Panel header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+        <div className="flex items-center gap-2">
+          <span className={cn("h-2.5 w-2.5 rounded-full", TILE_DOT[state])} />
+          <span className="font-semibold">
+            Table {tile.table_number}
+            {tile.floor_name ? ` · ${tile.floor_name}` : ""}
+          </span>
+          {state === "free" && (
+            <Badge variant="secondary" className="text-xs">Free</Badge>
+          )}
+          {state === "active" && (
+            <Badge className="bg-blue-100 text-blue-800 text-xs border-0">Active</Badge>
+          )}
+          {state === "ready" && (
+            <Badge className="bg-green-100 text-green-800 text-xs border-0">Ready to bill</Badge>
+          )}
+          {state === "billed" && (
+            <Badge variant="secondary" className="text-xs">Billed</Badge>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground text-lg leading-none px-1"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Free table */}
+      {!session || state === "free" ? (
+        <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+          No active orders at this table
+        </div>
+      ) : (
+        <div className="p-4 space-y-4">
+          {/* Customer info */}
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            {session.customer_name && (
+              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <User className="h-3.5 w-3.5" />
+                {session.customer_name}
+              </span>
+            )}
+            {session.customer_phone && (
+              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Phone className="h-3.5 w-3.5" />
+                {session.customer_phone}
+              </span>
+            )}
+            {session.party_size && (
+              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Users className="h-3.5 w-3.5" />
+                {session.party_size} guests
+              </span>
+            )}
+            {session.waiter_name && (
+              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <User className="h-3.5 w-3.5" />
+                {session.waiter_name}
+              </span>
+            )}
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />
+              Since {fmt(session.session_start)}
+            </span>
+          </div>
+
+          {/* Orders */}
+          <div className="rounded-lg border divide-y">
+            {session.orders.map((order) => (
+              <div key={order.id} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-xs font-medium shrink-0",
+                    STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"
+                  )}>
+                    {STATUS_LABEL[order.status] ?? order.status}
+                  </span>
+                  <span className="text-xs text-muted-foreground font-mono">
+                    #{order.id.slice(0, 6).toUpperCase()}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{fmt(order.created_at)}</span>
+                </div>
+                <span className="text-sm font-semibold tabular-nums shrink-0">
+                  ₹{order.order_total.toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Total + bill action */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-muted-foreground">Session total</p>
+              <p className="text-xl font-bold tabular-nums">₹{session.session_total.toFixed(2)}</p>
+            </div>
+            {servableCount > 0 && (
+              <Button onClick={() => onBill(session)}>
+                <Receipt className="h-4 w-4 mr-2" />
+                Generate Bill
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Session Card (list view) ──────────────────────────────────────────────────
 
 function SessionCard({
-  session,
-  expanded,
-  onToggle,
-  onBill,
-  billing,
-  isPast = false,
+  session, expanded, onToggle, onBill, isPast = false,
 }: {
   session: TableSession;
   expanded: boolean;
   onToggle: () => void;
   onBill: () => void;
-  billing: boolean;
   isPast?: boolean;
 }) {
-  const servableCount = session.orders.filter(
-    (o) => o.status === "served" && !o.billed_at
-  ).length;
-  const activeCount = session.orders.filter(
-    (o) => !["served"].includes(o.status)
-  ).length;
+  const servableCount = session.orders.filter((o) => o.status === "served" && !o.billed_at).length;
+  const activeCount   = session.orders.filter((o) => !["served"].includes(o.status)).length;
 
   return (
-    <div className={cn(
-      "rounded-xl border bg-card shadow-sm overflow-hidden",
-      isPast && "opacity-70"
-    )}>
-      {/* ── Card header ─────────────────────────────────────────────── */}
+    <div className={cn("rounded-xl border bg-card shadow-sm overflow-hidden", isPast && "opacity-70")}>
       <div
         className="flex items-start justify-between gap-4 p-4 cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}
       >
-        {/* Left: table + customer info */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-base">
-              Table {session.table_number}
-            </span>
+            <span className="font-semibold text-base">Table {session.table_number}</span>
             {session.floor_name && (
               <span className="text-xs text-muted-foreground">· {session.floor_name}</span>
             )}
             {isPast ? (
               <Badge variant="secondary" className="text-xs">Billed</Badge>
             ) : activeCount > 0 ? (
-              <Badge className="bg-orange-100 text-orange-800 text-xs border-0">
-                {activeCount} in progress
-              </Badge>
+              <Badge className="bg-orange-100 text-orange-800 text-xs border-0">{activeCount} in progress</Badge>
             ) : servableCount > 0 ? (
-              <Badge className="bg-green-100 text-green-800 text-xs border-0">
-                Ready to bill
-              </Badge>
+              <Badge className="bg-green-100 text-green-800 text-xs border-0">Ready to bill</Badge>
             ) : null}
           </div>
-
-          {/* Customer info row */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
             {session.customer_name && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <User className="h-3 w-3" />
-                {session.customer_name}
+                <User className="h-3 w-3" />{session.customer_name}
               </span>
             )}
             {session.customer_phone && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Phone className="h-3 w-3" />
-                {session.customer_phone}
+                <Phone className="h-3 w-3" />{session.customer_phone}
               </span>
             )}
             {session.party_size && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Users className="h-3 w-3" />
-                {session.party_size} guests
+                <Users className="h-3 w-3" />{session.party_size} guests
               </span>
             )}
             {session.waiter_name && (
-              <span className="text-xs text-muted-foreground">
-                👤 {session.waiter_name}
-              </span>
+              <span className="text-xs text-muted-foreground">👤 {session.waiter_name}</span>
             )}
           </div>
-
-          {/* Session meta */}
           <div className="flex items-center gap-3 mt-1.5">
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Clock className="h-3 w-3" />
-              Since {fmt(session.session_start)}
+              <Clock className="h-3 w-3" />Since {fmt(session.session_start)}
             </span>
             <span className="text-xs text-muted-foreground">
               {session.orders.length} order{session.orders.length !== 1 ? "s" : ""}
             </span>
           </div>
         </div>
-
-        {/* Right: total + actions */}
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <span className="font-bold text-lg tabular-nums">
-            ₹{session.session_total.toFixed(2)}
-          </span>
-
+          <span className="font-bold text-lg tabular-nums">₹{session.session_total.toFixed(2)}</span>
           {!isPast && servableCount > 0 && (
-            <Button
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); onBill(); }}
-              disabled={billing}
-              className="h-8"
-            >
-              {billing ? (
-                <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Billing…</>
-              ) : (
-                <><Receipt className="h-3.5 w-3.5 mr-1.5" />Bill ({servableCount})</>
-              )}
+            <Button size="sm" onClick={(e) => { e.stopPropagation(); onBill(); }} className="h-8">
+              <Receipt className="h-3.5 w-3.5 mr-1.5" />Bill ({servableCount})
             </Button>
           )}
-
           {isPast && (
             <span className="flex items-center gap-1 text-xs text-green-600">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Billed
+              <CheckCircle2 className="h-3.5 w-3.5" />Billed
             </span>
           )}
-
           <button className="text-muted-foreground mt-1">
-            {expanded
-              ? <ChevronUp className="h-4 w-4" />
-              : <ChevronDown className="h-4 w-4" />}
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
         </div>
       </div>
-
-      {/* ── Expanded: order list ─────────────────────────────────────── */}
       {expanded && (
         <div className="border-t divide-y">
           {session.orders.map((order) => (
-            <OrderRow key={order.id} order={order} />
+            <OrderRowItem key={order.id} order={order} />
           ))}
         </div>
       )}
@@ -491,44 +768,26 @@ function SessionCard({
   );
 }
 
-// ── Individual order row inside a session ─────────────────────────────────────
+// ── Order row inside session card ─────────────────────────────────────────────
 
-function OrderRow({ order }: { order: OrderRow }) {
+function OrderRowItem({ order }: { order: OrderRow }) {
   const [showItems, setShowItems] = useState(false);
-
   return (
     <div className="px-4 py-3">
-      <div
-        className="flex items-center justify-between gap-3 cursor-pointer"
-        onClick={() => setShowItems((v) => !v)}
-      >
+      <div className="flex items-center justify-between gap-3 cursor-pointer" onClick={() => setShowItems((v) => !v)}>
         <div className="flex items-center gap-3 min-w-0">
-          <span className={cn(
-            "px-2 py-0.5 rounded text-xs font-medium shrink-0",
-            STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"
-          )}>
+          <span className={cn("px-2 py-0.5 rounded text-xs font-medium shrink-0", STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700")}>
             {STATUS_LABEL[order.status] ?? order.status}
           </span>
-          <span className="text-xs text-muted-foreground font-mono">
-            #{order.id.slice(0, 6).toUpperCase()}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {fmt(order.created_at)}
-          </span>
-          {order.billed_at && (
-            <span className="text-xs text-green-600">✓ Billed {fmt(order.billed_at)}</span>
-          )}
+          <span className="text-xs text-muted-foreground font-mono">#{order.id.slice(0, 6).toUpperCase()}</span>
+          <span className="text-xs text-muted-foreground">{fmt(order.created_at)}</span>
+          {order.billed_at && <span className="text-xs text-green-600">✓ Billed {fmt(order.billed_at)}</span>}
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className="text-sm font-semibold tabular-nums">
-            ₹{order.order_total.toFixed(2)}
-          </span>
-          {showItems
-            ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-            : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+          <span className="text-sm font-semibold tabular-nums">₹{order.order_total.toFixed(2)}</span>
+          {showItems ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
         </div>
       </div>
-
       {showItems && (
         <div className="mt-2 pl-2 space-y-1">
           {order.items.map((item) => (

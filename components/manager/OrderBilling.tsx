@@ -85,7 +85,7 @@ export default function OrderBilling({ restaurantId }: Props) {
       if (billedOrder) {
         setUnbilledOrders((prev) => prev.filter((o) => o.id !== orderId));
         setBilledOrders((prev) => [
-          { ...billedOrder, total_amount: result.total || 0, billed_at: new Date().toISOString() },
+          { ...billedOrder, total_amount: result.net || 0, billed_at: new Date().toISOString() },
           ...prev,
         ]);
       }
