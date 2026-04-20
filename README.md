@@ -13,11 +13,12 @@ QR-based ordering platform. Customers scan a table QR code, browse the menu, and
 5. [Database Schema](#database-schema)
 6. [Order Flow](#order-flow)
 7. [Real-time System](#real-time-system)
-8. [SaaS & Subscriptions](#saas--subscriptions)
-9. [Admin Panel](#admin-panel)
-10. [Feature Reference](#feature-reference)
-11. [Deployment](#deployment)
-12. [Troubleshooting](#troubleshooting)
+8. [Coupon System](#coupon-system)
+9. [SaaS & Subscriptions](#saas--subscriptions)
+10. [Admin Panel](#admin-panel)
+11. [Feature Reference](#feature-reference)
+12. [Deployment](#deployment)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -72,8 +73,8 @@ NEXT_PUBLIC_ADMIN_PIN=change_me
 
 ```
 app/
-├── page.tsx                          # Landing page → /onboarding or /login
-├── onboarding/                       # New restaurant signup (2-step)
+├── page.tsx                          # Landing page with pricing
+├── onboarding/                       # New restaurant signup (3-step: account → restaurant → plan)
 ├── login/                            # Staff login
 ├── admin/                            # Super-admin panel (/admin)
 ├── manager/[restaurant_id]/          # Manager dashboard
@@ -83,47 +84,55 @@ app/
 ├── unauthorized/                     # Access denied
 └── api/
     ├── onboard/                      # POST: create restaurant + defaults
-    ├── stripe/checkout/              # POST: create Stripe checkout session
-    ├── stripe/webhook/               # POST: handle Stripe events
-    └── admin/toggle-restaurant/      # POST: activate/deactivate restaurant
+    ├── coupons/validate/             # POST: validate a coupon code
+    ├── stripe/checkout/              # POST: create Stripe checkout session (with coupon + 7-day trial)
+    ├── stripe/webhook/               # POST: handle Stripe events + record coupon usage
+    └── admin/
+        ├── toggle-restaurant/        # POST: activate/deactivate restaurant
+        └── coupons/                  # GET/POST: list/create coupons
+            └── [id]/                 # PATCH/DELETE: edit/delete coupon
 
 components/
 ├── manager/
-│   ├── TableSessions.tsx             # Unified billing + order view (grouped by table)
-│   ├── MenuManager.tsx               # CRUD menu items
-│   ├── OrderLog.tsx                  # Full order history with timings
-│   ├── Analytics.tsx                 # Sales + performance metrics
-│   ├── TablesManager.tsx             # Table setup + QR codes
-│   ├── FloorsManager.tsx             # Floor/section management
-│   ├── StaffManager.tsx              # Waiter CRUD + availability
+│   ├── TableSessions.tsx
+│   ├── MenuManager.tsx
+│   ├── OrderLog.tsx
+│   ├── Analytics.tsx
+│   ├── TablesManager.tsx
+│   ├── FloorsManager.tsx
+│   ├── StaffManager.tsx
 │   ├── SettingsPanel.tsx             # Routing mode + geo-fencing + subscription
-│   └── UpgradeBanner.tsx             # Free → Pro upgrade CTA
+│   └── UpgradeBanner.tsx             # Upgrade CTA with coupon input
+├── admin/
+│   └── CouponManager.tsx             # Full coupon CRUD UI
 ├── kitchen/
 │   ├── OrderCard.tsx
 │   └── OrderItemList.tsx
 ├── waiter/
 │   └── WaiterOrderCard.tsx
-├── CartDrawer.tsx                    # Cart + customer info form
-├── OrderStatusTracker.tsx            # Customer-facing live order status
+├── PricingSection.tsx                # Homepage single-plan pricing card
+├── CouponInput.tsx                   # Reusable coupon code input component
+├── CartDrawer.tsx
+├── OrderStatusTracker.tsx
 ├── MenuItemCard.tsx
 └── ProtectedRoute.tsx
 
 hooks/
-├── useAuth.ts                        # Auth state + profile loading
-├── useCart.ts                        # Cart state
-├── useCustomerSession.ts             # Customer info persistence + active orders
-├── useKitchenOrders.ts               # Kitchen real-time orders
-├── useWaiterOrders.ts                # Waiter real-time orders
-├── useManagerRealtime.ts             # Manager dashboard real-time
-├── useRealtimeMenu.ts                # Menu change subscriptions
-├── useRealtimeOrderStatus.ts         # Customer order status
-├── useGeofence.ts                    # Location-based ordering restriction
-└── useSubscription.ts                # Plan + limits + Stripe upgrade
+├── useAuth.ts
+├── useCart.ts
+├── useCustomerSession.ts
+├── useKitchenOrders.ts
+├── useWaiterOrders.ts
+├── useManagerRealtime.ts
+├── useRealtimeMenu.ts
+├── useRealtimeOrderStatus.ts
+├── useGeofence.ts
+└── useSubscription.ts                # Plan + limits + Stripe upgrade (accepts coupon code)
 
 lib/
-├── supabase.ts                       # Singleton Supabase client
-├── api.ts                            # All data-fetching functions
-├── stripe.ts                         # Server-side Stripe client
+├── supabase.ts
+├── api.ts
+├── stripe.ts                         # STRIPE_PLANS with price + trialDays
 └── utils.ts
 ```
 
@@ -133,8 +142,8 @@ lib/
 
 | URL | Who | Description |
 |-----|-----|-------------|
-| `/` | Public | Landing page |
-| `/onboarding` | New owners | Create account + restaurant |
+| `/` | Public | Landing page with pricing |
+| `/onboarding` | New owners | Create account + restaurant + choose plan |
 | `/login` | Staff | Email/password login |
 | `/admin` | Super admin | Platform management (PIN-gated) |
 | `/manager/[id]` | Manager | Full dashboard |
@@ -155,11 +164,13 @@ lib/
 | `floors` | `id`, `restaurant_id`, `name`, `price_multiplier` |
 | `tables` | `id`, `restaurant_id`, `floor_id`, `table_number`, `capacity`, `qr_code_url` |
 | `menu_items` | `id`, `restaurant_id`, `name`, `price`, `is_available`, `image_url`, `tags`, `description` |
-| `users` | `id`, `restaurant_id`, `auth_id`, `name`, `role`, `email`, `is_active`, `is_super_admin` |
-| `orders` | `id`, `restaurant_id`, `table_id`, `waiter_id`, `status`, `customer_name`, `customer_phone`, `party_size`, `total_amount`, `billed_at`, `confirmed_at`, `preparing_at`, `ready_at`, `served_at` |
+| `users` | `id`, `restaurant_id`, `auth_id`, `name`, `role`, `email`, `is_active` |
+| `orders` | `id`, `restaurant_id`, `table_id`, `waiter_id`, `status`, `total_amount`, `billed_at`, `confirmed_at`, `preparing_at`, `ready_at`, `served_at` |
 | `order_items` | `id`, `order_id`, `menu_item_id`, `quantity`, `price` |
 | `order_status_logs` | `id`, `order_id`, `old_status`, `new_status`, `changed_by`, `created_at` |
 | `subscriptions` | `id`, `restaurant_id`, `plan`, `status`, `stripe_customer_id`, `stripe_subscription_id`, `current_period_end` |
+| `coupons` | `id`, `code`, `type`, `value`, `max_uses`, `used_count`, `expires_at`, `is_active`, `applicable_plans`, `stripe_coupon_id` |
+| `coupon_usages` | `id`, `coupon_id`, `restaurant_id`, `used_at` |
 
 ### Order status machine
 
@@ -180,16 +191,13 @@ served ────────────────────────�
 | Function | Purpose |
 |----------|---------|
 | `onboard_restaurant(auth_id, name, email, owner_name)` | Creates restaurant + floor + 5 tables + manager user in one transaction |
+| `validate_coupon(code, plan, restaurant_id)` | Validates coupon — checks active, expiry, usage limit, plan match, per-restaurant reuse |
+| `record_coupon_usage(coupon_id, restaurant_id)` | Atomically increments used_count (advisory lock, idempotent) |
 | `generate_bill(order_id)` | Calculates total, sets `billed_at` |
 | `calculate_item_price(menu_item_id, table_id)` | Applies floor `price_multiplier` to base price |
-| `get_restaurant_plan(restaurant_id)` | Returns `'free'` or `'pro'` |
-| `get_plan_limits(plan)` | Returns JSON `{max_tables, max_menu_items, analytics, advanced_features}` |
 | `validate_order_status_transition()` | Trigger: enforces state machine |
 | `update_order_timestamps()` | Trigger: sets `confirmed_at`, `preparing_at`, etc. |
 | `broadcast_order_changes()` | Trigger: sends real-time events to all channels |
-| `broadcast_order_on_items_insert()` | Trigger: broadcasts INSERT after items are committed (avoids empty items bug) |
-| `auto_assign_table_waiter()` | Trigger: auto-assigns active table waiter to new orders |
-| `create_default_subscription()` | Trigger: creates free subscription on restaurant insert |
 
 ---
 
@@ -204,11 +212,20 @@ served ────────────────────────�
 6. Track order status live in "My Orders" tab
 7. Session clears when all orders at the table are billed
 
+### Billing safety
+When a table has unpaid orders, new customers scanning the same QR code are blocked from placing additional orders. `placeOrder()` returns `'UNPAID_ORDERS_EXIST'` and the cart drawer shows a clear error message.
+
 ### Auto-waiter assignment
-When a new order is placed at a table that already has an active waiter (unbilled order with `waiter_id`), the new order is automatically assigned to that same waiter via the `auto_assign_table_waiter` BEFORE INSERT trigger.
+When a new order is placed at a table that already has an active waiter, the new order is automatically assigned to that same waiter via the `auto_assign_table_waiter` BEFORE INSERT trigger.
 
 ### Floor pricing
-`calculate_item_price()` multiplies the base menu item price by the floor's `price_multiplier`. Called during order placement. Example: Rooftop floor with `1.2x` multiplier → ₹100 item becomes ₹120.
+`calculate_item_price()` multiplies the base menu item price by the floor's `price_multiplier`. Example: Rooftop floor with `1.2x` → ₹100 item becomes ₹120.
+
+### Waiter authentication
+Each waiter sees only their own orders. The waiter ID comes from `useAuth()` → `profile.id` (the authenticated user's DB profile), not a hardcoded value.
+
+### Order assignment (race condition safe)
+Order assignment uses atomic RPC calls (`assign_order_to_waiter`, `accept_order_atomic`) with table session locking to prevent two waiters from claiming the same order simultaneously.
 
 ---
 
@@ -223,63 +240,77 @@ When a new order is placed at a table that already has an active waiter (unbille
 | `manager:{restaurant_id}` | Manager dashboard | `order_changed`, `menu_changed` |
 | `customer:{restaurant_id}:{table_id}` | Customer page | `order_changed` |
 
-### Broadcast payload (order_changed)
-
-```json
-{
-  "event": "INSERT | UPDATE | DELETE",
-  "id": "order-uuid",
-  "restaurant_id": "...",
-  "table_id": "...",
-  "status": "confirmed",
-  "waiter_id": "...",
-  "total_amount": 299.00,
-  "created_at": "..."
-}
-```
-
 ### How it works
 
 1. Customer places order → `orders` INSERT
-2. `broadcast_order_on_items_insert` trigger fires after first `order_items` row (ensures items exist)
+2. `broadcast_order_on_items_insert` trigger fires after first `order_items` row
 3. Broadcasts INSERT to `kitchen:`, `waiter:`, `manager:` channels
-4. Kitchen/waiter hooks receive event → fetch full order with joins → add to state
-5. Status updates → `broadcast_order_changes` trigger fires → broadcasts UPDATE
-6. All dashboards patch the row in-place (no full reload)
+4. Status updates → `broadcast_order_changes` trigger → broadcasts UPDATE to all dashboards
 
-### Replica identity
-`orders`, `menu_items`, `order_items` all have `REPLICA IDENTITY FULL` — required for `postgres_changes` column filters to work.
+---
 
-### Supabase free tier limits
-- 500 concurrent connections
-- 100 messages/second per channel
-- Max message size: 256KB
+## Coupon System
+
+### Overview
+Flexible discount system with percentage or flat discounts, expiry, usage limits, plan targeting, and Stripe integration.
+
+### DB tables
+- `coupons` — stores all coupon definitions
+- `coupon_usages` — tracks which restaurant used which coupon (unique constraint prevents reuse)
+
+### Coupon fields
+| Field | Description |
+|-------|-------------|
+| `code` | Uppercase unique code (e.g. `LAUNCH20`) |
+| `type` | `percentage` or `flat` |
+| `value` | Percentage (0–100) or flat amount in rupees |
+| `max_uses` | NULL = unlimited |
+| `expires_at` | NULL = never expires |
+| `applicable_plans` | Array e.g. `['pro']` |
+| `stripe_coupon_id` | Cached Stripe coupon ID |
+
+### Validation rules (server-side only)
+1. Code exists
+2. `is_active = true`
+3. Not expired
+4. `used_count < max_uses` (if set)
+5. Plan is in `applicable_plans`
+6. Restaurant hasn't used it before
+
+### Stripe integration
+On checkout, the backend:
+1. Validates the coupon via `validate_coupon()`
+2. Creates or retrieves a Stripe coupon (cached in `stripe_coupon_id`)
+3. Applies it to the checkout session via `discounts: [{ coupon: stripeCouponId }]`
+4. On `checkout.session.completed` webhook → calls `record_coupon_usage()` atomically
+
+### Admin management
+`/admin` → Coupons tab → full CRUD: create, edit, toggle active, delete.
+
+### Frontend
+- Homepage pricing card: no coupon input (no restaurantId yet)
+- Onboarding step 3 (Plan): coupon input with live price update
+- Manager Settings → Subscription: coupon input in UpgradeBanner
 
 ---
 
 ## SaaS & Subscriptions
 
-### Plans
-
-| Feature | Free | Pro |
-|---------|------|-----|
-| Tables | 5 | Unlimited |
-| Menu items | 20 | Unlimited |
-| Analytics | ❌ | ✅ |
-| Advanced features | ❌ | ✅ |
+### Pricing
+- **Pro Plan**: ₹799/month
+- **Trial**: 7-day free trial on all new subscriptions (no credit card required)
 
 ### Onboarding flow
-1. `/onboarding` → user creates account (email/password)
-2. Names their restaurant
-3. `POST /api/onboard` calls `onboard_restaurant()` DB function
-4. Creates: restaurant + Main Floor + 5 tables + manager profile + free subscription
-5. Redirects to `/manager/[restaurant_id]`
+1. `/onboarding` step 1 → create account (email/password)
+2. Step 2 → name restaurant → `POST /api/onboard`
+3. Step 3 → choose plan (apply coupon, upgrade to Pro or skip to Starter)
+4. Creates: restaurant + Main Floor + 5 tables + manager profile + subscription row
 
 ### Stripe setup
 1. Create product "QR Order Pro" in Stripe Dashboard
-2. Add monthly price → copy Price ID → set `STRIPE_PRO_PRICE_ID`
+2. Add monthly price (₹799) → copy Price ID → set `STRIPE_PRO_PRICE_ID`
 3. Add webhook endpoint: `https://yourdomain.com/api/stripe/webhook`
-4. Events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`
+4. Events to enable: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`
 5. Copy signing secret → set `STRIPE_WEBHOOK_SECRET`
 
 **Local testing:**
@@ -290,7 +321,6 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 ### Enforcing plan limits
 ```tsx
 const { limits } = useSubscription(restaurantId);
-
 if (tables.length >= limits.max_tables) {
   // show <UpgradeBanner restaurantId={restaurantId} />
 }
@@ -302,51 +332,36 @@ if (tables.length >= limits.max_tables) {
 
 URL: `/admin`
 
-Protected by `NEXT_PUBLIC_ADMIN_PIN` (default: `admin123` — **change this**).
+Protected by `NEXT_PUBLIC_ADMIN_PIN`. Requires `SUPABASE_SERVICE_ROLE_KEY` for full access.
 
-**Requires `SUPABASE_SERVICE_ROLE_KEY`** to see inactive restaurants and toggle them. Without it, a yellow warning banner appears and the toggle may fail.
-
-Features:
+### Restaurants tab
 - Stats: total restaurants, active count, pro subscribers, total orders
-- Table: all restaurants with plan, subscription status, order count, created date
-- Toggle active/inactive per restaurant (with confirmation dialog)
-- Search by name or ID
-- Lock button to re-show PIN screen
+- Table: all restaurants with plan, subscription status, order count
+- Toggle active/inactive per restaurant
 
-When a restaurant is deactivated (`is_active = false`):
-- Hidden from all RLS SELECT policies
-- Customer ordering pages return 404
-- Staff dashboards become inaccessible
+### Coupons tab
+- Create coupons: code, type (% or flat), value, expiry, max uses, applicable plans
+- List all coupons with usage count, status, expiry
+- Edit, toggle active/inactive, delete
+
+When a restaurant is deactivated (`is_active = false`), customer ordering pages return 404 and staff dashboards become inaccessible.
 
 ---
 
 ## Feature Reference
 
 ### Geo-fencing
-Configure in Manager → Settings → Geo-fencing section.
-
-- Toggle on/off per restaurant
-- Set coordinates manually or click "Use my location"
-- Set radius in metres (recommended: 50–200m for indoor dining)
-- When enabled: customers outside the radius see an error and cannot add to cart
+Manager → Settings → Geo-fencing. Set coordinates + radius. Customers outside the radius cannot add to cart.
 
 ### Order routing modes
-- **Direct to kitchen**: orders go straight to kitchen (`status = 'pending'`)
-- **Waiter first**: waiter must accept before kitchen sees it (`status = 'pending_waiter'`)
-
-Configure in Manager → Settings → Order Routing.
+- **Direct to kitchen**: `status = 'pending'`
+- **Waiter first**: `status = 'pending_waiter'` — waiter must accept before kitchen sees it
 
 ### Table sessions (billing)
-Manager → Tables tab groups all unbilled orders from the same table into one session card.
-
-- Shows customer name, phone, guest count, waiter, running total
-- "Bill (N)" button bills all served orders for that table at once
-- Past sessions (billed) collapsed by default
+Manager → Tables tab groups all unbilled orders per table. "Bill (N)" bills all served orders at once.
 
 ### QR codes
-Each table has a unique QR code at `/r/[restaurant_id]/t/[table_id]`.
-
-Generate/print from Manager → Table Setup → click QR icon on any table card.
+Each table has a unique QR at `/r/[restaurant_id]/t/[table_id]`. Generate/print from Manager → Table Setup.
 
 ---
 
@@ -359,53 +374,49 @@ npm i -g vercel
 vercel --prod
 ```
 
-Add all env vars in Vercel Dashboard → Project → Settings → Environment Variables.
-
-Mark `SUPABASE_SERVICE_ROLE_KEY` and `STRIPE_SECRET_KEY` as **server-only** (not exposed to browser).
+Add all env vars in Vercel Dashboard → Project → Settings → Environment Variables. Mark `SUPABASE_SERVICE_ROLE_KEY` and `STRIPE_SECRET_KEY` as server-only.
 
 ### Supabase project setup
 1. Create project at [supabase.com](https://supabase.com)
-2. Run the migration files in `supabase/` via SQL Editor (in order)
-3. Enable Realtime for tables: `orders`, `order_items`, `menu_items`, `users`, `subscriptions`
-4. Create auth users for demo staff (Dashboard → Authentication → Users)
-5. Run `supabase/setup_auth_users.sql` to link auth users to profiles
+2. Run migration files in `supabase/` via SQL Editor (in order)
+3. Enable Realtime for: `orders`, `order_items`, `menu_items`, `users`, `subscriptions`
+4. Run `supabase/setup_auth_users.sql` to link auth users to profiles
 
 ---
 
 ## Troubleshooting
 
 ### Real-time not working
-1. Check `REPLICA IDENTITY FULL` is set:
-   ```sql
-   SELECT relname, relreplident FROM pg_class
-   WHERE relname IN ('orders', 'menu_items', 'order_items');
-   -- Should show 'f' (full) for all three
-   ```
-2. Check tables are in the realtime publication:
-   ```sql
-   SELECT tablename FROM pg_publication_tables
-   WHERE pubname = 'supabase_realtime';
-   ```
-3. Check triggers exist:
-   ```sql
-   SELECT tgname, tgrelid::regclass FROM pg_trigger
-   WHERE tgname IN ('orders_broadcast_trigger', 'on_order_item_insert', 'auto_assign_table_waiter_trigger');
-   ```
+```sql
+-- Check REPLICA IDENTITY FULL
+SELECT relname, relreplident FROM pg_class
+WHERE relname IN ('orders', 'menu_items', 'order_items');
+-- Should show 'f' for all three
+
+-- Check realtime publication
+SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
+```
 
 ### Orders showing no items in waiter/kitchen
-The broadcast fires on `order_items` INSERT (not `orders` INSERT) to ensure items exist when clients fetch. If items are missing, check the `on_order_item_insert` trigger exists on `order_items`.
-
-### Waiter not seeing new orders
-The `waiter:` channel was historically missing from the broadcast function. Verify `broadcast_order_changes()` sends to all four channels: `kitchen:`, `waiter:`, `manager:`, `customer:`.
+The broadcast fires on `order_items` INSERT to ensure items exist. Check the `on_order_item_insert` trigger exists on `order_items`.
 
 ### Admin toggle not working
-`SUPABASE_SERVICE_ROLE_KEY` is required. The anon key cannot update `is_active` due to RLS. Get it from Supabase Dashboard → Settings → API → `service_role`.
+`SUPABASE_SERVICE_ROLE_KEY` is required — the anon key cannot update `is_active` due to RLS.
+
+### Coupon not applying
+- Check `is_active = true` and not expired in the `coupons` table
+- Check `applicable_plans` includes the plan being purchased
+- Check `coupon_usages` — the restaurant may have already used it
+- Stripe coupon errors appear in server logs at `[stripe/checkout]`
 
 ### Customer info form showing on every order
-Customer info is stored in `sessionStorage` keyed by `tableId`. It clears when all orders at the table are billed. If it keeps showing, check `billed_at` is being set correctly by `generate_bill()`.
+Customer info is stored in `sessionStorage` keyed by `tableId`. Clears when all orders are billed. Check `billed_at` is being set by `generate_bill()`.
 
 ### Floor pricing not applying
-`calculate_item_price(menu_item_id, table_id)` must be called during order placement. Check the table has a `floor_id` set and the floor has a `price_multiplier` != 1.0.
+Check the table has a `floor_id` set and the floor has `price_multiplier != 1.0`.
 
 ### Auth redirect loop
-If a user has no profile in the `users` table (new signup without completing onboarding), `redirectToDashboard()` sends them to `/onboarding`. Complete the onboarding flow to create the profile.
+User has no profile in `users` table — complete the onboarding flow to create it.
+
+### Waiter seeing wrong orders
+Each waiter's ID comes from `useAuth()` → `profile.id`. If a waiter sees another's orders, check their auth profile is correctly linked via `auth_id` in the `users` table.
