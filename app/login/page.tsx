@@ -118,9 +118,9 @@ function LoginForm() {
               </div>
             </div>
 
-            {(loginError || error) && (
+            {loginError && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-                {loginError || error}
+                {loginError}
               </div>
             )}
 
