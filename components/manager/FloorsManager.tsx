@@ -79,8 +79,8 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
     <div>
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h2 className="text-2xl font-bold">Floors & Sections</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h2 className="text-lg font-semibold">Floors & Sections</h2>
+          <p className="text-sm text-muted-foreground">
             Manage different floors/sections with custom pricing
           </p>
         </div>

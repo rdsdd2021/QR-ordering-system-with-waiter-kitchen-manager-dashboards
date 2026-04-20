@@ -26,10 +26,31 @@ export default function OnboardingPage() {
   const [busy, setBusy]                 = useState(false);
 
   useEffect(() => {
-    getSupabaseClient().auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) setStep("restaurant");
+    const supabase = getSupabaseClient();
+    
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) return;
+
+      // User is logged in — check if they already have a restaurant
+      const { data: profile } = await supabase
+        .from("users")
+        .select("id, role, restaurant_id")
+        .eq("auth_id", session.user.id)
+        .maybeSingle();
+
+      if (profile?.restaurant_id) {
+        // User already has a restaurant — redirect to their dashboard
+        const role = profile.role;
+        if (role === "manager") router.push(`/manager/${profile.restaurant_id}`);
+        else if (role === "waiter") router.push(`/waiter/${profile.restaurant_id}`);
+        else if (role === "kitchen") router.push(`/kitchen/${profile.restaurant_id}`);
+        return;
+      }
+
+      // User is logged in but has no restaurant — proceed to restaurant step
+      setStep("restaurant");
     });
-  }, []);
+  }, [router]);
 
   async function handleAccountSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,21 +65,33 @@ export default function OnboardingPage() {
       if (signUpError.message.toLowerCase().includes("already registered")) {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) { setError(signInError.message); setBusy(false); return; }
-        setBusy(false); setStep("restaurant"); return;
+      } else {
+        setError(signUpError.message); setBusy(false); return;
       }
-      setError(signUpError.message); setBusy(false); return;
     }
 
-    // Step 2: signUp succeeded — but if email confirmation is required,
-    // there's no session yet. Always sign in to get a real session.
+    // Step 2: Always sign in to get a real session (handles email confirmation being disabled)
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     if (signInError) {
-      // Email confirmation is required and user hasn't confirmed yet.
-      // This happens on hosted Supabase when "Confirm email" is enabled.
-      setError(
-        "Account created! Please check your inbox for a confirmation email, then return here to sign in."
-      );
+      setError("Account created! Please check your inbox for a confirmation email, then return here to sign in.");
       setBusy(false); return;
+    }
+
+    // Step 3: Check if this user already has a restaurant
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      const { data: profile } = await supabase
+        .from("users")
+        .select("role, restaurant_id")
+        .eq("auth_id", session.user.id)
+        .maybeSingle();
+
+      if (profile?.restaurant_id) {
+        // Already onboarded — redirect to dashboard
+        if (profile.role === "manager") { router.push(`/manager/${profile.restaurant_id}`); return; }
+        if (profile.role === "waiter")  { router.push(`/waiter/${profile.restaurant_id}`);  return; }
+        if (profile.role === "kitchen") { router.push(`/kitchen/${profile.restaurant_id}`); return; }
+      }
     }
 
     setBusy(false);

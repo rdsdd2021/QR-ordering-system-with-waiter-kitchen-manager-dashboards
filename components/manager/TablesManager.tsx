@@ -317,8 +317,8 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
     <div>
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h2 className="text-2xl font-bold">Tables Management</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h2 className="text-lg font-semibold">Table Setup</h2>
+          <p className="text-sm text-muted-foreground">
             Manage tables and view real-time availability
           </p>
         </div>
