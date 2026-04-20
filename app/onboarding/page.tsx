@@ -19,6 +19,7 @@ const PRO_FEATURES  = ["Unlimited tables & menu items", "Advanced analytics", "F
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("account");
+  const [checking, setChecking] = useState(true); // true until auth check completes
 
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
@@ -64,7 +65,10 @@ export default function OnboardingPage() {
     const supabase = getSupabaseClient();
     
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user) return;
+      if (!session?.user) {
+        setChecking(false);
+        return;
+      }
 
       // User is logged in — check if they already have a restaurant
       const { data: profile } = await supabase
@@ -74,7 +78,7 @@ export default function OnboardingPage() {
         .maybeSingle();
 
       if (profile?.restaurant_id) {
-        // User already has a restaurant — redirect to their dashboard
+        // User already has a restaurant — redirect to their dashboard (checking stays true = no flash)
         const role = profile.role;
         if (role === "manager") router.push(`/manager/${profile.restaurant_id}`);
         else if (role === "waiter") router.push(`/waiter/${profile.restaurant_id}`);
@@ -84,6 +88,7 @@ export default function OnboardingPage() {
 
       // User is logged in but has no restaurant — proceed to restaurant step
       setStep("restaurant");
+      setChecking(false);
     });
   }, [router]);
 
@@ -155,6 +160,13 @@ export default function OnboardingPage() {
     setNewRestaurantId(restaurantId);
     setStep("plan");
   }
+
+  // Block render entirely until auth check completes — prevents flash of onboarding form
+  if (checking) return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
 
   if (step === "loading") return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
