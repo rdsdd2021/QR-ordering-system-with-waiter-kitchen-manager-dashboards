@@ -77,39 +77,39 @@
 }
 
 :root {
-  /* Warm amber/orange restaurant palette */
-  --background: oklch(0.99 0.005 75);
-  --foreground: oklch(0.2 0.03 50);
+  /* Playful vibrant restaurant palette */
+  --background: oklch(0.98 0.012 75);
+  --foreground: oklch(0.18 0.04 50);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.03 50);
+  --card-foreground: oklch(0.18 0.04 50);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.03 50);
-  --primary: oklch(0.62 0.18 42);        /* warm amber-orange */
+  --popover-foreground: oklch(0.18 0.04 50);
+  --primary: oklch(0.60 0.22 38);        /* vivid orange */
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.015 75);
-  --secondary-foreground: oklch(0.25 0.03 50);
-  --muted: oklch(0.96 0.01 75);
-  --muted-foreground: oklch(0.52 0.04 60);
-  --accent: oklch(0.95 0.03 75);
-  --accent-foreground: oklch(0.25 0.03 50);
+  --secondary: oklch(0.94 0.025 75);
+  --secondary-foreground: oklch(0.22 0.04 50);
+  --muted: oklch(0.95 0.015 75);
+  --muted-foreground: oklch(0.50 0.05 60);
+  --accent: oklch(0.55 0.20 165);        /* teal accent */
+  --accent-foreground: oklch(0.99 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0.015 75);
-  --input: oklch(0.91 0.015 75);
-  --ring: oklch(0.62 0.18 42);
-  --chart-1: oklch(0.62 0.18 42);
-  --chart-2: oklch(0.72 0.14 60);
-  --chart-3: oklch(0.55 0.15 30);
-  --chart-4: oklch(0.80 0.10 80);
-  --chart-5: oklch(0.45 0.12 40);
+  --border: oklch(0.89 0.02 75);
+  --input: oklch(0.89 0.02 75);
+  --ring: oklch(0.60 0.22 38);
+  --chart-1: oklch(0.60 0.22 38);
+  --chart-2: oklch(0.55 0.20 165);
+  --chart-3: oklch(0.65 0.20 300);
+  --chart-4: oklch(0.75 0.18 80);
+  --chart-5: oklch(0.50 0.18 25);
   --radius: 0.75rem;
-  --sidebar: oklch(0.97 0.01 75);
-  --sidebar-foreground: oklch(0.2 0.03 50);
-  --sidebar-primary: oklch(0.62 0.18 42);
+  --sidebar: oklch(0.97 0.012 75);
+  --sidebar-foreground: oklch(0.18 0.04 50);
+  --sidebar-primary: oklch(0.60 0.22 38);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.95 0.03 75);
-  --sidebar-accent-foreground: oklch(0.25 0.03 50);
-  --sidebar-border: oklch(0.91 0.015 75);
-  --sidebar-ring: oklch(0.62 0.18 42);
+  --sidebar-accent: oklch(0.94 0.025 75);
+  --sidebar-accent-foreground: oklch(0.22 0.04 50);
+  --sidebar-border: oklch(0.89 0.02 75);
+  --sidebar-ring: oklch(0.60 0.22 38);
 }
 
 .dark {
@@ -144,4 +144,43 @@
   --sidebar-accent-foreground: oklch(0.96 0.01 75);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.70 0.18 50);
+}
+
+/* ── Playful interaction animations ─────────────────────────── */
+@keyframes pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.18); }
+  70%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20%       { transform: rotate(-6deg); }
+  40%       { transform: rotate(6deg); }
+  60%       { transform: rotate(-4deg); }
+  80%       { transform: rotate(4deg); }
+}
+
+@keyframes badge-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+@keyframes float-up {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-28px) scale(0.8); }
+}
+
+.animate-pop        { animation: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.animate-wiggle     { animation: wiggle 0.5s ease-in-out; }
+.animate-badge-pop  { animation: badge-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.animate-float-up   { animation: float-up 0.6s ease-out forwards; }
+
+/* Smooth press feedback on all interactive elements */
+button:active:not(:disabled),
+[role="button"]:active:not(:disabled) {
+  transform: scale(0.96);
+  transition: transform 0.1s ease;
 }

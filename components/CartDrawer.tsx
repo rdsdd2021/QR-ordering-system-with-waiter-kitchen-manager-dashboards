@@ -92,13 +92,13 @@ export default function CartDrawer({
   // ── Success ──────────────────────────────────────────────────────────
   if (step === "success") {
     return (
-      <div className="bg-card border-t px-4 py-5 text-center">
-        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-green-100">
-          <CheckCircle2 className="h-6 w-6 text-green-600" />
+      <div className="bg-card border-t px-4 py-6 text-center">
+        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-200 animate-pop">
+          <CheckCircle2 className="h-7 w-7 text-white" />
         </div>
-        <p className="font-semibold text-sm">Order placed!</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">Track it in My Orders</p>
-        {orderId && <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">#{orderId.slice(0, 8).toUpperCase()}</p>}
+        <p className="font-bold text-base">Order placed! 🎉</p>
+        <p className="mt-1 text-xs text-muted-foreground">Track it in My Orders</p>
+        {orderId && <p className="mt-2 font-mono text-[11px] bg-muted rounded-lg px-3 py-1.5 inline-block text-muted-foreground">#{orderId.slice(0, 8).toUpperCase()}</p>}
       </div>
     );
   }
@@ -106,9 +106,12 @@ export default function CartDrawer({
   // ── Loading ──────────────────────────────────────────────────────────
   if (step === "loading") {
     return (
-      <div className="bg-card border-t px-4 py-5 text-center">
-        <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
-        <p className="mt-2 text-xs text-muted-foreground">Placing your order…</p>
+      <div className="bg-card border-t px-4 py-6 text-center">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+        <p className="text-sm font-medium">Placing your order…</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">Just a moment!</p>
       </div>
     );
   }
@@ -117,7 +120,7 @@ export default function CartDrawer({
   if (step === "error") {
     return (
       <div className="bg-card border-t px-4 py-4 space-y-3">
-        <p className="text-sm text-destructive text-center">Something went wrong. Please try again.</p>
+        <p className="text-sm text-destructive text-center animate-wiggle">Something went wrong. Please try again.</p>
         <Button className="w-full h-10" onClick={() => setStep("cart")}>Back to cart</Button>
       </div>
     );
@@ -180,6 +183,9 @@ export default function CartDrawer({
   // Expanded: shows item list above the bar
   return (
     <div className="bg-card border-t shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+      {/* Gradient accent strip */}
+      <div className="h-1 w-full bg-gradient-to-r from-orange-400 via-amber-400 to-yellow-400" />
+
       {/* Expanded item list */}
       {expanded && (
         <div className="max-h-56 overflow-y-auto overscroll-contain divide-y divide-border/60">
@@ -189,19 +195,22 @@ export default function CartDrawer({
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
+                  className={cn(
+                    "flex h-6 w-6 items-center justify-center rounded-full transition-all duration-150 active:scale-90",
+                    item.quantity === 1 ? "bg-rose-100 text-rose-600 hover:bg-rose-200" : "bg-orange-100 text-orange-600 hover:bg-orange-200"
+                  )}
                 >
-                  {item.quantity === 1 ? <Trash2 className="h-3 w-3 text-destructive" /> : <Minus className="h-3 w-3" />}
+                  {item.quantity === 1 ? <Trash2 className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
                 </button>
-                <span className="w-5 text-center text-sm font-semibold tabular-nums">{item.quantity}</span>
+                <span className="w-5 text-center text-sm font-bold tabular-nums">{item.quantity}</span>
                 <button
                   onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-muted hover:bg-muted/80 transition-colors"
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all duration-150 active:scale-90"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
               </div>
-              <p className="w-14 text-right text-sm font-semibold tabular-nums shrink-0">{fmt(item.price * item.quantity)}</p>
+              <p className="w-14 text-right text-sm font-bold tabular-nums shrink-0 text-primary">{fmt(item.price * item.quantity)}</p>
             </div>
           ))}
         </div>
@@ -212,9 +221,9 @@ export default function CartDrawer({
         {/* Toggle expand */}
         <button
           onClick={() => setExpanded(v => !v)}
-          className="flex items-center gap-1.5 text-sm font-semibold shrink-0"
+          className="flex items-center gap-1.5 text-sm font-semibold shrink-0 hover:opacity-80 transition-opacity"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-[11px] font-bold">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white text-[11px] font-bold shadow-sm">
             {itemCount}
           </span>
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />}
@@ -230,12 +239,12 @@ export default function CartDrawer({
 
         <span className="text-sm font-bold tabular-nums">{fmt(totalPrice)}</span>
 
-        <Button
-          className="h-9 px-5 font-semibold text-sm rounded-xl shrink-0"
+        <button
+          className="h-10 px-5 font-bold text-sm rounded-xl shrink-0 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 hover:shadow-lg hover:shadow-orange-300/40 hover:scale-105 active:scale-95 transition-all duration-150"
           onClick={handleProceed}
         >
-          Place order
-        </Button>
+          Place order 🍽️
+        </button>
       </div>
     </div>
   );
