@@ -59,12 +59,12 @@ export function useSubscription(restaurantId: string | null) {
   const isPro = plan === "pro" && isActive;
   const limits: PlanLimits = isPro ? PRO_LIMITS : FREE_LIMITS;
 
-  async function startUpgrade(returnUrl: string) {
+  async function startUpgrade(returnUrl: string, couponCode?: string) {
     if (!restaurantId) return;
     const res = await fetch("/api/stripe/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ restaurantId, returnUrl }),
+      body: JSON.stringify({ restaurantId, returnUrl, plan: "pro", couponCode }),
     });
     const { url, error } = await res.json();
     if (error) { alert(error); return; }

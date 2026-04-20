@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
         const restaurantId = session.metadata?.restaurant_id;
+        const couponId     = session.metadata?.coupon_id;
         const subscriptionId = session.subscription as string;
         if (!restaurantId || !subscriptionId) break;
 
@@ -47,6 +48,14 @@ export async function POST(req: NextRequest) {
           current_period_end:     new Date((stripeSub.items.data[0]?.current_period_end ?? 0) * 1000).toISOString(),
           updated_at:             new Date().toISOString(),
         }, { onConflict: "restaurant_id" });
+
+        // Record coupon usage (idempotent, race-condition safe via advisory lock)
+        if (couponId) {
+          await supabase.rpc("record_coupon_usage", {
+            p_coupon_id:     couponId,
+            p_restaurant_id: restaurantId,
+          });
+        }
         break;
       }
 

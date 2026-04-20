@@ -2,17 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Store, User, Mail, Lock, ArrowRight, CheckCircle2, QrCode } from "lucide-react";
+import { Loader2, Store, User, Mail, Lock, ArrowRight, CheckCircle2, QrCode, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getSupabaseClient } from "@/lib/supabase";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import CouponInput, { type CouponResult } from "@/components/CouponInput";
 
-type Step = "account" | "restaurant" | "loading" | "done";
+type Step = "account" | "restaurant" | "plan" | "loading" | "done";
 
 const FREE_FEATURES = ["5 tables", "20 menu items", "QR ordering", "Kitchen & waiter dashboards", "Real-time updates"];
+const PRO_FEATURES  = ["Unlimited tables & menu items", "Advanced analytics", "Floor-based pricing", "Priority support", "Geo-fencing"];
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -24,6 +26,39 @@ export default function OnboardingPage() {
   const [restaurantName, setRestaurantName] = useState("");
   const [error, setError]               = useState("");
   const [busy, setBusy]                 = useState(false);
+  const [newRestaurantId, setNewRestaurantId] = useState<string | null>(null);
+  const [coupon, setCoupon] = useState<CouponResult | null>(null);
+  const [upgrading, setUpgrading] = useState(false);
+
+  const PRO_PRICE_PAISE = 79900;
+  const discountedPaise = coupon
+    ? coupon.type === "percentage"
+      ? PRO_PRICE_PAISE - Math.round((PRO_PRICE_PAISE * coupon.value) / 100)
+      : Math.max(0, PRO_PRICE_PAISE - Math.round(coupon.value * 100))
+    : PRO_PRICE_PAISE;
+  const finalPrice = `₹${(discountedPaise / 100).toFixed(0)}`;
+
+  async function handleUpgrade() {
+    if (!newRestaurantId) return;
+    setUpgrading(true);
+    const res = await fetch("/api/stripe/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        restaurantId: newRestaurantId,
+        returnUrl: `${window.location.origin}/manager/${newRestaurantId}`,
+        plan: "pro",
+        couponCode: coupon?.code,
+      }),
+    });
+    const { url, error: checkoutError } = await res.json();
+    if (checkoutError) { alert(checkoutError); setUpgrading(false); return; }
+    window.location.href = url;
+  }
+
+  function skipToFree() {
+    if (newRestaurantId) router.push(`/manager/${newRestaurantId}`);
+  }
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -117,8 +152,8 @@ export default function OnboardingPage() {
     });
     const { restaurantId, error: onboardError } = await res.json();
     if (onboardError) { setError(onboardError); setStep("restaurant"); setBusy(false); return; }
-    setStep("done");
-    setTimeout(() => router.push(`/manager/${restaurantId}`), 1500);
+    setNewRestaurantId(restaurantId);
+    setStep("plan");
   }
 
   if (step === "loading") return (
@@ -158,7 +193,7 @@ export default function OnboardingPage() {
             </p>
           </div>
           <div className="space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Free plan includes</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Starter plan includes</p>
             {FREE_FEATURES.map(f => (
               <div key={f} className="flex items-center gap-2.5 text-sm">
                 <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
@@ -167,7 +202,7 @@ export default function OnboardingPage() {
             ))}
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">No credit card required</p>
+        <p className="text-xs text-muted-foreground">7-day free trial · No credit card required</p>
       </div>
 
       {/* Right panel */}
@@ -183,21 +218,24 @@ export default function OnboardingPage() {
 
           {/* Step indicator */}
           <div className="flex items-center gap-3">
-            {(["account", "restaurant"] as const).map((s, i) => {
-              const done = step === "restaurant" && s === "account";
+            {(["account", "restaurant", "plan"] as const).map((s, i) => {
+              const steps: Step[] = ["account", "restaurant", "plan"];
+              const currentIdx = steps.indexOf(step as any);
+              const thisIdx = i;
+              const done = currentIdx > thisIdx;
               const active = step === s;
               return (
                 <div key={s} className="flex items-center gap-2 flex-1">
                   <div className={cn(
                     "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold shrink-0 transition-colors",
-                    done  ? "bg-green-500 text-white" :
+                    done   ? "bg-green-500 text-white" :
                     active ? "bg-primary text-primary-foreground" :
-                    "bg-muted text-muted-foreground"
+                             "bg-muted text-muted-foreground"
                   )}>
                     {done ? "✓" : i + 1}
                   </div>
                   <span className={cn("text-xs capitalize", active ? "font-medium" : "text-muted-foreground")}>{s}</span>
-                  {i === 0 && <div className="flex-1 h-px bg-border" />}
+                  {i < 2 && <div className="flex-1 h-px bg-border" />}
                 </div>
               );
             })}
@@ -268,6 +306,60 @@ export default function OnboardingPage() {
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Create restaurant <ArrowRight className="ml-2 h-4 w-4" /></>}
                 </Button>
               </form>
+            </div>
+          )}
+
+          {/* Step 3 — Plan selection */}
+          {step === "plan" && (
+            <div className="space-y-6">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Choose your plan</h1>
+                <p className="mt-1 text-sm text-muted-foreground">You can always upgrade later from your dashboard</p>
+              </div>
+
+              {/* Pro card */}
+              <div className="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 text-primary" /> Pro
+                    </p>
+                    <div className="flex items-baseline gap-2 mt-0.5">
+                      <span className="text-xl font-bold">{finalPrice}</span>
+                      {coupon && discountedPaise < PRO_PRICE_PAISE && (
+                        <span className="text-sm text-muted-foreground line-through">₹{(PRO_PRICE_PAISE / 100).toFixed(0)}</span>
+                      )}
+                      <span className="text-sm text-muted-foreground">/month</span>
+                    </div>
+                  </div>
+                  <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full font-medium">Recommended</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {PRO_FEATURES.map(f => (
+                    <li key={f} className="flex items-center gap-2 text-sm">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <CouponInput
+                  plan="pro"
+                  restaurantId={newRestaurantId!}
+                  planPricePaise={PRO_PRICE_PAISE}
+                  onApply={setCoupon}
+                />
+                <Button className="w-full" onClick={handleUpgrade} disabled={upgrading}>
+                  <Zap className="h-4 w-4 mr-2" />
+                  {upgrading ? "Redirecting to payment…" : `Start 7-day free trial — ${finalPrice}/month after`}
+                </Button>
+              </div>
+
+              {/* Starter option */}
+              <button
+                onClick={skipToFree}
+                className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 underline-offset-2 hover:underline"
+              >
+                Skip and start with Starter →
+              </button>
             </div>
           )}
         </div>

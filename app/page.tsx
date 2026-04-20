@@ -1,5 +1,6 @@
 import { QrCode, Zap, Users, BarChart3, ArrowRight } from "lucide-react";
 import Link from "next/link";
+import PricingSection from "@/components/PricingSection";
 
 const features = [
   { icon: QrCode,    title: "QR Ordering",       desc: "Customers scan and order instantly from their phone" },
@@ -36,7 +37,7 @@ export default function Home() {
         <section className="mx-auto max-w-5xl px-6 pt-24 pb-20 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border bg-muted/60 px-3 py-1 text-xs text-muted-foreground mb-6">
             <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-            Free to start · No credit card required
+            7-day free trial · No credit card required
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">
             QR ordering for<br />
@@ -47,7 +48,7 @@ export default function Home() {
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link href="/onboarding" className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm">
-              Start for free
+              Start free trial
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border bg-card px-6 py-3 text-sm font-semibold hover:bg-muted transition-colors">
@@ -57,7 +58,7 @@ export default function Home() {
         </section>
 
         {/* Features */}
-        <section className="mx-auto max-w-5xl px-6 pb-24">
+        <section className="mx-auto max-w-5xl px-6 pb-16">
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {features.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="rounded-xl border bg-card p-5 space-y-3">
@@ -72,6 +73,9 @@ export default function Home() {
             ))}
           </div>
         </section>
+
+        {/* Pricing */}
+        <PricingSection />
       </main>
 
       <footer className="border-t py-6 text-center text-xs text-muted-foreground">

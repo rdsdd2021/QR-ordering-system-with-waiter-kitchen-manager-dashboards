@@ -230,6 +230,36 @@ export type MenuItemRating = {
   max_rating: number | null;
 };
 
+// ── Coupon System ─────────────────────────────────────────────────────────────
+
+export type DiscountType = "percentage" | "flat";
+
+export type Coupon = {
+  id: string;
+  code: string;
+  type: DiscountType;
+  value: number;
+  max_uses: number | null;
+  used_count: number;
+  expires_at: string | null;
+  is_active: boolean;
+  applicable_plans: string[];
+  stripe_coupon_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CouponUsage = {
+  id: string;
+  coupon_id: string;
+  restaurant_id: string;
+  used_at: string;
+};
+
+export type CouponValidationResult =
+  | { valid: true; coupon_id: string; type: DiscountType; value: number; stripe_coupon_id: string | null }
+  | { valid: false; reason: string };
+
 // ── Supabase Database generic type ────────────────────────────────────────────
 // This is the shape the Supabase client uses for type-safe queries.
 export type Database = {

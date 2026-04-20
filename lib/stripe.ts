@@ -11,8 +11,9 @@ export const STRIPE_PLANS = {
   pro: {
     priceId: process.env.STRIPE_PRO_PRICE_ID ?? "",
     name: "Pro",
-    price: 2999, // ₹29.99/month in paise
+    price: 7999, // ₹799/month in paise
     currency: "inr",
+    trialDays: 7,
   },
 } as const;
 

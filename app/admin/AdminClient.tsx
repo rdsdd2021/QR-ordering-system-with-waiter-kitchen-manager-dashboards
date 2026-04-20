@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import CouponManager from "@/components/admin/CouponManager";
 
 type Restaurant = {
   id: string;
@@ -41,6 +42,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   const [search, setSearch]   = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
+  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons">("restaurants");
 
   const subMap = Object.fromEntries(subscriptions.map((s) => [s.restaurant_id, s]));
 
@@ -149,6 +151,25 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
           ))}
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-1 border-b">
+          {(["restaurants", "coupons"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={cn(
+                "px-4 py-2 text-sm font-medium capitalize border-b-2 -mb-px transition-colors",
+                activeTab === tab
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "restaurants" && (<>
         {/* Search */}
         <div className="relative max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -240,6 +261,12 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
             </tbody>
           </table>
         </div>
+        </>)}
+
+        {activeTab === "coupons" && (
+          <CouponManager />
+        )}
+
       </main>
     </div>
   );
