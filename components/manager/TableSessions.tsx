@@ -41,8 +41,11 @@ type TableSession = {
   orders: OrderRow[];
   session_total: number;
   session_start: string;
+  session_end: string | null;   // billed_at of the latest billed order
   all_served: boolean;
   is_billed: boolean;
+  /** Unique key for past sessions: table_id + ISO date of billed_at */
+  session_key: string;
 };
 
 type TableTile = {
@@ -159,23 +162,38 @@ async function fetchData(restaurantId: string): Promise<{
     };
 
     const isBilled = !!o.billed_at;
+    
+    // For past sessions, group by table + date of billed_at (each visit is a separate session)
+    let sessionKey: string;
+    if (isBilled) {
+      const billedDate = new Date(o.billed_at).toISOString().split("T")[0]; // YYYY-MM-DD
+      sessionKey = `${tableId}-${billedDate}`;
+    } else {
+      sessionKey = tableId; // Active sessions: one per table
+    }
+    
     const map = isBilled ? pastMap : activeMap;
 
-    if (!map.has(tableId)) {
-      map.set(tableId, {
+    if (!map.has(sessionKey)) {
+      map.set(sessionKey, {
         table_id: tableId, table_number: tableNumber,
         floor_name: floorName, floor_id: floorId,
         customer_name: o.customer_name, customer_phone: o.customer_phone,
         party_size: o.party_size, waiter_name: waiterName,
         orders: [], session_total: 0, session_start: o.created_at,
+        session_end: isBilled ? o.billed_at : null,
         all_served: false, is_billed: isBilled,
+        session_key: sessionKey,
       });
     }
 
-    const session = map.get(tableId)!;
+    const session = map.get(sessionKey)!;
     session.orders.push(orderRow);
     session.session_total += orderTotal;
     if (o.created_at < session.session_start) session.session_start = o.created_at;
+    if (isBilled && o.billed_at && (!session.session_end || o.billed_at > session.session_end)) {
+      session.session_end = o.billed_at;
+    }
     if (!session.customer_name && o.customer_name) session.customer_name = o.customer_name;
     if (!session.customer_phone && o.customer_phone) session.customer_phone = o.customer_phone;
     if (!session.party_size && o.party_size) session.party_size = o.party_size;
@@ -197,12 +215,17 @@ async function fetchData(restaurantId: string): Promise<{
   }));
 
   const sortByTable = (a: TableSession, b: TableSession) => a.table_number - b.table_number;
+  const sortByEndDesc = (a: TableSession, b: TableSession) => {
+    const aEnd = a.session_end ?? a.session_start;
+    const bEnd = b.session_end ?? b.session_start;
+    return new Date(bEnd).getTime() - new Date(aEnd).getTime();
+  };
 
   return {
     tiles,
     floors: (floorData as any[]).map((f: any) => ({ id: f.id, name: f.name })),
     active: [...activeMap.values()].sort(sortByTable),
-    past:   [...pastMap.values()].sort(sortByTable),
+    past:   [...pastMap.values()].sort(sortByEndDesc), // Most recent first
   };
 }
 
@@ -407,33 +430,30 @@ export default function TableSessions({ restaurantId }: Props) {
           )}
 
           {/* Past sessions toggle */}
-          <div>
-            <button
-              onClick={() => setShowPast((v) => !v)}
-              className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {showPast ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              Past sessions ({pastSessions.length})
-            </button>
-            {showPast && (
-              <div className="mt-3 space-y-3">
-                {pastSessions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground pl-6">No past sessions</p>
-                ) : (
-                  pastSessions.map((session) => (
-                    <SessionCard
-                      key={`past-${session.table_id}-${session.session_start}`}
-                      session={session}
-                      expanded={expandedTables.has(`past-${session.table_id}`)}
-                      onToggle={() => toggleTable(`past-${session.table_id}`)}
-                      onBill={() => {}}
-                      isPast
-                    />
-                  ))
+          {(() => {
+            const filtered = selectedTile
+              ? pastSessions.filter((s) => s.table_id === selectedTile.table_id)
+              : pastSessions;
+            const label = selectedTile
+              ? `Table ${selectedTile.table_number} past sessions (${filtered.length})`
+              : `Past sessions (${pastSessions.length})`;
+            return (
+              <div>
+                <button
+                  onClick={() => setShowPast((v) => !v)}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {showPast ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {label}
+                </button>
+                {showPast && (
+                  <div className="mt-3">
+                    <PastSessionsTable sessions={filtered} />
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            );
+          })()}
         </div>
       )}
 
@@ -465,26 +485,142 @@ export default function TableSessions({ restaurantId }: Props) {
               Past sessions ({pastSessions.length})
             </button>
             {showPast && (
-              <div className="mt-3 space-y-3">
-                {pastSessions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground pl-6">No past sessions</p>
-                ) : (
-                  pastSessions.map((session) => (
-                    <SessionCard
-                      key={`past-${session.table_id}-${session.session_start}`}
-                      session={session}
-                      expanded={expandedTables.has(`past-${session.table_id}`)}
-                      onToggle={() => toggleTable(`past-${session.table_id}`)}
-                      onBill={() => {}}
-                      isPast
-                    />
-                  ))
-                )}
+              <div className="mt-3">
+                <PastSessionsTable sessions={pastSessions} />
               </div>
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Past Sessions Table ───────────────────────────────────────────────────────
+
+function fmtDateTime(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString([], {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function PastSessionsTable({ sessions }: { sessions: TableSession[] }) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  if (sessions.length === 0) {
+    return <p className="text-sm text-muted-foreground pl-1 py-2">No past sessions</p>;
+  }
+
+  return (
+    <div className="rounded-xl border overflow-hidden divide-y">
+      {sessions.map((session) => {
+        const isExpanded = expandedKey === session.session_key;
+        const totalItems = session.orders.reduce(
+          (sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0
+        );
+
+        return (
+          <div key={session.session_key}>
+            {/* Summary row */}
+            <button
+              className="w-full px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+              onClick={() => setExpandedKey(isExpanded ? null : session.session_key)}
+            >
+              {/* Top line: table + total + expand chevron */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-semibold text-sm shrink-0">
+                    Table {session.table_number}
+                  </span>
+                  {session.floor_name && (
+                    <span className="text-xs text-muted-foreground truncate">· {session.floor_name}</span>
+                  )}
+                  <span className="flex items-center gap-1 text-xs text-green-600 font-medium shrink-0">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Billed
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-bold text-sm tabular-nums">
+                    ₹{session.session_total.toFixed(2)}
+                  </span>
+                  {isExpanded
+                    ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  }
+                </div>
+              </div>
+
+              {/* Second line: customer + waiter */}
+              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <User className="h-3 w-3 shrink-0" />
+                  {session.customer_name ?? <span className="italic">Guest</span>}
+                  {session.party_size ? ` · ${session.party_size} guests` : ""}
+                </span>
+                {session.waiter_name && (
+                  <span className="text-xs text-muted-foreground">
+                    👤 {session.waiter_name}
+                  </span>
+                )}
+                {session.customer_phone && (
+                  <span className="text-xs text-muted-foreground">{session.customer_phone}</span>
+                )}
+              </div>
+
+              {/* Third line: orders count + billed at */}
+              <div className="flex items-center gap-3 mt-0.5">
+                <span className="text-xs text-muted-foreground">
+                  {session.orders.length} order{session.orders.length !== 1 ? "s" : ""} · {totalItems} items
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3 inline mr-0.5" />
+                  {fmtDateTime(session.session_end)}
+                </span>
+              </div>
+            </button>
+
+            {/* Expanded: order breakdown */}
+            {isExpanded && (
+              <div className="bg-muted/20 border-t divide-y">
+                {session.orders.map((order) => (
+                  <div key={order.id} className="px-5 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        <span className="font-mono text-xs text-muted-foreground shrink-0">
+                          #{order.id.slice(0, 8).toUpperCase()}
+                        </span>
+                        <span className={cn(
+                          "px-2 py-0.5 rounded text-xs font-medium shrink-0",
+                          STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"
+                        )}>
+                          {STATUS_LABEL[order.status] ?? order.status}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {fmtDateTime(order.created_at)}
+                        </span>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums shrink-0">
+                        ₹{order.order_total.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 pl-2 space-y-0.5">
+                      {order.items.map((item) => (
+                        <div key={item.id} className="flex justify-between text-xs text-muted-foreground">
+                          <span>{item.quantity}× {item.name}</span>
+                          <span>₹{(item.quantity * item.price).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
