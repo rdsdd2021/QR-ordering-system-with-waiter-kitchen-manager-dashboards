@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   LayoutGrid, ClipboardList, UtensilsCrossed, Users, Settings,
-  LogOut, ChevronRight, Menu, X, BarChart3, Layers, Table2, Store, Webhook,
+  LogOut, ChevronRight, Menu, X, BarChart3, Layers, Table2, Store, Webhook, Tags,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,13 +18,14 @@ import StaffManager from "@/components/manager/StaffManager";
 import OrderLog from "@/components/manager/OrderLog";
 import RestaurantDetails from "@/components/manager/RestaurantDetails";
 import WebhooksManager from "@/components/manager/WebhooksManager";
+import CategoryTagManager from "@/components/manager/CategoryTagManager";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Tab =
   | "sessions" | "orderlog" | "analytics"
-  | "menu" | "floors"
+  | "menu" | "floors" | "categories"
   | "staff" | "tables"
   | "details" | "settings" | "webhooks";
 
@@ -54,8 +55,9 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Menu",
     items: [
-      { key: "menu",   label: "Menu Items", icon: UtensilsCrossed, mobileLabel: "Menu" },
-      { key: "floors", label: "Floors",     icon: Layers },
+      { key: "menu",       label: "Menu Items",  icon: UtensilsCrossed, mobileLabel: "Menu" },
+      { key: "categories", label: "Categories & Tags", icon: Tags },
+      { key: "floors",     label: "Floors",      icon: Layers },
     ],
   },
   {
@@ -87,29 +89,31 @@ const MOBILE_NAV: NavItem[] = [
 // ── Page title map ────────────────────────────────────────────────────────────
 
 const PAGE_TITLE: Record<Tab, string> = {
-  sessions:  "Live Tables",
-  orderlog:  "Order Log",
-  analytics: "Analytics",
-  menu:      "Menu Items",
-  floors:    "Floors & Sections",
-  staff:     "Staff",
-  tables:    "Table Setup",
-  details:   "Restaurant Details",
-  settings:  "Settings",
-  webhooks:  "Webhooks",
-};
+  sessions:   "Live Tables",
+  orderlog:   "Order Log",
+  analytics:  "Analytics",
+  menu:       "Menu Items",
+  categories: "Categories & Tags",
+  floors:     "Floors & Sections",
+  staff:      "Staff",
+  tables:     "Table Setup",
+  details:    "Restaurant Details",
+  settings:   "Settings",
+  webhooks:   "Webhooks",
+} as const;
 
 const PAGE_DESC: Record<Tab, string> = {
-  sessions:  "Active table sessions and billing",
-  orderlog:  "Full order lifecycle and timing",
-  analytics: "Sales and performance metrics",
-  menu:      "Manage your menu items",
-  floors:    "Floors and pricing multipliers",
-  staff:     "Waiter accounts and availability",
-  tables:    "Table configuration and QR codes",
-  details:   "Restaurant name and URL",
-  settings:  "Order routing and geo-fencing",
-  webhooks:  "Connect to external apps and services",
+  sessions:   "Active table sessions and billing",
+  orderlog:   "Full order lifecycle and timing",
+  analytics:  "Sales and performance metrics",
+  menu:       "Manage your menu items",
+  categories: "Categories, sub-categories and tags",
+  floors:     "Floors and pricing multipliers",
+  staff:      "Waiter accounts and availability",
+  tables:     "Table configuration and QR codes",
+  details:    "Restaurant name and URL",
+  settings:   "Order routing and geo-fencing",
+  webhooks:   "Connect to external apps and services",
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -238,8 +242,9 @@ function ManagerClientContent({ restaurant }: Props) {
             {activeTab === "sessions"  && <TableSessions restaurantId={restaurant.id} />}
             {activeTab === "orderlog"  && <OrderLog restaurantId={restaurant.id} />}
             {activeTab === "analytics" && <Analytics restaurantId={restaurant.id} />}
-            {activeTab === "menu"      && <MenuManager restaurantId={restaurant.id} />}
-            {activeTab === "floors"    && <FloorsManager restaurantId={restaurant.id} />}
+            {activeTab === "menu"       && <MenuManager restaurantId={restaurant.id} />}
+            {activeTab === "categories" && <CategoryTagManager restaurantId={restaurant.id} />}
+            {activeTab === "floors"     && <FloorsManager restaurantId={restaurant.id} />}
             {activeTab === "staff"     && <StaffManager restaurantId={restaurant.id} />}
             {activeTab === "tables"    && <TablesManager restaurantId={restaurant.id} restaurantName={restaurant.name} />}
             {activeTab === "details"   && <RestaurantDetails restaurant={restaurant} />}

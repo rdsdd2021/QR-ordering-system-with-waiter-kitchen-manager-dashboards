@@ -14,7 +14,11 @@ import type {
   OrderStatus,
   OrderStatusLog,
   Floor,
-  CustomerOrderSession
+  CustomerOrderSession,
+  FoodCategory,
+  FoodTag,
+  CategorySuggestion,
+  TagSuggestion,
 } from "@/types/database";
 import { isValidStatusTransition } from "@/types/database";
 
@@ -1181,5 +1185,223 @@ export async function toggleWaiterStatus(waiterId: string, isActive: boolean) {
     console.error("Error updating waiter status:", error.message);
     return false;
   }
+  return true;
+}
+
+// ============================================================================
+// FOOD CATEGORIES
+// ============================================================================
+
+/** Fetch all categories for a restaurant (flat list, ordered by sort_order). */
+export async function getFoodCategories(restaurantId: string): Promise<FoodCategory[]> {
+  const { data, error } = await supabase
+    .from("food_categories")
+    .select("*")
+    .eq("restaurant_id", restaurantId)
+    .order("sort_order")
+    .order("name");
+
+  if (error) { console.error("getFoodCategories:", error.message); return []; }
+  return (data ?? []) as FoodCategory[];
+}
+
+/** Build a tree from flat list: top-level categories with .children populated. */
+export function buildCategoryTree(flat: FoodCategory[]): FoodCategory[] {
+  const map = new Map<string, FoodCategory>();
+  flat.forEach(c => map.set(c.id, { ...c, children: [] }));
+  const roots: FoodCategory[] = [];
+  map.forEach(c => {
+    if (c.parent_id && map.has(c.parent_id)) {
+      map.get(c.parent_id)!.children!.push(c);
+    } else {
+      roots.push(c);
+    }
+  });
+  return roots;
+}
+
+export async function createFoodCategory(params: {
+  restaurantId: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  color?: string | null;
+  parent_id?: string | null;
+  sort_order?: number;
+  is_suggestion?: boolean;
+}): Promise<FoodCategory | null> {
+  const { data, error } = await supabase
+    .from("food_categories")
+    .insert({
+      restaurant_id: params.restaurantId,
+      name: params.name,
+      description: params.description ?? null,
+      image_url: params.image_url ?? null,
+      color: params.color ?? null,
+      parent_id: params.parent_id ?? null,
+      sort_order: params.sort_order ?? 0,
+      is_suggestion: params.is_suggestion ?? false,
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error) { console.error("createFoodCategory:", error.message); return null; }
+  return data as FoodCategory;
+}
+
+export async function updateFoodCategory(
+  id: string,
+  updates: Partial<Pick<FoodCategory, "name" | "description" | "image_url" | "color" | "parent_id" | "sort_order">>
+): Promise<boolean> {
+  const { error } = await supabase.from("food_categories").update(updates).eq("id", id);
+  if (error) { console.error("updateFoodCategory:", error.message); return false; }
+  return true;
+}
+
+export async function deleteFoodCategory(id: string): Promise<boolean> {
+  const { error } = await supabase.from("food_categories").delete().eq("id", id);
+  if (error) { console.error("deleteFoodCategory:", error.message); return false; }
+  return true;
+}
+
+// ============================================================================
+// FOOD TAGS
+// ============================================================================
+
+export async function getFoodTags(restaurantId: string): Promise<FoodTag[]> {
+  const { data, error } = await supabase
+    .from("food_tags")
+    .select("*")
+    .eq("restaurant_id", restaurantId)
+    .order("sort_order")
+    .order("name");
+
+  if (error) { console.error("getFoodTags:", error.message); return []; }
+  return (data ?? []) as FoodTag[];
+}
+
+export async function createFoodTag(params: {
+  restaurantId: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  color?: string | null;
+  sort_order?: number;
+  is_suggestion?: boolean;
+}): Promise<FoodTag | null> {
+  const { data, error } = await supabase
+    .from("food_tags")
+    .insert({
+      restaurant_id: params.restaurantId,
+      name: params.name,
+      description: params.description ?? null,
+      image_url: params.image_url ?? null,
+      color: params.color ?? null,
+      sort_order: params.sort_order ?? 0,
+      is_suggestion: params.is_suggestion ?? false,
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error) { console.error("createFoodTag:", error.message); return null; }
+  return data as FoodTag;
+}
+
+export async function updateFoodTag(
+  id: string,
+  updates: Partial<Pick<FoodTag, "name" | "description" | "image_url" | "color" | "sort_order">>
+): Promise<boolean> {
+  const { error } = await supabase.from("food_tags").update(updates).eq("id", id);
+  if (error) { console.error("updateFoodTag:", error.message); return false; }
+  return true;
+}
+
+export async function deleteFoodTag(id: string): Promise<boolean> {
+  const { error } = await supabase.from("food_tags").delete().eq("id", id);
+  if (error) { console.error("deleteFoodTag:", error.message); return false; }
+  return true;
+}
+
+// ============================================================================
+// SUGGESTIONS
+// ============================================================================
+
+export async function getCategorySuggestions(): Promise<CategorySuggestion[]> {
+  const { data, error } = await supabase
+    .from("category_suggestions")
+    .select("*")
+    .order("parent_name", { nullsFirst: true })
+    .order("name");
+
+  if (error) { console.error("getCategorySuggestions:", error.message); return []; }
+  return (data ?? []) as CategorySuggestion[];
+}
+
+export async function getTagSuggestions(): Promise<TagSuggestion[]> {
+  const { data, error } = await supabase
+    .from("tag_suggestions")
+    .select("*")
+    .order("name");
+
+  if (error) { console.error("getTagSuggestions:", error.message); return []; }
+  return (data ?? []) as TagSuggestion[];
+}
+
+// ============================================================================
+// MENU ITEM ↔ CATEGORY / TAG ASSIGNMENTS
+// ============================================================================
+
+export async function getMenuItemCategories(menuItemId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("menu_item_categories")
+    .select("category_id")
+    .eq("menu_item_id", menuItemId);
+
+  if (error) { console.error("getMenuItemCategories:", error.message); return []; }
+  return (data ?? []).map((r: { category_id: string }) => r.category_id);
+}
+
+export async function setMenuItemCategories(menuItemId: string, categoryIds: string[]): Promise<boolean> {
+  // Delete existing then insert new
+  const { error: delErr } = await supabase
+    .from("menu_item_categories")
+    .delete()
+    .eq("menu_item_id", menuItemId);
+
+  if (delErr) { console.error("setMenuItemCategories delete:", delErr.message); return false; }
+  if (categoryIds.length === 0) return true;
+
+  const { error: insErr } = await supabase
+    .from("menu_item_categories")
+    .insert(categoryIds.map(cid => ({ menu_item_id: menuItemId, category_id: cid })));
+
+  if (insErr) { console.error("setMenuItemCategories insert:", insErr.message); return false; }
+  return true;
+}
+
+export async function getMenuItemTags(menuItemId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("menu_item_tags")
+    .select("tag_id")
+    .eq("menu_item_id", menuItemId);
+
+  if (error) { console.error("getMenuItemTags:", error.message); return []; }
+  return (data ?? []).map((r: { tag_id: string }) => r.tag_id);
+}
+
+export async function setMenuItemTags(menuItemId: string, tagIds: string[]): Promise<boolean> {
+  const { error: delErr } = await supabase
+    .from("menu_item_tags")
+    .delete()
+    .eq("menu_item_id", menuItemId);
+
+  if (delErr) { console.error("setMenuItemTags delete:", delErr.message); return false; }
+  if (tagIds.length === 0) return true;
+
+  const { error: insErr } = await supabase
+    .from("menu_item_tags")
+    .insert(tagIds.map(tid => ({ menu_item_id: menuItemId, tag_id: tid })));
+
+  if (insErr) { console.error("setMenuItemTags insert:", insErr.message); return false; }
   return true;
 }

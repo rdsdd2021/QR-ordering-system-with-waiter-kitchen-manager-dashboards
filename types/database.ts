@@ -260,6 +260,52 @@ export type CouponValidationResult =
   | { valid: true; coupon_id: string; type: DiscountType; value: number; stripe_coupon_id: string | null }
   | { valid: false; reason: string };
 
+// ── Food Categories & Tags ────────────────────────────────────────────────────
+
+export type FoodCategory = {
+  id: string;
+  restaurant_id: string;
+  parent_id: string | null;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  color: string | null;
+  sort_order: number;
+  is_suggestion: boolean;
+  created_at: string;
+  /** Populated when fetching with children */
+  children?: FoodCategory[];
+};
+
+export type FoodTag = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  color: string | null;
+  sort_order: number;
+  is_suggestion: boolean;
+  created_at: string;
+};
+
+export type CategorySuggestion = {
+  id: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  color: string | null;
+  parent_name: string | null;
+};
+
+export type TagSuggestion = {
+  id: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  color: string | null;
+};
+
 // ── Supabase Database generic type ────────────────────────────────────────────
 // This is the shape the Supabase client uses for type-safe queries.
 export type Database = {
