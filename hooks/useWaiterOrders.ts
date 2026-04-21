@@ -34,18 +34,34 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
     fetchingRef.current.add(orderId);
 
     try {
-      const fresh = await getWaiterOrders(restaurantId, waiterId);
-      const order = fresh.find((o) => o.id === orderId);
-      if (order) {
-        setOrders((prev) => {
-          const exists = prev.findIndex((o) => o.id === orderId);
-          if (exists === -1) return [order, ...prev];
-          // Update in-place preserving position
-          const next = [...prev];
-          next[exists] = order;
-          return next;
-        });
-      }
+      const supabase = getSupabaseClient();
+      const { data } = await supabase
+        .from("orders")
+        .select(
+          `id, restaurant_id, table_id, status, waiter_id, created_at,
+           table:tables(table_number, floor:floors(name)),
+           waiter:users(name),
+           order_items(id, quantity, price, menu_item:menu_items(name))`
+        )
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (!data) return;
+
+      // Check visibility: skip if this order belongs to another waiter's locked table
+      const order = data as unknown as WaiterOrder;
+      const isAssignedToMe = order.waiter_id === waiterId;
+      const isUnassigned = !order.waiter_id;
+
+      if (!isAssignedToMe && !isUnassigned) return; // belongs to another waiter
+
+      setOrders((prev) => {
+        const exists = prev.findIndex((o) => o.id === orderId);
+        if (exists === -1) return [order, ...prev];
+        const next = [...prev];
+        next[exists] = order;
+        return next;
+      });
     } finally {
       fetchingRef.current.delete(orderId);
     }

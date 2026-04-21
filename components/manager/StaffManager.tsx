@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, Loader2, UserCheck, UserX } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase';
-import { supabase } from '@/lib/supabase';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -58,7 +57,18 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
     const channel = client
       .channel(`staff-manager:${restaurantId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
+      // Only re-fetch when waiter_id changes (assignment) — not on every status tick
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'orders',
+        filter: `restaurant_id=eq.${restaurantId}`,
+      }, (payload: any) => {
+        const { old: oldRow, new: newRow } = payload;
+        // Only trigger if waiter assignment changed
+        if (oldRow?.waiter_id !== newRow?.waiter_id) fetchStaff();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `restaurant_id=eq.${restaurantId}` }, fetchStaff)
       .subscribe();
 
@@ -67,9 +77,11 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
   }, [restaurantId]);
 
   async function fetchStaff() {
-    const { data, error } = await supabase
+    const client = getSupabaseClient();
+    // active_orders only counts non-served orders to get accurate busy/available status
+    const { data, error } = await client
       .from('users')
-      .select(`id, name, email, role, is_active, active_orders:orders(id)`)
+      .select(`id, name, email, role, is_active, active_orders:orders(id).neq(status,served)`)
       .eq('restaurant_id', restaurantId)
       .in('role', ['waiter', 'kitchen'])
       .order('name');
@@ -161,7 +173,7 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
       const updates: any = { name: formName.trim() };
       if (formEmail.trim()) updates.email = formEmail.trim().toLowerCase();
 
-      const { error } = await supabase
+      const { error } = await getSupabaseClient()
         .from('users')
         .update(updates)
         .eq('id', editingId);
@@ -181,7 +193,7 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
   async function handleToggleActive(member: StaffMember) {
     setBusy(member.id);
-    await supabase.from('users').update({ is_active: !member.is_active }).eq('id', member.id);
+    await getSupabaseClient().from('users').update({ is_active: !member.is_active }).eq('id', member.id);
     await fetchStaff();
     setBusy(null);
   }
@@ -193,7 +205,7 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
     }
     if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
     setBusy(member.id);
-    await supabase.from('users').delete().eq('id', member.id);
+    await getSupabaseClient().from('users').delete().eq('id', member.id);
     await fetchStaff();
     setBusy(null);
   }

@@ -192,34 +192,31 @@ export async function placeOrder(params: {
 
   const orderId = (order as { id: string }).id;
 
-  // Step 4: Calculate final prices with floor multiplier and insert order items
-  const orderItems = await Promise.all(
-    items.map(async (item) => {
-      // Call calculate_item_price function to apply floor-based pricing
-      const { data: finalPrice, error } = await supabase.rpc('calculate_item_price', {
-        p_menu_item_id: item.menu_item_id,
-        p_table_id: tableId
-      });
+  // Step 4: Calculate final prices with floor multiplier in a single RPC call
+  const { data: pricedItems, error: priceError } = await supabase.rpc('calculate_item_prices_batch', {
+    p_items: items.map(item => ({ menu_item_id: item.menu_item_id, quantity: item.quantity, base_price: item.price })),
+    p_table_id: tableId,
+  });
 
-      if (error) {
-        console.error("Error calculating price:", error);
-        // Fallback to base price if calculation fails
-        return {
-          order_id: orderId,
-          menu_item_id: item.menu_item_id,
-          quantity: item.quantity,
-          price: item.price
-        };
-      }
+  let orderItems: { order_id: string; menu_item_id: string; quantity: number; price: number }[];
 
-      return {
-        order_id: orderId,
-        menu_item_id: item.menu_item_id,
-        quantity: item.quantity,
-        price: finalPrice // Use calculated price with floor multiplier
-      };
-    })
-  );
+  if (priceError || !pricedItems) {
+    // Fallback to base prices if batch RPC not available
+    console.warn("Batch price calculation failed, using base prices:", priceError?.message);
+    orderItems = items.map(item => ({
+      order_id: orderId,
+      menu_item_id: item.menu_item_id,
+      quantity: item.quantity,
+      price: item.price,
+    }));
+  } else {
+    orderItems = (pricedItems as { menu_item_id: string; final_price: number }[]).map((p, i) => ({
+      order_id: orderId,
+      menu_item_id: p.menu_item_id,
+      quantity: items[i].quantity,
+      price: p.final_price,
+    }));
+  }
 
   const { error: itemsError } = await supabase
     .from("order_items")
@@ -807,12 +804,11 @@ export async function updateRestaurantDetails(
 
 /**
  * Get customer order history by phone number.
- * Groups orders by table sessions and includes waiter names.
+ * Groups orders by actual table_sessions (opened_at / closed_at) for accurate history.
  */
 export async function getCustomerOrderHistory(
   phoneNumber: string
 ): Promise<CustomerOrderSession[]> {
-  // Get all orders for this phone number with full details
   const { data: orders, error } = await supabase
     .from("orders")
     .select(`
@@ -823,56 +819,59 @@ export async function getCustomerOrderHistory(
       order_items(quantity, price, menu_item:menu_items(name))
     `)
     .eq("customer_phone", phoneNumber.trim())
-    .not("billed_at", "is", null) // Only completed orders
+    .not("billed_at", "is", null)
     .order("created_at", { ascending: false });
 
   if (error) {
     console.error("Error fetching customer history:", error.message);
     return [];
   }
-
   if (!orders || orders.length === 0) return [];
 
-  // Group orders by table sessions
-  // A session = consecutive orders at the same table with the same waiter
-  const sessions = new Map<string, CustomerOrderSession>();
+  // Fetch all table_sessions that overlap with these orders' tables
+  const tableIds = [...new Set((orders as any[]).map((o) => o.table_id))];
+  const { data: sessions } = await supabase
+    .from("table_sessions")
+    .select("id, table_id, waiter_id, opened_at, closed_at")
+    .in("table_id", tableIds)
+    .order("opened_at", { ascending: false });
+
+  const sessionRows = (sessions ?? []) as {
+    id: string; table_id: string; waiter_id: string;
+    opened_at: string; closed_at: string | null;
+  }[];
+
+  // Map each order to the session it falls within (by table + time window)
+  function findSession(order: any) {
+    return sessionRows.find((s) =>
+      s.table_id === order.table_id &&
+      order.created_at >= s.opened_at &&
+      (s.closed_at === null || order.created_at <= s.closed_at)
+    );
+  }
+
+  const sessionMap = new Map<string, CustomerOrderSession>();
 
   for (const order of orders as any[]) {
-    const tableId = order.table_id;
-    const waiterName = order.waiter?.name ?? null;
-    const restaurantName = order.restaurant?.name ?? "Unknown Restaurant";
-    const tableNumber = order.table?.table_number ?? 0;
-    const floorName = order.table?.floor?.name ?? null;
+    const matched = findSession(order);
+    // Fall back to a synthetic key if no session row found (legacy data)
+    const sessionKey = matched?.id ?? `${order.table_id}_legacy`;
 
-    // Create a session key based on table + waiter + time proximity
-    // For simplicity, we'll group by table and assume orders close in time belong to same session
-    const sessionKey = `${tableId}_${waiterName ?? 'no_waiter'}`;
-
-    if (!sessions.has(sessionKey)) {
-      sessions.set(sessionKey, {
+    if (!sessionMap.has(sessionKey)) {
+      sessionMap.set(sessionKey, {
         session_id: sessionKey,
-        restaurant_name: restaurantName,
-        table_number: tableNumber,
-        floor_name: floorName,
-        waiter_name: waiterName,
-        session_start: order.created_at,
-        session_end: order.billed_at,
+        restaurant_name: order.restaurant?.name ?? "Unknown Restaurant",
+        table_number: order.table?.table_number ?? 0,
+        floor_name: order.table?.floor?.name ?? null,
+        waiter_name: order.waiter?.name ?? null,
+        session_start: matched?.opened_at ?? order.created_at,
+        session_end: matched?.closed_at ?? order.billed_at,
         total_amount: 0,
         orders: [],
       });
     }
 
-    const session = sessions.get(sessionKey)!;
-    
-    // Update session metadata
-    if (order.created_at < session.session_start) {
-      session.session_start = order.created_at;
-    }
-    if (!session.session_end || (order.billed_at && order.billed_at > session.session_end)) {
-      session.session_end = order.billed_at;
-    }
-
-    // Add order to session
+    const session = sessionMap.get(sessionKey)!;
     session.orders.push({
       id: order.id,
       status: order.status,
@@ -884,12 +883,10 @@ export async function getCustomerOrderHistory(
         price: parseFloat(item.price),
       })),
     });
-
     session.total_amount += parseFloat(order.total_amount) || 0;
   }
 
-  // Convert to array and sort by session start (newest first)
-  return Array.from(sessions.values()).sort(
+  return Array.from(sessionMap.values()).sort(
     (a, b) => new Date(b.session_start).getTime() - new Date(a.session_start).getTime()
   );
 }
