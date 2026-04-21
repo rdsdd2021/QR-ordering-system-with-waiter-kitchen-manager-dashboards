@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   LayoutGrid, ClipboardList, UtensilsCrossed, Users, Settings,
-  LogOut, ChevronRight, Menu, X, BarChart3, Layers, Table2, Store,
+  LogOut, ChevronRight, Menu, X, BarChart3, Layers, Table2, Store, Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,6 +17,7 @@ import TablesManager from "@/components/manager/TablesManager";
 import StaffManager from "@/components/manager/StaffManager";
 import OrderLog from "@/components/manager/OrderLog";
 import RestaurantDetails from "@/components/manager/RestaurantDetails";
+import WebhooksManager from "@/components/manager/WebhooksManager";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ type Tab =
   | "sessions" | "orderlog" | "analytics"
   | "menu" | "floors"
   | "staff" | "tables"
-  | "details" | "settings";
+  | "details" | "settings" | "webhooks";
 
 type NavGroup = {
   label: string;
@@ -69,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "details",  label: "Details",  icon: Store    },
       { key: "settings", label: "Settings", icon: Settings },
+      { key: "webhooks", label: "Webhooks", icon: Webhook  },
     ],
   },
 ];
@@ -94,6 +96,7 @@ const PAGE_TITLE: Record<Tab, string> = {
   tables:    "Table Setup",
   details:   "Restaurant Details",
   settings:  "Settings",
+  webhooks:  "Webhooks",
 };
 
 const PAGE_DESC: Record<Tab, string> = {
@@ -106,6 +109,7 @@ const PAGE_DESC: Record<Tab, string> = {
   tables:    "Table configuration and QR codes",
   details:   "Restaurant name and URL",
   settings:  "Order routing and geo-fencing",
+  webhooks:  "Connect to external apps and services",
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -249,6 +253,7 @@ function ManagerClientContent({ restaurant }: Props) {
                 geoRadiusMeters={restaurant.geo_radius_meters ?? 100}
               />
             )}
+            {activeTab === "webhooks"  && <WebhooksManager restaurantId={restaurant.id} />}
           </div>
         </main>
 
