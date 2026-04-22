@@ -383,20 +383,92 @@ The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups:
 **Live Tables (`sessions` tab)**
 ```
 TableSessions component
-- Shows all tables grouped by status (occupied / free)
-- Each occupied table shows: waiter name, order count, total amount
-- "Bill (N)" button → generate_bill() for all served orders at that table
-- "Close Session" → close_table_session() RPC
+- Shows all tables in grid or list view, filterable by floor
+- Grid view has configurable layout: Cols selector (2–6 columns) and Rows selector (1–5 rows per page)
+  - Both selectors are shown only in grid view mode
+  - Changing either resets to page 1
+- Each table tile has one of five states:
+    free        — no active session
+    active      — session open, orders in progress
+    awaiting    — session has pending/pending_waiter orders needing attention
+    bill-ready  — all orders served and unbilled; ready to generate bill
+    billed      — all orders billed (session closing)
+- Each occupied table shows: waiter name, order count, total amount, session duration
+- Selecting a tile opens a detail panel with customer info, order list, and "Generate Bill" action
+- "Generate Bill" button → generate_bill() for all served orders at that table
+- Managers can place new orders directly from the table detail panel via the "Add Order" modal:
+  - Opens a full-screen modal scoped to the selected table session
+  - Loads all available menu items via `getMenuItems()`
+  - Supports live search/filter across menu items
+  - Manager builds a cart (increment/decrement per item), sees running total
+  - On submit: calls `placeOrder()` with the session's `customer_name`, `customer_phone`, and `party_size` pre-filled
+  - Error case: if another customer has unpaid orders at the table (`UNPAID_ORDERS_EXIST`), an inline error is shown and the order is not placed
+  - On success: modal closes and the table session refreshes (`load(true)`)
+- Past sessions collapsible section shows billed history per table
 ```
 
 **Order Log (`orderlog` tab)**
 ```
 OrderLog component
-- Full history of all orders for the restaurant
-- Filterable by status, date range
-- Shows: table, waiter, items, total, timestamps
-- Real-time updates via useManagerRealtime()
+- Fetches up to 300 most recent orders (created_at DESC) with full joins:
+  tables → floors, waiter (users), order_items → menu_items
+- Computes derived fields client-side:
+    wait_to_confirm_s, prep_time_s, serve_time_s, turnaround_s
+
+Order ID format: #ORD-XXXX (first 4 chars of UUID, uppercased)
+
+Stat cards (top of view):
+  - Total Orders, Total Revenue, Avg. Order Value, Pending Orders
+  - Computed from the full fetched dataset (not a separate query)
+
+Status tabs:
+  All | Preparing | Ready | Served | Cancelled
+  - Each tab shows a live count badge
+  - Selecting a tab filters the table; resets to page 1
+  - Note: "Awaiting" (pending_waiter) tab removed; cancelled orders now
+    have a dedicated tab
+
+Search & sort toolbar:
+  - Free-text search across: order ID, table number, floor name,
+    waiter name, customer name, customer phone
+  - Sortable columns: Table, Amount, Time (created_at)
+  - Sort toggles asc/desc; defaults to created_at DESC
+
+Pagination:
+  - 10 rows per page, client-side (from filtered + sorted dataset)
+  - Shows page range and total count
+
+Real-time:
+  - Subscribes to postgres_changes on orders table
+    (filter: restaurant_id=eq.{restaurantId})
+  - INSERT → full re-fetch (to get joined data)
+  - UPDATE → patches status fields in-place without re-fetch
+  - selectedOrder kept in sync with live row updates
+
+Order detail drawer:
+  - Slides in from the right (portal into document.body)
+  - Backdrop click closes it
+  - Renders OrderDetailPanel (inline component in OrderLog.tsx)
+  - Stays in sync: if the selected order's status changes via real-time,
+    the drawer reflects the update immediately
+  - Action buttons (bottom of panel):
+      "Cancel Order" — always visible (destructive, red border)
+      Advance action — shown for pending/pending_waiter/confirmed/preparing/ready:
+        pending / pending_waiter → "Confirm Order"
+        confirmed               → "Start Preparing"
+        preparing               → "Mark as Ready"
+        ready                   → "Mark as Served"
+      No advance action shown for served or cancelled orders
 ```
+
+Status badge colours:
+  pending        → amber
+  pending_waiter → purple
+  confirmed      → blue
+  preparing      → orange
+  ready          → green
+  served         → blue (same as confirmed)
+  cancelled      → red
 
 **Analytics (`analytics` tab)**
 ```
@@ -478,8 +550,6 @@ RestaurantDetails component
 SettingsPanel component
 - Order routing mode: direct_to_kitchen | waiter_first
 - Geo-fencing: enable/disable, set lat/lng/radius
-- Subscription info: current plan, period end
-- UpgradeBanner: shown on free plan, includes coupon input
 ```
 
 **Webhooks (`webhooks` tab)**
@@ -572,8 +642,6 @@ No automated payment processing — purely manual recording.
 ### Upgrade Flow
 
 ```
-Manager Settings → UpgradeBanner → "Upgrade to Pro"
-  OR
 Onboarding Step 3 → "Upgrade to Pro"
 
 POST /api/stripe/checkout:
@@ -838,7 +906,7 @@ POST /api/webhooks/[id]/retry:
 | `restaurant_id` | uuid → restaurants | |
 | `table_id` | uuid → tables | |
 | `waiter_id` | uuid (nullable) → users | Auto-assigned by trigger |
-| `status` | text | `pending` \| `pending_waiter` \| `confirmed` \| `preparing` \| `ready` \| `served` |
+| `status` | text | `pending` \| `pending_waiter` \| `confirmed` \| `preparing` \| `ready` \| `served` \| `cancelled` |
 | `total_amount` | numeric | Default 0. Set by generate_bill(). |
 | `billed_at` | timestamptz (nullable) | Set by generate_bill(). |
 | `confirmed_at` | timestamptz (nullable) | Set by trigger |
@@ -1269,6 +1337,15 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | H1 | No auto-reconnect on channel drop | Staff miss orders until manual refresh | Must add reconnect logic |
 | H2 | `on_order_item_insert` fires on first item only | Broadcast may have incomplete items if batch fails mid-way | Partial order data in real-time payload |
 | H3 | `REPLICA IDENTITY FULL` required | postgres_changes fallback broken without it | Must be set per table in Supabase |
+
+### Order Log
+
+| # | Issue | Impact | Notes |
+|---|-------|--------|-------|
+| I2 | Stat card trend values are hardcoded (`+8.2% vs yesterday`) | Misleading — not computed from real data | No yesterday comparison query exists |
+| I3 | Order Log fetches up to 300 rows client-side | Large restaurants may miss older orders | No server-side pagination or date-range filter |
+| I4 | Real-time UPDATE patches `msg.new` fields directly onto the row | Joined fields (waiter_name, items, floor_name) are NOT updated on UPDATE events | Only a full re-fetch (triggered by INSERT) refreshes joined data |
+| I5 | "Cancel Order" and advance-status buttons in detail panel have no API call wired up | Buttons render but clicking them does nothing | Implementation pending |
 
 ---
 

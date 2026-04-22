@@ -13,6 +13,7 @@ export type Restaurant = {
   geo_latitude?: number | null;
   geo_longitude?: number | null;
   geo_radius_meters?: number;
+  logo_url?: string | null;
 };
 
 export type Floor = {

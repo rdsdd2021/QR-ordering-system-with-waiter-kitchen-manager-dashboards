@@ -61,13 +61,18 @@ function WaiterClientContent({ restaurant }: Props) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-border bg-card">
         <div className="flex items-center justify-between px-4 py-3">
-          <div>
-            <h1 className="font-semibold tracking-tight">{restaurant.name}</h1>
-            <p className="text-xs text-muted-foreground">
-              Waiter Dashboard • {profile?.name}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
+              <span className="text-white text-xs font-bold">W</span>
+            </div>
+            <div>
+              <h1 className="font-semibold text-sm text-foreground">{restaurant.name}</h1>
+              <p className="text-xs text-muted-foreground">
+                Waiter Dashboard • {profile?.name}
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

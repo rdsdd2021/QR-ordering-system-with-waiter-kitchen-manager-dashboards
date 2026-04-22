@@ -34,13 +34,18 @@ export function getSupabaseClient(): SupabaseClient {
 /**
  * Convenience proxy for data queries (used in lib/api.ts).
  * For real-time subscriptions use getSupabaseClient() directly.
+ *
+ * NOTE: `auth` is a getter — evaluated lazily on first access — so it always
+ * returns the auth instance from the fully-initialized singleton client.
  */
 export const supabase = {
   from: (...args: Parameters<SupabaseClient["from"]>) =>
     getSupabaseClient().from(...args),
   rpc: (...args: Parameters<SupabaseClient["rpc"]>) =>
     getSupabaseClient().rpc(...args),
-  auth: getSupabaseClient().auth,
+  get auth() {
+    return getSupabaseClient().auth;
+  },
   channel: (...args: Parameters<SupabaseClient["channel"]>) =>
     getSupabaseClient().channel(...args),
   removeChannel: (...args: Parameters<SupabaseClient["removeChannel"]>) =>

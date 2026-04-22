@@ -103,14 +103,37 @@ export default function UpgradeBanner({ restaurantId }: Props) {
         )}
       </div>
 
-      <Button
-        className="w-full"
-        onClick={handleUpgrade}
-        disabled={upgrading}
-      >
-        <Zap className="h-4 w-4 mr-2" />
-        {upgrading ? "Redirecting…" : `Start 7-day free trial — ${finalPrice}/month after`}
-      </Button>
+      {discountedPaise === 0 ? (
+        // Price is zero — no trial needed, just upgrade for free
+        <Button
+          className="w-full"
+          onClick={handleUpgrade}
+          disabled={upgrading}
+        >
+          <Zap className="h-4 w-4 mr-2" />
+          {upgrading ? "Redirecting…" : "Upgrade for Free"}
+        </Button>
+      ) : coupon ? (
+        // Coupon applied but price > 0 — show upgrade button (no trial copy)
+        <Button
+          className="w-full"
+          onClick={handleUpgrade}
+          disabled={upgrading}
+        >
+          <Zap className="h-4 w-4 mr-2" />
+          {upgrading ? "Redirecting…" : `Upgrade — ${finalPrice}/month`}
+        </Button>
+      ) : (
+        // No coupon — show trial button
+        <Button
+          className="w-full"
+          onClick={handleUpgrade}
+          disabled={upgrading}
+        >
+          <Zap className="h-4 w-4 mr-2" />
+          {upgrading ? "Redirecting…" : `Start 7-day free trial — ${finalPrice}/month after`}
+        </Button>
+      )}
     </div>
   );
 }

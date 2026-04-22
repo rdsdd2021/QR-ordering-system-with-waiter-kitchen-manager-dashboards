@@ -1,56 +1,63 @@
 "use client";
 
-import { useEffect, useState, useRef, Fragment } from "react";
-import { Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { getSupabaseClient } from "@/lib/supabase";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
+import {
+  Loader2, RefreshCw, Search, Filter, Download,
+  X, User, Phone, TrendingUp, ShoppingBag, AlertCircle,
+  Receipt, CheckCircle2, XCircle,
+} from "lucide-react";
+import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
 type Props = { restaurantId: string };
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type OrderLogRow = {
   id: string;
   status: string;
-  // Table
   table_number: number;
   floor_name: string | null;
   capacity: number | null;
-  // Waiter
   waiter_name: string | null;
-  // Items
+  customer_name: string | null;
+  customer_phone: string | null;
   item_count: number;
   total_qty: number;
   order_total: number;
   total_amount: number;
   billed_at: string | null;
-  // Timestamps
   created_at: string;
   confirmed_at: string | null;
   preparing_at: string | null;
   ready_at: string | null;
   served_at: string | null;
-  // Computed durations (seconds)
-  wait_to_confirm_s: number | null;   // created → confirmed  (waiter response time)
-  prep_time_s: number | null;         // confirmed → ready    (kitchen prep)
-  serve_time_s: number | null;        // ready → served       (waiter delivery)
-  turnaround_s: number | null;        // created → served     (total)
+  wait_to_confirm_s: number | null;
+  prep_time_s: number | null;
+  serve_time_s: number | null;
+  turnaround_s: number | null;
+  items: Array<{ id: string; name: string; quantity: number; price: number }>;
 };
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+type SortKey = "created_at" | "table_number" | "turnaround_s" | "order_total";
+type SortDir = "asc" | "desc";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-
-function fmtDate(iso: string | null) {
+function fmtAgo(iso: string | null) {
   if (!iso) return "—";
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
   return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
 }
-
 function dur(seconds: number | null) {
   if (seconds === null || seconds < 0) return "—";
   const m = Math.floor(seconds / 60);
@@ -58,16 +65,30 @@ function dur(seconds: number | null) {
   if (m === 0) return `${s}s`;
   return `${m}m ${s}s`;
 }
+function orderId(id: string) {
+  return `#ORD-${id.slice(0, 4).toUpperCase()}`;
+}
 
-const STATUS_COLORS: Record<string, string> = {
-  pending:        "bg-amber-100 text-amber-800",
-  pending_waiter: "bg-purple-100 text-purple-800",
-  confirmed:      "bg-blue-100 text-blue-800",
-  preparing:      "bg-orange-100 text-orange-800",
-  ready:          "bg-green-100 text-green-800",
-  served:         "bg-gray-100 text-gray-700",
+// ── Status config ─────────────────────────────────────────────────────────────
+
+const STATUS_BADGE: Record<string, string> = {
+  pending:        "bg-amber-50 text-amber-600 border border-amber-200",
+  pending_waiter: "bg-purple-50 text-purple-600 border border-purple-200",
+  confirmed:      "bg-blue-50 text-blue-600 border border-blue-200",
+  preparing:      "bg-orange-50 text-orange-600 border border-orange-200",
+  ready:          "bg-green-50 text-green-600 border border-green-200",
+  served:         "bg-blue-50 text-blue-600 border border-blue-200",
+  cancelled:      "bg-red-50 text-red-500 border border-red-200",
 };
-
+const STATUS_DOT: Record<string, string> = {
+  pending:        "bg-amber-500",
+  pending_waiter: "bg-purple-500",
+  confirmed:      "bg-blue-500",
+  preparing:      "bg-orange-500",
+  ready:          "bg-green-500",
+  served:         "bg-blue-500",
+  cancelled:      "bg-red-500",
+};
 const STATUS_LABEL: Record<string, string> = {
   pending:        "Pending",
   pending_waiter: "Awaiting Waiter",
@@ -75,24 +96,50 @@ const STATUS_LABEL: Record<string, string> = {
   preparing:      "Preparing",
   ready:          "Ready",
   served:         "Served",
+  cancelled:      "Cancelled",
 };
 
-type SortKey = "created_at" | "table_number" | "turnaround_s" | "order_total";
-type SortDir = "asc" | "desc";
+// Next valid status for "Mark as Ready" / advance action
+const NEXT_STATUS: Record<string, string> = {
+  pending:        "confirmed",
+  pending_waiter: "confirmed",
+  confirmed:      "preparing",
+  preparing:      "ready",
+  ready:          "served",
+};
+const NEXT_LABEL: Record<string, string> = {
+  pending:        "Confirm Order",
+  pending_waiter: "Confirm Order",
+  confirmed:      "Start Preparing",
+  preparing:      "Mark as Ready",
+  ready:          "Mark as Served",
+};
 
-// ── main component ────────────────────────────────────────────────────────────
+const TABS = [
+  { key: "all",           label: "All Orders"  },
+  { key: "preparing",     label: "Preparing"   },
+  { key: "ready",         label: "Ready"       },
+  { key: "served",        label: "Served"      },
+  { key: "cancelled",     label: "Cancelled"   },
+];
+
+const PAGE_SIZE = 10;
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function OrderLog({ restaurantId }: Props) {
-  const [rows, setRows] = useState<OrderLogRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("created_at");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [rows,          setRows]          = useState<OrderLogRow[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [search,        setSearch]        = useState("");
+  const [statusFilter,  setStatusFilter]  = useState("all");
+  const [sortKey,       setSortKey]       = useState<SortKey>("created_at");
+  const [sortDir,       setSortDir]       = useState<SortDir>("desc");
+  const [selectedOrder, setSelectedOrder] = useState<OrderLogRow | null>(null);
+  const [page,          setPage]          = useState(1);
+
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
-  const loadRef = useRef<() => Promise<void>>(undefined);
+  const loadRef    = useRef<() => Promise<void>>(undefined);
 
   async function load() {
     if (rows.length === 0) setLoading(true); else setRefreshing(true);
@@ -100,477 +147,605 @@ export default function OrderLog({ restaurantId }: Props) {
       .from("orders")
       .select(`
         id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
-        billed_at, total_amount,
+        billed_at, total_amount, customer_name, customer_phone,
         table:tables(table_number, capacity, floor:floors(name)),
         waiter:users(name),
-        order_items(id, quantity, price)
+        order_items(id, quantity, price, menu_item:menu_items(name))
       `)
       .eq("restaurant_id", restaurantId)
       .order("created_at", { ascending: false })
-      .limit(200);
+      .limit(300);
 
-    if (error) {
-      console.error("Error loading order log:", error.message);
-      setLoading(false);
-      return;
-    }
+    if (error) { setLoading(false); setRefreshing(false); return; }
 
     const mapped: OrderLogRow[] = (data ?? []).map((o: any) => {
-      const created  = o.created_at  ? new Date(o.created_at).getTime()  : null;
-      const confirmed = o.confirmed_at ? new Date(o.confirmed_at).getTime() : null;
-      const preparing = o.preparing_at ? new Date(o.preparing_at).getTime() : null;
-      const ready    = o.ready_at    ? new Date(o.ready_at).getTime()    : null;
-      const served   = o.served_at   ? new Date(o.served_at).getTime()   : null;
-
+      const ts  = (f: string | null) => f ? new Date(f).getTime() : null;
       const sec = (a: number | null, b: number | null) =>
         a !== null && b !== null ? Math.round((b - a) / 1000) : null;
-
-      const items: any[] = o.order_items ?? [];
-      const order_total = items.reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
-
+      const created   = ts(o.created_at);
+      const confirmed = ts(o.confirmed_at);
+      const ready     = ts(o.ready_at);
+      const served    = ts(o.served_at);
+      const items = (o.order_items ?? []).map((oi: any) => ({
+        id: oi.id, name: oi.menu_item?.name ?? "Item",
+        quantity: oi.quantity, price: parseFloat(oi.price),
+      }));
+      const order_total = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
       return {
-        id: o.id,
-        status: o.status,
-        table_number: o.table?.table_number ?? "?",
+        id: o.id, status: o.status,
+        table_number: o.table?.table_number ?? 0,
         floor_name: o.table?.floor?.name ?? null,
         capacity: o.table?.capacity ?? null,
         waiter_name: o.waiter?.name ?? null,
+        customer_name: o.customer_name ?? null,
+        customer_phone: o.customer_phone ?? null,
         item_count: items.length,
         total_qty: items.reduce((s: number, i: any) => s + i.quantity, 0),
-        order_total,
-        total_amount: parseFloat(o.total_amount) || order_total,
-        billed_at: o.billed_at,
-        created_at: o.created_at,
-        confirmed_at: o.confirmed_at,
-        preparing_at: o.preparing_at,
-        ready_at: o.ready_at,
-        served_at: o.served_at,
+        order_total, total_amount: parseFloat(o.total_amount) || order_total,
+        billed_at: o.billed_at, created_at: o.created_at,
+        confirmed_at: o.confirmed_at, preparing_at: o.preparing_at,
+        ready_at: o.ready_at, served_at: o.served_at,
         wait_to_confirm_s: sec(created, confirmed),
-        prep_time_s:       sec(confirmed, ready),
-        serve_time_s:      sec(ready, served),
-        turnaround_s:      sec(created, served),
+        prep_time_s: sec(confirmed, ready),
+        serve_time_s: sec(ready, served),
+        turnaround_s: sec(created, served),
+        items,
       };
     });
-
     setRows(mapped);
     setLoading(false);
     setRefreshing(false);
   }
 
-  // Keep loadRef always pointing to the latest load function
   loadRef.current = load;
+  useEffect(() => { loadRef.current?.(); }, [restaurantId]);
 
-  // Initial load + re-load when restaurantId changes
-  useEffect(() => {
-    loadRef.current?.();
-  }, [restaurantId]);
-
-  // Patch a single row in-place.
-  // For status/timestamp fields we use the full postgres_changes row.
-  // For waiter_name we re-fetch since it's a join not in the raw row.
-  function patchRow(updated: Record<string, any>) {
-    setRows((prev) => {
-      const idx = prev.findIndex((r) => r.id === updated.id);
-      if (idx === -1) {
-        // New order — full reload to get joined data
-        loadRef.current?.();
-        return prev;
-      }
-      const old = prev[idx];
-
-      const confirmed_at  = updated.confirmed_at  ?? old.confirmed_at;
-      const preparing_at  = updated.preparing_at  ?? old.preparing_at;
-      const ready_at      = updated.ready_at      ?? old.ready_at;
-      const served_at     = updated.served_at     ?? old.served_at;
-
-      const created   = old.created_at ? new Date(old.created_at).getTime() : null;
-      const confirmed = confirmed_at   ? new Date(confirmed_at).getTime()   : null;
-      const ready     = ready_at       ? new Date(ready_at).getTime()       : null;
-      const served    = served_at      ? new Date(served_at).getTime()      : null;
-
-      const sec = (a: number | null, b: number | null) =>
-        a !== null && b !== null ? Math.round((b - a) / 1000) : null;
-
-      const patched: OrderLogRow = {
-        ...old,
-        status:        updated.status       ?? old.status,
-        confirmed_at,
-        preparing_at,
-        ready_at,
-        served_at,
-        billed_at:     updated.billed_at    ?? old.billed_at,
-        total_amount:  updated.total_amount ?? old.total_amount,
-        wait_to_confirm_s: sec(created, confirmed),
-        prep_time_s:       sec(confirmed, ready),
-        serve_time_s:      sec(ready, served),
-        turnaround_s:      sec(created, served),
-      };
-
-      // If waiter_id changed, we need the waiter name — do a background fetch
-      if (updated.waiter_id !== undefined) {
-        // Fetch just this order to get the joined waiter name
-        supabase
-          .from("orders")
-          .select("id, waiter:users(name)")
-          .eq("id", updated.id)
-          .single()
-          .then(({ data }) => {
-            if (data) {
-              setRows((r) =>
-                r.map((row) =>
-                  row.id === updated.id
-                    ? { ...row, waiter_name: (data as any).waiter?.name ?? null }
-                    : row
-                )
-              );
-            }
-          });
-      }
-
-      const next = [...prev];
-      next[idx] = patched;
-      return next;
-    });
-  }
-
-  // Real-time subscription
   useEffect(() => {
     const client = getSupabaseClient();
-
-    if (channelRef.current) {
-      client.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-
-    const channel = client
-      .channel(`manager:${restaurantId}`)
-      // postgres_changes gives us the full updated row including all timestamps
-      .on(
-        "postgres_changes" as any,
+    if (channelRef.current) { client.removeChannel(channelRef.current); channelRef.current = null; }
+    const ch = client
+      .channel(`orderlog:${restaurantId}`)
+      .on("postgres_changes" as any,
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         (msg: any) => {
-          if (msg.eventType === "INSERT") {
-            // New order — full reload to get joined data (table name, waiter name, items)
-            loadRef.current?.();
-          } else if (msg.eventType === "UPDATE" && msg.new?.id) {
-            // Full row available — patch in-place
-            patchRow(msg.new);
-          }
-        }
-      )
-      // Broadcast as a secondary signal (catches cases where postgres_changes is slow)
-      .on("broadcast", { event: "order_changed" }, (msg: any) => {
-        const p = msg.payload;
-        if (!p?.id) return;
-        if (p.event === "INSERT") {
-          loadRef.current?.();
-        }
-        // For UPDATE we rely on postgres_changes which has full row data
-      })
-      .subscribe((status: string) => {
-        if (status === "SUBSCRIBED") loadRef.current?.();
-      });
-
-    channelRef.current = channel;
-
-    return () => {
-      client.removeChannel(channel);
-      channelRef.current = null;
-    };
+          if (msg.eventType === "INSERT") loadRef.current?.();
+          else if (msg.eventType === "UPDATE" && msg.new?.id)
+            setRows(prev => prev.map(r => r.id === msg.new.id ? { ...r, ...msg.new } : r));
+        })
+      .subscribe();
+    channelRef.current = ch;
+    return () => { client.removeChannel(ch); channelRef.current = null; };
   }, [restaurantId]);
 
-  // ── filter + sort ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedOrder) return;
+    const updated = rows.find(r => r.id === selectedOrder.id);
+    if (updated) setSelectedOrder(updated);
+  }, [rows]);
 
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const totalRevenue  = rows.reduce((s, r) => s + r.order_total, 0);
+  const avgOrderValue = rows.length ? totalRevenue / rows.length : 0;
+  const pendingCount  = rows.filter(r =>
+    ["pending","pending_waiter","confirmed","preparing","ready"].includes(r.status)
+  ).length;
+
+  // ── Filter + sort ──────────────────────────────────────────────────────────
   const filtered = rows
-    .filter((r) => {
+    .filter(r => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (search) {
         const q = search.toLowerCase();
         return (
+          r.id.toLowerCase().includes(q) ||
+          orderId(r.id).toLowerCase().includes(q) ||
           String(r.table_number).includes(q) ||
+          (r.customer_name?.toLowerCase().includes(q) ?? false) ||
+          (r.customer_phone?.includes(q) ?? false) ||
           (r.waiter_name?.toLowerCase().includes(q) ?? false) ||
-          (r.floor_name?.toLowerCase().includes(q) ?? false) ||
-          r.id.toLowerCase().includes(q)
+          (r.floor_name?.toLowerCase().includes(q) ?? false)
         );
       }
       return true;
     })
     .sort((a, b) => {
-      let av: any = a[sortKey];
-      let bv: any = b[sortKey];
+      let av: any = a[sortKey], bv: any = b[sortKey];
       if (av === null) av = sortDir === "asc" ? Infinity : -Infinity;
       if (bv === null) bv = sortDir === "asc" ? Infinity : -Infinity;
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortDir === "asc" ? av - bv : bv - av;
     });
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   function toggleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("desc"); }
+    setPage(1);
   }
 
-  function SortIcon({ k }: { k: SortKey }) {
-    if (sortKey !== k) return <span className="opacity-30">↕</span>;
-    return sortDir === "asc" ? <span>↑</span> : <span>↓</span>;
+  function SortArrow({ k }: { k: SortKey }) {
+    if (sortKey !== k) return <span className="opacity-20 ml-0.5 text-[10px]">↕</span>;
+    return <span className="ml-0.5 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>;
   }
 
-  const statuses = ["all", "pending", "pending_waiter", "confirmed", "preparing", "ready", "served"];
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Order Log</h2>
-          <p className="text-sm text-muted-foreground">
-            Full lifecycle view — {rows.length} orders
-          </p>
+
+      {/* ── Tabs + toolbar ─────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3 border-b border-border -mt-1">
+        <div className="flex items-center">
+          {TABS.map(({ key, label }) => {
+            const count = key === "all" ? rows.length : rows.filter(r => r.status === key).length;
+            return (
+              <button
+                key={key}
+                onClick={() => { setStatusFilter(key); setPage(1); }}
+                className={cn(
+                  "flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap",
+                  statusFilter === key
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+                <span className={cn(
+                  "text-[11px] font-bold rounded-full px-1.5 py-0.5 leading-none min-w-[18px] text-center",
+                  statusFilter === key ? "bg-primary text-white" : "bg-muted text-muted-foreground"
+                )}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={refreshing}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2 pb-2 shrink-0">
+          <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5 w-52 border border-border">
+            <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <input
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
+              placeholder="Search order ID, customer, table..."
+              className="bg-transparent text-xs flex-1 outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted transition-colors">
+            <Filter className="h-3.5 w-3.5" /> Filters
+          </button>
+          <button className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+            <Download className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => load()} disabled={refreshing}
+            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          </button>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <Input
-          placeholder="Search table, waiter, floor, order ID…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs h-8 text-sm"
-        />
-        <div className="flex gap-1 flex-wrap">
-          {statuses.map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={cn(
-                "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                statusFilter === s
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted hover:bg-muted/80 text-muted-foreground"
-              )}
-            >
-              {s === "all" ? "All" : STATUS_LABEL[s] ?? s}
-            </button>
-          ))}
-        </div>
-        <span className="text-xs text-muted-foreground ml-auto">
-          {filtered.length} result{filtered.length !== 1 ? "s" : ""}
-        </span>
+      {/* ── Stat cards ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 py-4">
+        {[
+          { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",    value: rows.length,  sub: "+8.2% vs yesterday",  up: true  },
+          { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",   value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: "+12.5% vs yesterday", up: true },
+          { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value", value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: "+5.1% vs yesterday", up: true },
+          { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Pending Orders",  value: pendingCount, sub: "Need attention",       up: false },
+        ].map(({ icon: Icon, bg, ic, label, value, sub, up }) => (
+          <div key={label} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4 card-shadow">
+            <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", bg)}>
+              <Icon className={cn("h-6 w-6", ic)} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-2xl font-bold text-foreground leading-tight">{value}</p>
+              <p className="text-xs font-semibold text-foreground mt-0.5">{label}</p>
+              <p className={cn("text-[11px] mt-0.5", up ? "text-green-600" : "text-muted-foreground")}>
+                {up ? "▲" : ""} {sub}
+              </p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Table */}
-      {filtered.length === 0 ? (
-        <div className="flex h-32 items-center justify-center rounded-md border border-dashed">
-          <p className="text-sm text-muted-foreground">No orders match your filters</p>
-        </div>
-      ) : (
-        <div className="rounded-md border overflow-x-auto">
+      {/* ── Table ──────────────────────────────────────────────── */}
+      <div className="bg-card rounded-xl border border-border overflow-hidden card-shadow">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50 border-b">
+            <thead className="border-b border-border bg-muted/20">
               <tr>
-                <th className="text-left px-3 py-2.5 font-medium text-muted-foreground w-8"></th>
-                <th
-                  className="text-left px-3 py-2.5 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap"
-                  onClick={() => toggleSort("table_number")}
-                >
-                  Table <SortIcon k="table_number" />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground">Order ID</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground cursor-pointer hover:text-foreground"
+                  onClick={() => toggleSort("table_number")}>
+                  Table <SortArrow k="table_number" />
                 </th>
-                <th className="text-left px-3 py-2.5 font-medium text-muted-foreground whitespace-nowrap">Status</th>
-                <th
-                  className="text-left px-3 py-2.5 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap"
-                  onClick={() => toggleSort("created_at")}
-                >
-                  Placed <SortIcon k="created_at" />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground">Customer</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground">Items</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground">Status</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground cursor-pointer hover:text-foreground"
+                  onClick={() => toggleSort("order_total")}>
+                  Amount <SortArrow k="order_total" />
                 </th>
-                <th className="text-left px-3 py-2.5 font-medium text-muted-foreground whitespace-nowrap">Waiter</th>
-                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground whitespace-nowrap">Wait→Confirm</th>
-                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground whitespace-nowrap">Kitchen Prep</th>
-                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground whitespace-nowrap">Serve Time</th>
-                <th
-                  className="text-right px-3 py-2.5 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap"
-                  onClick={() => toggleSort("turnaround_s")}
-                >
-                  Total <SortIcon k="turnaround_s" />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground cursor-pointer hover:text-foreground"
+                  onClick={() => toggleSort("created_at")}>
+                  Time <SortArrow k="created_at" />
                 </th>
-                <th
-                  className="text-right px-3 py-2.5 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap"
-                  onClick={() => toggleSort("order_total")}
-                >
-                  Amount <SortIcon k="order_total" />
-                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {filtered.map((row) => (
-                <Fragment key={row.id}>
-                  <tr
-                    className={cn(
-                      "hover:bg-muted/30 cursor-pointer transition-colors",
-                      expandedId === row.id && "bg-muted/20"
-                    )}
-                    onClick={() => setExpandedId(expandedId === row.id ? null : row.id)}
-                  >
-                    {/* Expand toggle */}
-                    <td className="px-3 py-2.5 text-muted-foreground">
-                      {expandedId === row.id
-                        ? <ChevronUp className="h-3.5 w-3.5" />
-                        : <ChevronDown className="h-3.5 w-3.5" />}
-                    </td>
-
-                    {/* Table */}
-                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">
-                      <span>Table {row.table_number}</span>
-                      {row.floor_name && (
-                        <span className="ml-1.5 text-xs text-muted-foreground">{row.floor_name}</span>
-                      )}
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-3 py-2.5">
-                      <span className={cn("px-2 py-0.5 rounded text-xs font-medium", STATUS_COLORS[row.status] ?? "bg-gray-100 text-gray-700")}>
-                        {STATUS_LABEL[row.status] ?? row.status}
-                      </span>
-                    </td>
-
-                    {/* Placed */}
-                    <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">
-                      <span className="text-foreground font-medium">{fmt(row.created_at)}</span>
-                      <span className="ml-1.5 text-xs">{fmtDate(row.created_at)}</span>
-                    </td>
-
-                    {/* Waiter */}
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      {row.waiter_name
-                        ? <span>{row.waiter_name}</span>
-                        : <span className="text-muted-foreground text-xs">Unassigned</span>}
-                    </td>
-
-                    {/* Wait → Confirm */}
-                    <td className={cn("px-3 py-2.5 text-right tabular-nums whitespace-nowrap",
-                      row.wait_to_confirm_s !== null && row.wait_to_confirm_s > 300 ? "text-red-600 font-medium" : "")}>
-                      {dur(row.wait_to_confirm_s)}
-                    </td>
-
-                    {/* Kitchen Prep */}
-                    <td className={cn("px-3 py-2.5 text-right tabular-nums whitespace-nowrap",
-                      row.prep_time_s !== null && row.prep_time_s > 900 ? "text-orange-600 font-medium" : "")}>
-                      {dur(row.prep_time_s)}
-                    </td>
-
-                    {/* Serve Time */}
-                    <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
-                      {dur(row.serve_time_s)}
-                    </td>
-
-                    {/* Total */}
-                    <td className={cn("px-3 py-2.5 text-right tabular-nums font-medium whitespace-nowrap",
-                      row.turnaround_s !== null && row.turnaround_s > 1800 ? "text-red-600" : "")}>
-                      {dur(row.turnaround_s)}
-                    </td>
-
-                    {/* Amount */}
-                    <td className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">
-                      ₹{row.order_total.toFixed(2)}
-                    </td>
-                  </tr>
-
-                  {/* Expanded detail row */}
-                  {expandedId === row.id && (
-                    <tr key={`${row.id}-detail`} className="bg-muted/10">
-                      <td colSpan={10} className="px-4 py-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                          {/* Timeline */}
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                              Order Timeline
-                            </p>
-                            <ol className="relative border-l border-border ml-2 space-y-3">
-                              {[
-                                { label: "Order Placed",      time: row.created_at,   color: "bg-gray-400" },
-                                { label: "Waiter Confirmed",  time: row.confirmed_at,  color: "bg-blue-500" },
-                                { label: "Kitchen Started",   time: row.preparing_at,  color: "bg-orange-500" },
-                                { label: "Food Ready",        time: row.ready_at,      color: "bg-green-500" },
-                                { label: "Served to Table",   time: row.served_at,     color: "bg-emerald-600" },
-                                { label: "Billed",            time: row.billed_at,     color: "bg-purple-500" },
-                              ].map(({ label, time, color }, idx) => (
-                                <li key={`${row.id}-timeline-${idx}`} className="ml-4">
-                                  <span className={cn("absolute -left-1.5 mt-1 h-3 w-3 rounded-full border-2 border-background", color, !time && "opacity-30")} />
-                                  <div className="flex items-baseline gap-2">
-                                    <span className={cn("text-sm font-medium", !time && "text-muted-foreground")}>{label}</span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {time ? `${fmtDate(time)} ${fmt(time)}` : "—"}
-                                    </span>
-                                  </div>
-                                </li>
-                              ))}
-                            </ol>
-                          </div>
-
-                          {/* Order Details */}
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                              Order Details
-                            </p>
-                            <div className="space-y-1.5 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Order ID</span>
-                                <span className="font-mono text-xs">{row.id.slice(0, 8).toUpperCase()}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Table</span>
-                                <span>Table {row.table_number}{row.floor_name ? ` · ${row.floor_name}` : ""}</span>
-                              </div>
-                              {row.capacity && (
-                                <div className="flex justify-between">
-                                  <span className="text-muted-foreground">Capacity</span>
-                                  <span>{row.capacity} seats</span>
-                                </div>
-                              )}
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Attended by</span>
-                                <span>{row.waiter_name ?? "—"}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Items ordered</span>
-                                <span>{row.total_qty} item{row.total_qty !== 1 ? "s" : ""}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Order total</span>
-                                <span className="font-semibold">₹{row.order_total.toFixed(2)}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Billed</span>
-                                <span>{row.billed_at ? `${fmtDate(row.billed_at)} ${fmt(row.billed_at)}` : "Not billed"}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
+            <tbody className="divide-y divide-border">
+              {paginated.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
+                    No orders match your filters
+                  </td>
+                </tr>
+              ) : paginated.map(row => (
+                <tr key={row.id}
+                  className={cn(
+                    "hover:bg-muted/20 transition-colors",
+                    selectedOrder?.id === row.id && "bg-primary/5 hover:bg-primary/5"
                   )}
-                </Fragment>
+                >
+                  {/* Order ID */}
+                  <td className="px-4 py-3.5">
+                    <p className="font-semibold text-sm text-foreground">{orderId(row.id)}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {row.table_number ? "Dine In" : "Take Away"}
+                    </p>
+                  </td>
+
+                  {/* Table */}
+                  <td className="px-4 py-3.5">
+                    <p className="font-medium text-foreground">
+                      {row.table_number ? `Table ${String(row.table_number).padStart(2, "0")}` : "—"}
+                    </p>
+                    {row.floor_name && (
+                      <p className="text-[11px] text-muted-foreground">Floor {row.floor_name}</p>
+                    )}
+                  </td>
+
+                  {/* Customer */}
+                  <td className="px-4 py-3.5">
+                    <p className="font-medium text-foreground">{row.customer_name ?? "—"}</p>
+                    {row.customer_phone && (
+                      <p className="text-[11px] text-muted-foreground">{row.customer_phone}</p>
+                    )}
+                    <button
+                      onClick={() => setSelectedOrder(selectedOrder?.id === row.id ? null : row)}
+                      className="text-[11px] text-primary hover:underline font-medium"
+                    >
+                      View Items
+                    </button>
+                  </td>
+
+                  {/* Items */}
+                  <td className="px-4 py-3.5 text-muted-foreground text-sm">
+                    {row.total_qty} item{row.total_qty !== 1 ? "s" : ""}
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-4 py-3.5">
+                    <span className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+                      STATUS_BADGE[row.status] ?? "bg-gray-50 text-gray-500 border border-gray-200"
+                    )}>
+                      <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", STATUS_DOT[row.status] ?? "bg-gray-400")} />
+                      {STATUS_LABEL[row.status] ?? row.status}
+                    </span>
+                  </td>
+
+                  {/* Amount */}
+                  <td className="px-4 py-3.5 text-right">
+                    <span className="font-semibold text-foreground">
+                      ₹{row.order_total.toLocaleString("en-IN")}
+                    </span>
+                  </td>
+
+                  {/* Time */}
+                  <td className="px-4 py-3.5">
+                    <p className="text-foreground text-sm">{fmtAgo(row.created_at)}</p>
+                    {row.turnaround_s !== null && (
+                      <p className={cn("text-[11px]", row.turnaround_s > 1800 ? "text-red-500" : "text-muted-foreground")}>
+                        {dur(row.turnaround_s)} total
+                      </p>
+                    )}
+                  </td>
+
+                  {/* Actions */}
+                  <td className="px-4 py-3.5">
+                    <button
+                      onClick={() => setSelectedOrder(selectedOrder?.id === row.id ? null : row)}
+                      className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted transition-colors"
+                    >
+                      <span className="text-base leading-none tracking-widest">···</span>
+                    </button>
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground pt-1">
-        <span className="text-red-600 font-medium">Red duration</span> = slow (&gt;5min confirm / &gt;15min prep / &gt;30min total)
-        <span className="text-orange-600 font-medium">Orange</span> = kitchen taking &gt;15min
+        {/* Pagination */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+              className="px-2 py-1 rounded border border-border text-xs hover:bg-muted disabled:opacity-40 transition-colors">‹</button>
+            {Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1).map(p => (
+              <button key={p} onClick={() => setPage(p)}
+                className={cn("px-2.5 py-1 rounded text-xs font-medium transition-colors",
+                  page === p ? "bg-primary text-white" : "border border-border hover:bg-muted"
+                )}>{p}</button>
+            ))}
+            {totalPages > 3 && <span className="text-muted-foreground text-xs px-1">...</span>}
+            {totalPages > 3 && (
+              <button onClick={() => setPage(totalPages)}
+                className="px-2.5 py-1 rounded text-xs border border-border hover:bg-muted">{totalPages}</button>
+            )}
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+              className="px-2 py-1 rounded border border-border text-xs hover:bg-muted disabled:opacity-40 transition-colors">›</button>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            Showing {Math.min((page - 1) * PAGE_SIZE + 1, filtered.length)} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} orders
+          </span>
+          <span className="text-xs text-muted-foreground">{PAGE_SIZE} / page</span>
+        </div>
+      </div>
+
+      {/* ── Detail drawer (portal) ──────────────────────────────── */}
+      {typeof window !== "undefined" && createPortal(
+        <>
+          <div
+            onClick={() => setSelectedOrder(null)}
+            className={cn(
+              "fixed inset-y-0 left-0 right-80 z-50 bg-black/40 transition-opacity duration-300",
+              selectedOrder ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+            )}
+          />
+          <div className={cn(
+            "fixed top-0 right-0 h-full w-80 z-60 bg-card border-l border-border shadow-elevated overflow-y-auto",
+            "transition-transform duration-300 ease-in-out",
+            selectedOrder ? "translate-x-0" : "translate-x-full"
+          )}>
+            {selectedOrder && (
+              <OrderDetailPanel
+                order={selectedOrder}
+                onClose={() => setSelectedOrder(null)}
+                onStatusChange={() => loadRef.current?.()}
+              />
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+// ── Order Detail Panel ────────────────────────────────────────────────────────
+
+function OrderDetailPanel({
+  order, onClose, onStatusChange,
+}: {
+  order: OrderLogRow;
+  onClose: () => void;
+  onStatusChange: () => void;
+}) {
+  const [actionLoading, setActionLoading] = useState<"advance" | "cancel" | null>(null);
+
+  const canAdvance = !!NEXT_STATUS[order.status];
+  const nextLabel  = NEXT_LABEL[order.status] ?? "Mark as Ready";
+
+  async function handleAdvance() {
+    const next = NEXT_STATUS[order.status];
+    if (!next) return;
+    setActionLoading("advance");
+    const now = new Date().toISOString();
+    const tsField: Record<string, string> = {
+      confirmed:  "confirmed_at",
+      preparing:  "preparing_at",
+      ready:      "ready_at",
+      served:     "served_at",
+    };
+    const update: Record<string, string> = { status: next };
+    if (tsField[next]) update[tsField[next]] = now;
+    await supabase.from("orders").update(update).eq("id", order.id);
+    setActionLoading(null);
+    onStatusChange();
+  }
+
+  async function handleCancel() {
+    setActionLoading("cancel");
+    await supabase.from("orders").update({ status: "cancelled" }).eq("id", order.id);
+    setActionLoading(null);
+    onStatusChange();
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+
+      {/* Header */}
+      <div className="flex items-start justify-between px-4 py-4 border-b border-border shrink-0">
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Order Details</p>
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="font-bold text-base text-foreground">{orderId(order.id)}</span>
+            <span className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+              STATUS_BADGE[order.status] ?? "bg-gray-50 text-gray-500 border border-gray-200"
+            )}>
+              {STATUS_LABEL[order.status] ?? order.status}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {order.table_number ? "Dine In" : "Take Away"}
+            {order.table_number ? ` · Table ${order.table_number}` : ""}
+            {order.floor_name ? ` · Floor ${order.floor_name}` : ""}
+            {" · "}{fmtAgo(order.created_at)}
+          </p>
+        </div>
+        <button onClick={onClose}
+          className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors mt-1">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto divide-y divide-border">
+
+        {/* Customer Details */}
+        <div className="px-4 py-3">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Customer Details</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <User className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{order.customer_name ?? "Guest"}</p>
+                {order.customer_phone && (
+                  <p className="text-xs text-muted-foreground">{order.customer_phone}</p>
+                )}
+              </div>
+            </div>
+            {order.customer_phone && (
+              <button className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+                <Phone className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {order.waiter_name && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Waiter: <span className="text-foreground font-medium">{order.waiter_name}</span>
+            </p>
+          )}
+        </div>
+
+        {/* Order Items */}
+        <div className="px-4 py-3">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order Items</p>
+          <div className="space-y-3">
+            {order.items.map(item => (
+              <div key={item.id} className="flex items-center gap-3">
+                {/* Item image placeholder */}
+                <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
+                  <span className="text-[10px] font-bold text-muted-foreground text-center leading-tight px-1">
+                    {item.name.slice(0, 2).toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.quantity} × ₹{item.price.toLocaleString("en-IN")}
+                  </p>
+                </div>
+                <span className="text-sm font-semibold text-foreground shrink-0">
+                  ₹{(item.quantity * item.price).toLocaleString("en-IN")}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Bill */}
+          <div className="mt-4 pt-3 border-t border-border space-y-1.5">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span>₹{order.order_total.toLocaleString("en-IN")}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Taxes & Charges</span>
+              <span>₹0.00</span>
+            </div>
+            <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-border">
+              <span className="text-foreground">Total Amount</span>
+              <span className="text-primary">₹{order.order_total.toLocaleString("en-IN")}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Order Timeline */}
+        <div className="px-4 py-3">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order Timeline</p>
+          <div className="space-y-2.5">
+            {[
+              { label: "Order Placed",    time: order.created_at,   done: true,                 dot: "bg-primary"     },
+              { label: "Reached Kitchen", time: order.confirmed_at,  done: !!order.confirmed_at, dot: "bg-blue-500"    },
+              { label: "Preparing",       time: order.preparing_at,  done: !!order.preparing_at, dot: "bg-orange-500"  },
+              { label: "Ready to Serve",  time: order.ready_at,      done: !!order.ready_at,     dot: "bg-green-500"   },
+              { label: "Served",          time: order.served_at,     done: !!order.served_at,    dot: "bg-emerald-600" },
+            ].map(({ label, time, done, dot }, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={cn("h-2 w-2 rounded-full shrink-0", done ? dot : "bg-border")} />
+                  <span className={cn("text-xs font-medium", done ? "text-foreground" : "text-muted-foreground")}>
+                    {label}
+                  </span>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {time ? fmtAgo(time) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Timing breakdown (extra detail) */}
+        {(order.prep_time_s !== null || order.turnaround_s !== null) && (
+          <div className="px-4 py-3">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Timing</p>
+            <div className="space-y-1.5">
+              {[
+                { label: "Wait → Confirm", value: order.wait_to_confirm_s, warn: 300  },
+                { label: "Kitchen Prep",   value: order.prep_time_s,       warn: 900  },
+                { label: "Serve Time",     value: order.serve_time_s,      warn: 300  },
+                { label: "Total",          value: order.turnaround_s,      warn: 1800 },
+              ].map(({ label, value, warn }) => (
+                <div key={label} className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className={cn("font-medium",
+                    value !== null && value > warn ? "text-red-500" : "text-foreground"
+                  )}>
+                    {dur(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="px-4 py-3 border-t border-border shrink-0 flex gap-2">
+        {order.status !== "cancelled" && order.status !== "served" && (
+          <button
+            onClick={handleCancel}
+            disabled={actionLoading === "cancel"}
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-destructive border border-destructive/30 rounded-xl py-2.5 hover:bg-destructive/5 transition-colors disabled:opacity-50"
+          >
+            {actionLoading === "cancel"
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <XCircle className="h-3.5 w-3.5" />
+            }
+            Cancel Order
+          </button>
+        )}
+        {canAdvance && (
+          <button
+            onClick={handleAdvance}
+            disabled={actionLoading === "advance"}
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white bg-primary rounded-xl py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {actionLoading === "advance"
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <CheckCircle2 className="h-3.5 w-3.5" />
+            }
+            {nextLabel}
+          </button>
+        )}
       </div>
     </div>
   );

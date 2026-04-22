@@ -536,17 +536,27 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **Action** | Monitors Live Tables tab — sees which tables are occupied, what's ordered, who's serving |
 | **Touchpoint** | `TableSessions` component |
 | **Emotion** | 😊 Real-time visibility without walking the floor |
-| **System** | `useManagerRealtime()` → channel: `manager:{restaurant_id}` |
+| **System** | Supabase realtime channel `manager:{restaurant_id}` — subscribes to `orders` table changes and refreshes silently |
+
+**UI features (implemented):**
+- Stat bar: Active Tables · Bill Ready · Awaiting Attention · Today's Revenue · Avg. Order Value
+- Floor tabs filter tiles by floor; "All Floors" shows everything
+- Grid / List view toggle
+- Table tile states: `free` · `active` · `bill-ready` · `awaiting` · `billed`
+- Selecting a tile opens a detail panel on the right
+- `BillDialog` triggered from tile or detail panel
 
 **Pain points:**
 - No floor plan view — tables are listed, not laid out spatially
 - Can't see which waiter is assigned to which table at a glance
 - If a table session isn't opened (waiter forgot), the table shows as "free" even if occupied
+- Filters button is present but not yet functional
 
 **Opportunities:**
 - Add a visual floor map (drag-and-drop table layout) — future feature
 - Show waiter name prominently on each occupied table card
 - Add a "Mark as occupied" manual override for the manager
+- Wire up the Filters button (by status, waiter, floor)
 
 ---
 
@@ -583,13 +593,14 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 
 **Pain points:**
 - No order cancellation for managers
-- No way to add or remove items from a placed order
 - No way to flag an order as "disputed"
 
 **Opportunities:**
 - Add a manager-only "Cancel Order" action with a reason field
-- Add a "Modify Order" flow (remove items, adjust quantities)
 - Add an `order.cancelled` status to the state machine
+
+**Implemented:**
+- ✅ Managers can place new orders from the table detail panel in `TableSessions` (uses `getMenuItems()` + `placeOrder()`)
 
 ---
 

@@ -101,7 +101,7 @@ components/
 │   ├── TablesManager.tsx
 │   ├── FloorsManager.tsx
 │   ├── StaffManager.tsx
-│   ├── SettingsPanel.tsx             # Routing mode + geo-fencing + subscription
+│   ├── SettingsPanel.tsx             # Routing mode + geo-fencing
 │   └── UpgradeBanner.tsx             # Upgrade CTA with coupon input
 ├── admin/
 │   └── CouponManager.tsx             # Full coupon CRUD UI

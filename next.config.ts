@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
   // Allow mobile device access to dev server (for testing on local network)
-  allowedDevOrigins: ['10.185.93.96'],
+  allowedDevOrigins: ['192.168.31.123'],
 };
 
 export default nextConfig;

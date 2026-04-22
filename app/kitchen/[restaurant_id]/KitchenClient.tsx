@@ -30,13 +30,18 @@ function KitchenClientContent({ restaurant }: Props) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-border bg-card">
         <div className="flex items-center justify-between px-4 py-3">
-          <div>
-            <h1 className="font-semibold tracking-tight">{restaurant.name}</h1>
-            <p className="text-xs text-muted-foreground">
-              Kitchen Dashboard • {profile?.name}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
+              <span className="text-white text-xs font-bold">K</span>
+            </div>
+            <div>
+              <h1 className="font-semibold text-sm text-foreground">{restaurant.name}</h1>
+              <p className="text-xs text-muted-foreground">
+                Kitchen Display • {profile?.name}
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -100,7 +105,7 @@ function KitchenClientContent({ restaurant }: Props) {
                       className={cn(
                         "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
                         status === "pending"
-                          ? "bg-yellow-100 text-yellow-800"
+                          ? "bg-warning-light text-warning"
                           : "bg-muted text-muted-foreground"
                       )}
                     >

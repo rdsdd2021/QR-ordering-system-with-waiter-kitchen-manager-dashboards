@@ -234,7 +234,8 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M13 | Geo-fencing settings | Nice to Have | Set restaurant coordinates + radius for customer location check |
 | M14 | Subscription management | Must Have | View current plan, upgrade to Pro, apply coupon |
 | M15 | Webhooks | Nice to Have | Register HTTPS endpoints to receive real-time event notifications |
-| M16 | Restaurant details | Must Have | Edit restaurant name and slug |
+| M16 | Restaurant details | Must Have | Edit restaurant name and slug. Upload a logo image (stored in Supabase `restaurant-logos` bucket, `{restaurant_id}/logo.{ext}`); `logo_url` is saved to the `restaurants` table and the page reloads to reflect the new logo. |
+| M17 | Manager-initiated orders | Should Have | Manager can place a new order on behalf of a customer directly from the Live Tables detail panel. Opens an "Add Order" modal with menu search, cart, and running total. Uses the same `placeOrder()` API as the customer ordering page, pre-filling session customer info. |
 
 ---
 

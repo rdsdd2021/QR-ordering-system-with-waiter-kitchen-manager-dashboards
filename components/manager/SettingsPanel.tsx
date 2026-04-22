@@ -11,7 +11,6 @@ import { supabase } from "@/lib/supabase";
 import { updateRestaurantRoutingMode } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
-import UpgradeBanner from "@/components/manager/UpgradeBanner";
 
 type Props = {
   restaurantId: string;
@@ -135,15 +134,6 @@ export default function SettingsPanel({
 
   return (
     <div className="space-y-8 max-w-2xl">
-
-      {/* ── Subscription ──────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold">Subscription</h2>
-          <p className="text-sm text-muted-foreground">Your current plan and billing</p>
-        </div>
-        <UpgradeBanner restaurantId={restaurantId} />
-      </section>
 
       {/* ── Order Routing ─────────────────────────────────────────── */}
       <section className="space-y-4">
