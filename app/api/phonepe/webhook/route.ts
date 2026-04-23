@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       password,
       authorizationHeader,
       body
-    ) as typeof callbackResponse;
+    ) as unknown as typeof callbackResponse;
   } catch (err) {
     console.error("[phonepe/webhook] validation failed:", err);
     return NextResponse.json({ error: "Invalid callback" }, { status: 400 });
