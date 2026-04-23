@@ -245,7 +245,6 @@ export type Coupon = {
   expires_at: string | null;
   is_active: boolean;
   applicable_plans: string[];
-  stripe_coupon_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -258,7 +257,7 @@ export type CouponUsage = {
 };
 
 export type CouponValidationResult =
-  | { valid: true; coupon_id: string; type: DiscountType; value: number; stripe_coupon_id: string | null }
+  | { valid: true; coupon_id: string; type: DiscountType; value: number }
   | { valid: false; reason: string };
 
 // ── Food Categories & Tags ────────────────────────────────────────────────────

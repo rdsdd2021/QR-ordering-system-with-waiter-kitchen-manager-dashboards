@@ -9,7 +9,7 @@ export type Subscription = {
   plan: Plan;
   status: string;
   current_period_end: string | null;
-  stripe_customer_id: string | null;
+  phonepe_transaction_id: string | null;
 };
 
 export type PlanLimits = {
@@ -43,11 +43,11 @@ export function useSubscription(restaurantId: string | null) {
     async function load() {
       const { data } = await supabase
         .from("subscriptions")
-        .select("plan, status, current_period_end, stripe_customer_id")
+        .select("plan, status, current_period_end, phonepe_transaction_id")
         .eq("restaurant_id", restaurantId)
         .maybeSingle();
 
-      setSubscription(data as Subscription ?? { plan: "free", status: "active", current_period_end: null, stripe_customer_id: null });
+      setSubscription(data as Subscription ?? { plan: "free", status: "active", current_period_end: null, phonepe_transaction_id: null });
       setLoading(false);
     }
 
@@ -61,7 +61,7 @@ export function useSubscription(restaurantId: string | null) {
 
   async function startUpgrade(returnUrl: string, couponCode?: string) {
     if (!restaurantId) return;
-    const res = await fetch("/api/stripe/checkout", {
+    const res = await fetch("/api/phonepe/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ restaurantId, returnUrl, plan: "pro", couponCode }),

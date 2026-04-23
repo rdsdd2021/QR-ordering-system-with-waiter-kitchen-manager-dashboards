@@ -16,7 +16,7 @@
 7. [Flow 5 — Waiter Dashboard](#7-flow-5--waiter-dashboard)
 8. [Flow 6 — Manager Dashboard](#8-flow-6--manager-dashboard)
 9. [Flow 7 — Billing & Table Sessions](#9-flow-7--billing--table-sessions)
-10. [Flow 8 — Subscription & Stripe](#10-flow-8--subscription--stripe)
+10. [Flow 8 — Subscription & Payments](#10-flow-8--subscription--payments)
 11. [Flow 9 — Coupon System](#11-flow-9--coupon-system)
 12. [Flow 10 — Webhooks](#12-flow-10--webhooks)
 13. [Database Schema (Live)](#13-database-schema-live)
@@ -680,7 +680,7 @@ No automated payment processing — purely manual recording.
 
 ---
 
-## 10. Flow 8 — Subscription & Stripe
+## 10. Flow 8 — Subscription & Payments
 
 ### Plans
 
@@ -691,7 +691,30 @@ No automated payment processing — purely manual recording.
 
 7-day free trial on all new Pro subscriptions (no credit card required during trial).
 
-### Upgrade Flow
+### Payment Providers
+
+The platform supports two payment providers:
+
+- **Stripe** — international cards, used globally
+- **PhonePe** — UPI-based payments, targeted at Indian restaurants
+
+PhonePe configuration is in `lib/phonepe.ts` and uses the official `pg-sdk-node` SDK (`StandardCheckoutClient`):
+
+```
+getPhonePeClient() → StandardCheckoutClient.getInstance(clientId, clientSecret, clientVersion, env)
+  clientId      → PHONEPE_CLIENT_ID env var
+  clientSecret  → PHONEPE_CLIENT_SECRET env var
+  clientVersion → PHONEPE_CLIENT_VERSION env var (default: 1)
+  env           → PHONEPE_ENV=production → Env.PRODUCTION
+                → otherwise             → Env.SANDBOX
+
+PHONEPE_PLANS.pro:
+  amountPaise: 79900  (₹799/month)
+```
+
+Checksum generation and webhook verification are handled internally by the SDK — no manual SHA256/X-VERIFY logic is needed.
+
+### Upgrade Flow (Stripe)
 
 ```
 Onboarding Step 3 → "Upgrade to Pro"
@@ -745,6 +768,8 @@ Manager UI checks limits before allowing:
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
 - Trial period means the subscription status is `trialing`, not `active`. The `get_restaurant_plan()` function treats `trialing` as Pro — but any code checking `status = 'active'` directly will incorrectly treat trialing users as free.
 - `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
+- PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`.
+- Set `PHONEPE_ENV=production` to switch PhonePe from the sandbox to the live API. Omitting the variable defaults to sandbox.
 
 ---
 
@@ -762,7 +787,6 @@ Manager UI checks limits before allowing:
 | `expires_at` | timestamptz (nullable) | null = never expires |
 | `is_active` | boolean | Admin can toggle |
 | `applicable_plans` | text[] | e.g. `{pro}` |
-| `stripe_coupon_id` | text (nullable) | Cached Stripe coupon ID |
 
 ### Validation Rules (server-side, `validate_coupon()` RPC)
 
@@ -799,7 +823,6 @@ All admin coupon routes require `SUPABASE_SERVICE_ROLE_KEY` (bypass RLS).
 ### Pitfalls
 
 - Coupon `value` for `flat` type is stored in **paise** (smallest currency unit), not rupees. A ₹100 discount = `value: 10000`. The frontend must divide by 100 for display.
-- `stripe_coupon_id` is cached — if a coupon's value is edited in the DB but the Stripe coupon is not updated, the old discount will be applied at checkout.
 - Deleting a coupon that has `coupon_usages` rows will fail (FK constraint). Admin must deactivate instead of delete.
 - The per-restaurant reuse check is in `validate_coupon()` but NOT in `record_coupon_usage()`. If `validate_coupon()` is bypassed (direct API call), a restaurant could use a coupon twice.
 
@@ -1013,8 +1036,8 @@ POST /api/webhooks/[id]/retry:
 | `restaurant_id` | uuid (unique) → restaurants | One per restaurant |
 | `plan` | text | `free` \| `pro` |
 | `status` | text | `active` \| `trialing` \| `past_due` \| `canceled` \| `incomplete` |
-| `stripe_customer_id` | text (unique, nullable) | |
-| `stripe_subscription_id` | text (unique, nullable) | |
+| `phonepe_transaction_id` | text (unique, nullable) | PhonePe transaction reference |
+| `phonepe_subscription_id` | text (unique, nullable) | PhonePe subscription reference (if applicable) |
 | `current_period_end` | timestamptz (nullable) | |
 | `created_at` / `updated_at` | timestamptz | |
 
@@ -1360,7 +1383,6 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | E2 | `past_due` not auto-downgraded to free | Pro features accessible despite failed payment | Only `canceled`/`deleted` triggers downgrade |
 | E3 | Stripe webhook body parsing | Any JSON-parsing middleware breaks signature verification | Must use `req.text()` |
 | E4 | Missing `restaurant_id` in Stripe metadata | Subscription not updated | Can happen with manual Stripe test events |
-| E5 | Cached `stripe_coupon_id` not updated on edit | Old discount applied | Must delete/recreate Stripe coupon on value change |
 
 ### Webhooks
 

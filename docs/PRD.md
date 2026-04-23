@@ -260,6 +260,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | S4 | Subscription webhooks | Must Have | Handle Stripe events: completed, updated, deleted, payment_failed |
 | S5 | Plan limit enforcement | Must Have | Block adding tables/items beyond plan limits. Show upgrade prompt. |
 | S6 | Coupon system | Should Have | Percentage or flat discounts. Expiry, usage limits, per-restaurant reuse prevention. |
+| S7 | PhonePe payments | Should Have | UPI-based subscription payments via PhonePe for Indian restaurants. Uses `pg-sdk-node` SDK (`StandardCheckoutClient`) via `lib/phonepe.ts`. Supports production and sandbox environments via `PHONEPE_ENV`. |
 
 ---
 
