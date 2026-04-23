@@ -108,7 +108,18 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-foreground mb-2">10. Contact</h2>
+            <h2 className="text-base font-semibold text-foreground mb-2">10. Business Details</h2>
+            <div className="p-4 rounded-xl border bg-card space-y-1 text-sm">
+              <p><strong className="text-foreground">Ramanuj Dey Sarkar</strong></p>
+              <p>Proprietor, Assistt</p>
+              <p>Deshbandhu Para, Siliguri, West Bengal, India</p>
+              <p>Phone: <a href="tel:+918250622813" className="text-primary hover:underline">+91 82506 22813</a></p>
+              <p>Email: <a href="mailto:support@assistt.in" className="text-primary hover:underline">support@assistt.in</a></p>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-foreground mb-2">11. Contact</h2>
             <p>For questions about these Terms, contact us at <a href="mailto:support@assistt.in" className="text-primary hover:underline">support@assistt.in</a>.</p>
           </section>
         </div>
