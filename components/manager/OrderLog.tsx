@@ -5,10 +5,38 @@ import { createPortal } from "react-dom";
 import {
   Loader2, RefreshCw, Search, Filter, Download,
   X, User, Phone, TrendingUp, ShoppingBag, AlertCircle,
-  Receipt, CheckCircle2, XCircle,
+  Receipt, CheckCircle2, XCircle, Calendar, ChevronDown,
 } from "lucide-react";
 import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+type DateSegment = "today" | "yesterday" | "week" | "month" | "custom";
+
+function startOfDay(d: Date) {
+  const r = new Date(d); r.setHours(0, 0, 0, 0); return r;
+}
+function endOfDay(d: Date) {
+  const r = new Date(d); r.setHours(23, 59, 59, 999); return r;
+}
+function getSegmentRange(seg: DateSegment, customFrom: string, customTo: string): [Date, Date] {
+  const now = new Date();
+  if (seg === "today")     return [startOfDay(now), endOfDay(now)];
+  if (seg === "yesterday") { const y = new Date(now); y.setDate(y.getDate() - 1); return [startOfDay(y), endOfDay(y)]; }
+  if (seg === "week")      { const w = new Date(now); w.setDate(w.getDate() - 6); return [startOfDay(w), endOfDay(now)]; }
+  if (seg === "month")     { const m = new Date(now); m.setDate(m.getDate() - 29); return [startOfDay(m), endOfDay(now)]; }
+  // custom
+  const from = customFrom ? startOfDay(new Date(customFrom)) : startOfDay(new Date(0));
+  const to   = customTo   ? endOfDay(new Date(customTo))     : endOfDay(now);
+  return [from, to];
+}
+function fmtDate(d: Date) {
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function toInputDate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
 
 type Props = { restaurantId: string };
 
@@ -125,6 +153,37 @@ const TABS = [
 
 const PAGE_SIZE = 10;
 
+const DATE_SEGMENTS: { key: DateSegment; label: string }[] = [
+  { key: "today",     label: "Today"     },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "week",      label: "Last 7 days" },
+  { key: "month",     label: "Last 30 days" },
+  { key: "custom",    label: "Custom"    },
+];
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+
+function exportCSV(rows: OrderLogRow[], label: string) {
+  const headers = ["Order ID","Status","Table","Floor","Customer","Phone","Items","Amount","Created At","Turnaround"];
+  const lines = rows.map(r => [
+    orderId(r.id), r.status,
+    r.table_number ? `Table ${r.table_number}` : "—",
+    r.floor_name ?? "—",
+    r.customer_name ?? "—",
+    r.customer_phone ?? "—",
+    r.total_qty,
+    r.order_total,
+    new Date(r.created_at).toLocaleString(),
+    r.turnaround_s !== null ? `${Math.round(r.turnaround_s / 60)}m` : "—",
+  ].map(v => `"${v}"`).join(","));
+  const csv = [headers.join(","), ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = `orders-${label}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function OrderLog({ restaurantId }: Props) {
@@ -138,8 +197,27 @@ export default function OrderLog({ restaurantId }: Props) {
   const [selectedOrder, setSelectedOrder] = useState<OrderLogRow | null>(null);
   const [page,          setPage]          = useState(1);
 
+  // ── Date segment state ─────────────────────────────────────────────────────
+  const [dateSegment,   setDateSegment]   = useState<DateSegment>("today");
+  const [customFrom,    setCustomFrom]    = useState(toInputDate(new Date()));
+  const [customTo,      setCustomTo]      = useState(toInputDate(new Date()));
+  const [showCustom,    setShowCustom]    = useState(false);
+  const [showFilters,   setShowFilters]   = useState(false);
+  const customRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
+
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
   const loadRef    = useRef<() => Promise<void>>(undefined);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (customRef.current && !customRef.current.contains(e.target as Node)) setShowCustom(false);
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setShowFilters(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   async function load() {
     if (rows.length === 0) setLoading(true); else setRefreshing(true);
@@ -224,14 +302,22 @@ export default function OrderLog({ restaurantId }: Props) {
   }, [rows]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const totalRevenue  = rows.reduce((s, r) => s + r.order_total, 0);
-  const avgOrderValue = rows.length ? totalRevenue / rows.length : 0;
-  const pendingCount  = rows.filter(r =>
+  const [rangeFrom, rangeTo] = getSegmentRange(dateSegment, customFrom, customTo);
+
+  // rows scoped to the selected date range
+  const rangeRows = rows.filter(r => {
+    const t = new Date(r.created_at).getTime();
+    return t >= rangeFrom.getTime() && t <= rangeTo.getTime();
+  });
+
+  const totalRevenue  = rangeRows.reduce((s, r) => s + r.order_total, 0);
+  const avgOrderValue = rangeRows.length ? totalRevenue / rangeRows.length : 0;
+  const pendingCount  = rangeRows.filter(r =>
     ["pending","pending_waiter","confirmed","preparing","ready"].includes(r.status)
   ).length;
 
   // ── Filter + sort ──────────────────────────────────────────────────────────
-  const filtered = rows
+  const filtered = rangeRows
     .filter(r => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (search) {
@@ -279,11 +365,71 @@ export default function OrderLog({ restaurantId }: Props) {
   return (
     <div className="space-y-4">
 
+      {/* ── Date segment bar ───────────────────────────────────── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {DATE_SEGMENTS.map(({ key, label }) => (
+          key === "custom" ? (
+            <div key="custom" className="relative" ref={customRef}>
+              <button
+                onClick={() => { setDateSegment("custom"); setShowCustom(v => !v); }}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                  dateSegment === "custom"
+                    ? "bg-primary text-white border-primary"
+                    : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                {dateSegment === "custom"
+                  ? `${fmtDate(new Date(customFrom))} – ${fmtDate(new Date(customTo))}`
+                  : "Custom"}
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {showCustom && (
+                <div className="absolute top-full left-0 mt-1.5 z-30 bg-card border border-border rounded-xl shadow-lg p-4 flex flex-col gap-3 min-w-[220px]">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date Range</p>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs text-muted-foreground">From</label>
+                    <input type="date" value={customFrom}
+                      onChange={e => { setCustomFrom(e.target.value); setPage(1); }}
+                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-background outline-none focus:ring-1 focus:ring-primary" />
+                    <label className="text-xs text-muted-foreground">To</label>
+                    <input type="date" value={customTo}
+                      onChange={e => { setCustomTo(e.target.value); setPage(1); }}
+                      className="text-xs border border-border rounded-lg px-2 py-1.5 bg-background outline-none focus:ring-1 focus:ring-primary" />
+                  </div>
+                  <button
+                    onClick={() => setShowCustom(false)}
+                    className="w-full py-1.5 rounded-lg bg-primary text-white text-xs font-medium hover:bg-primary/90 transition-colors"
+                  >Apply</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              key={key}
+              onClick={() => { setDateSegment(key); setPage(1); setShowCustom(false); }}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                dateSegment === key
+                  ? "bg-primary text-white border-primary"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+            >
+              {label}
+            </button>
+          )
+        ))}
+        <span className="text-xs text-muted-foreground ml-1">
+          {rangeRows.length} order{rangeRows.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
       {/* ── Tabs + toolbar ─────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 border-b border-border -mt-1">
-        <div className="flex items-center">
+        <div className="flex items-center overflow-x-auto">
           {TABS.map(({ key, label }) => {
-            const count = key === "all" ? rows.length : rows.filter(r => r.status === key).length;
+            const count = key === "all" ? rangeRows.length : rangeRows.filter(r => r.status === key).length;
             return (
               <button
                 key={key}
@@ -307,6 +453,7 @@ export default function OrderLog({ restaurantId }: Props) {
           })}
         </div>
         <div className="flex items-center gap-2 pb-2 shrink-0">
+          {/* Search */}
           <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5 w-52 border border-border">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <input
@@ -315,15 +462,83 @@ export default function OrderLog({ restaurantId }: Props) {
               placeholder="Search order ID, customer, table..."
               className="bg-transparent text-xs flex-1 outline-none placeholder:text-muted-foreground"
             />
+            {search && (
+              <button onClick={() => { setSearch(""); setPage(1); }}>
+                <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+              </button>
+            )}
           </div>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted transition-colors">
-            <Filter className="h-3.5 w-3.5" /> Filters
-          </button>
-          <button className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+
+          {/* Filters dropdown */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+                showFilters || statusFilter !== "all"
+                  ? "bg-primary/10 border-primary text-primary"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              )}
+            >
+              <Filter className="h-3.5 w-3.5" /> Filters
+              {statusFilter !== "all" && (
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              )}
+            </button>
+            {showFilters && (
+              <div className="absolute top-full right-0 mt-1.5 z-30 bg-card border border-border rounded-xl shadow-lg p-4 min-w-[180px] space-y-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</p>
+                <div className="flex flex-col gap-1">
+                  {TABS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => { setStatusFilter(key); setPage(1); setShowFilters(false); }}
+                      className={cn(
+                        "flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors text-left",
+                        statusFilter === key
+                          ? "bg-primary text-white"
+                          : "text-foreground hover:bg-muted"
+                      )}
+                    >
+                      {label}
+                      <span className={cn(
+                        "text-[11px] rounded-full px-1.5 py-0.5 leading-none",
+                        statusFilter === key ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                      )}>
+                        {key === "all" ? rangeRows.length : rangeRows.filter(r => r.status === key).length}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {statusFilter !== "all" && (
+                  <button
+                    onClick={() => { setStatusFilter("all"); setPage(1); setShowFilters(false); }}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground py-1 text-center"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Download CSV */}
+          <button
+            onClick={() => {
+              const label = dateSegment === "custom"
+                ? `${customFrom}_${customTo}`
+                : dateSegment;
+              exportCSV(filtered, label);
+            }}
+            title="Export CSV"
+            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
             <Download className="h-3.5 w-3.5" />
           </button>
+
+          {/* Refresh */}
           <button onClick={() => load()} disabled={refreshing}
-            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           </button>
         </div>
@@ -332,10 +547,10 @@ export default function OrderLog({ restaurantId }: Props) {
       {/* ── Stat cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 py-4">
         {[
-          { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",    value: rows.length,  sub: "+8.2% vs yesterday",  up: true  },
-          { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",   value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: "+12.5% vs yesterday", up: true },
-          { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value", value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: "+5.1% vs yesterday", up: true },
-          { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Pending Orders",  value: pendingCount, sub: "Need attention",       up: false },
+          { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",     value: rangeRows.length,  sub: dateSegment === "today" ? "Today" : dateSegment === "yesterday" ? "Yesterday" : dateSegment === "week" ? "Last 7 days" : dateSegment === "month" ? "Last 30 days" : `${fmtDate(new Date(customFrom))} – ${fmtDate(new Date(customTo))}`, up: false },
+          { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",    value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: `${rangeRows.filter(r => r.status === "served").length} served`, up: true },
+          { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value",  value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: rangeRows.length ? `across ${rangeRows.length} orders` : "No orders", up: false },
+          { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Pending Orders",   value: pendingCount, sub: pendingCount > 0 ? "Need attention" : "All clear", up: false },
         ].map(({ icon: Icon, bg, ic, label, value, sub, up }) => (
           <div key={label} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4 card-shadow">
             <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", bg)}>

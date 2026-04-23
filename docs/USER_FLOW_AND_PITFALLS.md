@@ -440,7 +440,13 @@ Order ID format: #ORD-XXXX (first 4 chars of UUID, uppercased)
 
 Stat cards (top of view):
   - Total Orders, Total Revenue, Avg. Order Value, Pending Orders
-  - Computed from the full fetched dataset (not a separate query)
+  - Computed from rangeRows (the date-filtered subset, not the full fetched dataset)
+  - Sub-labels are dynamic:
+      Total Orders  → shows the active date segment label (e.g. "Today", "Last 7 days",
+                       or "MMM D – MMM D" for custom ranges)
+      Total Revenue → shows count of served orders in the range
+      Avg. Order Value → shows "across N orders" or "No orders"
+      Pending Orders   → shows "Need attention" or "All clear"
 
 Status tabs:
   All | Preparing | Ready | Served | Cancelled
@@ -448,6 +454,13 @@ Status tabs:
   - Selecting a tab filters the table; resets to page 1
   - Note: "Awaiting" (pending_waiter) tab removed; cancelled orders now
     have a dedicated tab
+
+Date filter toolbar:
+  - Segments: Today | Yesterday | Last 7 days | Last 30 days | Custom
+  - Custom range: two date inputs (from / to), applied on selection
+  - Filters are applied client-side against the fetched dataset
+  - Helper functions: startOfDay / endOfDay / getSegmentRange / fmtDate / toInputDate
+    (defined in OrderLog.tsx)
 
 Search & sort toolbar:
   - Free-text search across: order ID, table number, floor name,
@@ -1372,8 +1385,8 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| I2 | Stat card trend values are hardcoded (`+8.2% vs yesterday`) | Misleading — not computed from real data | No yesterday comparison query exists |
-| I3 | Order Log fetches up to 300 rows client-side | Large restaurants may miss older orders | No server-side pagination or date-range filter |
+| I2 | ~~Stat card trend values are hardcoded (`+8.2% vs yesterday`)~~ | ~~Misleading — not computed from real data~~ | **Fixed** — sub-labels now derived from `rangeRows`: date segment label, served count, order count, or "All clear" |
+| I3 | Order Log fetches up to 300 rows client-side | Large restaurants may miss older orders | Date-range filter added (today/yesterday/last 7d/last 30d/custom) — narrows visible set client-side; server-side pagination still absent |
 | I4 | Real-time UPDATE patches `msg.new` fields directly onto the row | Joined fields (waiter_name, items, floor_name) are NOT updated on UPDATE events | Only a full re-fetch (triggered by INSERT) refreshes joined data |
 | I5 | "Cancel Order" and advance-status buttons in detail panel have no API call wired up | Buttons render but clicking them does nothing | Implementation pending |
 

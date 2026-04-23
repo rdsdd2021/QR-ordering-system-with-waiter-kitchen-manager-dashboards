@@ -619,7 +619,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 - No comparison view (this week vs. last week)
 
 **Opportunities:**
-- Add date range filter (today / this week / this month / custom)
+- Add date range filter to Analytics (today / this week / this month / custom) — note: Order Log tab already has this filter implemented
 - Add CSV export for orders and revenue
 - Add week-over-week comparison charts
 
