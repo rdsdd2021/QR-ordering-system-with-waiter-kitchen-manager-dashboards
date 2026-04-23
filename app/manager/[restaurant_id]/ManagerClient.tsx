@@ -158,7 +158,8 @@ function ManagerClientContent({ restaurant }: Props) {
       planRenewal={planRenewal}
       profileName={profile?.name ?? "Manager"}
       profileRole="Manager"
-      notificationCount={3}
+      notificationCount={0}
+      onSignOut={signOut}
       onManagePlan={() => setActiveTab("billing")}
       onLogoUpload={handleLogoUpload}
       maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : "xl"}

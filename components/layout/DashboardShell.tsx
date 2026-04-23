@@ -23,6 +23,7 @@ interface DashboardShellProps {
   profileRole?: string;
   notificationCount?: number;
   onManagePlan?: () => void;
+  onSignOut?: () => void;
   maxWidth?: "sm" | "md" | "lg" | "xl" | "2xl" | "full";
   onLogoUpload?: (file: File) => Promise<void>;
 }
@@ -40,7 +41,7 @@ export function DashboardShell({
   restaurant, navGroups, activeTab, onNavigate,
   pageTitle, pageDescription, headerActions, mobileNav,
   children, planLabel, planRenewal, profileName, profileRole,
-  notificationCount, onManagePlan, maxWidth = "xl", onLogoUpload,
+  notificationCount, onManagePlan, onSignOut, maxWidth = "xl", onLogoUpload,
 }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -72,6 +73,7 @@ export function DashboardShell({
           profileName={profileName}
           profileRole={profileRole}
           onManagePlan={onManagePlan}
+          onSignOut={onSignOut}
           onLogoUpload={onLogoUpload}
         />
       </div>
@@ -86,6 +88,8 @@ export function DashboardShell({
           profileName={profileName}
           profileRole={profileRole}
           notificationCount={notificationCount}
+          onSignOut={onSignOut}
+          onNavigate={onNavigate}
         />
 
         {/* Scrollable content */}

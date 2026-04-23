@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { useState, useRef } from "react";
-import { X, Crown, HeadphonesIcon, ChevronDown, ChevronRight, Camera } from "lucide-react";
+import { X, Crown, HeadphonesIcon, ChevronDown, ChevronRight, Camera, LogOut } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Restaurant } from "@/types/database";
 
@@ -250,8 +250,17 @@ export function AppSidebar({
       )}
 
       {/* ── Footer ───────────────────────────────────────────────── */}
-      <div className="px-4 py-2 border-t border-border shrink-0">
-        <p className="text-[10px] text-muted-foreground/60 text-center">© 2025 QR Order · All rights reserved</p>
+      <div className="px-3 py-3 border-t border-border shrink-0 space-y-1">
+        {onSignOut && (
+          <button
+            onClick={onSignOut}
+            className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            Sign out
+          </button>
+        )}
+        <p className="text-[10px] text-muted-foreground/60 text-center pt-1">© 2025 QR Order · All rights reserved</p>
       </div>
     </aside>
   );

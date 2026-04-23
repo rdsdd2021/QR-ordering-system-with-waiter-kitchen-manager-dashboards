@@ -236,8 +236,8 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
 
     const supabase = getSupabaseClient();
     const channel = supabase
-      .channel('table-availability-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      .channel(`table-availability-updates:${restaurantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, () => {
         fetchTables();
       })
       .subscribe();

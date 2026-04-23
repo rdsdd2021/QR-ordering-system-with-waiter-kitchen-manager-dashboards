@@ -102,6 +102,31 @@ export function useKitchenOrders(restaurantId: string) {
     const channel = supabase.channel(`kitchen:${restaurantId}`);
     channelRef.current = channel;
 
+    // Statuses the kitchen board displays
+    const KITCHEN_STATUSES: OrderStatus[] = ["pending", "confirmed", "preparing", "ready"];
+
+    // Fetch a single order and add/update it in state (used for INSERT and
+    // UPDATE-into-view cases like pending_waiter → confirmed)
+    async function fetchAndUpsertOrder(orderId: string, markNew = false) {
+      await new Promise((r) => setTimeout(r, 300)); // let order_items commit
+      const fresh = await getKitchenOrders(restaurantId);
+      const order = fresh.find((o) => o.id === orderId);
+      if (!order) return;
+      setOrders((prev) => {
+        const idx = prev.findIndex((o) => o.id === orderId);
+        if (idx === -1) return [order, ...prev];
+        const next = [...prev];
+        next[idx] = order;
+        return next;
+      });
+      if (markNew) {
+        setNewOrderIds((prev) => new Set(prev).add(orderId));
+        setTimeout(() => {
+          setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+        }, 4000);
+      }
+    }
+
     // Method 1: Broadcast from DB trigger
     channel.on(
       "broadcast",
@@ -110,30 +135,25 @@ export function useKitchenOrders(restaurantId: string) {
         const msg = payload.payload;
 
         if (msg.event === "INSERT") {
-          // Delay to ensure order_items are committed before fetching
-          await new Promise((r) => setTimeout(r, 500));
-          const fresh = await getKitchenOrders(restaurantId);
-          const newOrder = fresh.find((o) => o.id === msg.id);
-          if (newOrder) {
-            setOrders((prev) => {
-              if (prev.some((o) => o.id === newOrder.id)) return prev;
-              return [newOrder, ...prev];
-            });
-            setNewOrderIds((prev) => new Set(prev).add(newOrder.id));
-            setTimeout(() => {
-              setNewOrderIds((prev) => {
-                const next = new Set(prev);
-                next.delete(newOrder.id);
-                return next;
-              });
-            }, 4000);
-          }
+          fetchAndUpsertOrder(msg.id, true);
         } else if (msg.event === "UPDATE") {
-          setOrders((prev) =>
-            prev.map((o) =>
-              o.id === msg.id ? { ...o, status: msg.status as OrderStatus } : o
-            )
-          );
+          const newStatus = msg.status as OrderStatus;
+          setOrders((prev) => {
+            const exists = prev.some((o) => o.id === msg.id);
+            if (exists) {
+              // Order already on board — patch status in-place
+              // If status is no longer kitchen-relevant, remove it
+              if (!KITCHEN_STATUSES.includes(newStatus)) {
+                return prev.filter((o) => o.id !== msg.id);
+              }
+              return prev.map((o) => o.id === msg.id ? { ...o, status: newStatus } : o);
+            } else if (KITCHEN_STATUSES.includes(newStatus)) {
+              // Order wasn't on board yet (e.g. pending_waiter → confirmed)
+              // Fetch it so we get full data with items
+              fetchAndUpsertOrder(msg.id, true);
+            }
+            return prev;
+          });
         }
       }
     );
@@ -149,32 +169,22 @@ export function useKitchenOrders(restaurantId: string) {
       },
       async (payload) => {
         if (payload.eventType === "INSERT") {
-          const newOrderId = (payload.new as any).id;
-          // Delay to ensure order_items are committed before fetching
-          await new Promise((r) => setTimeout(r, 500));
-          const fresh = await getKitchenOrders(restaurantId);
-          const newOrder = fresh.find((o) => o.id === newOrderId);
-          if (newOrder) {
-            setOrders((prev) => {
-              if (prev.some((o) => o.id === newOrder.id)) return prev;
-              return [newOrder, ...prev];
-            });
-            setNewOrderIds((prev) => new Set(prev).add(newOrder.id));
-            setTimeout(() => {
-              setNewOrderIds((prev) => {
-                const next = new Set(prev);
-                next.delete(newOrder.id);
-                return next;
-              });
-            }, 4000);
-          }
+          fetchAndUpsertOrder((payload.new as any).id, true);
         } else if (payload.eventType === "UPDATE") {
           const u = payload.new as any;
-          setOrders((prev) =>
-            prev.map((o) =>
-              o.id === u.id ? { ...o, status: u.status as OrderStatus } : o
-            )
-          );
+          const newStatus = u.status as OrderStatus;
+          setOrders((prev) => {
+            const exists = prev.some((o) => o.id === u.id);
+            if (exists) {
+              if (!KITCHEN_STATUSES.includes(newStatus)) {
+                return prev.filter((o) => o.id !== u.id);
+              }
+              return prev.map((o) => o.id === u.id ? { ...o, status: newStatus } : o);
+            } else if (KITCHEN_STATUSES.includes(newStatus)) {
+              fetchAndUpsertOrder(u.id, true);
+            }
+            return prev;
+          });
         }
       }
     );

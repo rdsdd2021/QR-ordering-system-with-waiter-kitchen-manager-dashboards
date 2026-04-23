@@ -451,7 +451,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **Action** | New order card appears with a pulsing highlight |
 | **Touchpoint** | `OrderCard` — 4-second highlight animation |
 | **Emotion** | 😊 Hard to miss |
-| **System** | `on_order_item_insert` trigger → broadcast → `newOrderIds` set → CSS animation |
+| **System** | `on_order_item_insert` trigger → broadcast → `fetchAndUpsertOrder()` re-fetches full order → `newOrderIds` set → CSS animation; also fires for `pending_waiter → confirmed` transitions |
 
 **Pain points:**
 - No sound alert — in a noisy kitchen, visual-only is easy to miss
@@ -499,7 +499,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 
 **Opportunities:**
 - Add an end-of-service summary: orders completed, avg prep time
-- Add a visible "Sign Out" button (currently in the header but small)
+- ~~Add a visible "Sign Out" button (currently in the header but small)~~ — resolved: Sign Out is now in the profile dropdown in the `AppHeader` and also in the `AppSidebar` footer for quick access on desktop
 
 ---
 

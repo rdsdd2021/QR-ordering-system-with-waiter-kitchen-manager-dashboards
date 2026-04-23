@@ -397,6 +397,34 @@ function AddOrderModal({
   );
 }
 
+// ── Grid layout ───────────────────────────────────────────────────────────────
+// Fixed-width cards (max 220px each) centered in the canvas.
+// On mobile always 2 equal columns filling the width.
+
+function GridLayout({ cols, children }: { cols: number; children: React.ReactNode }) {
+  return (
+    <div className="w-full">
+      {/* Mobile: 2 equal cols filling full width */}
+      <div className="grid grid-cols-2 gap-3 md:hidden" style={{ gridAutoRows: "1fr" }}>
+        {children}
+      </div>
+      {/* Desktop: fixed-width cards, centered, never overflow */}
+      <div className="hidden md:flex justify-center w-full overflow-hidden">
+        <div
+          className="grid gap-3 w-full"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 220px))`,
+            gridAutoRows: "1fr",
+            maxWidth: `${cols * 220 + (cols - 1) * 12}px`,
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TableSessions({ restaurantId }: Props) {
@@ -410,8 +438,14 @@ export default function TableSessions({ restaurantId }: Props) {
   const [activeFloor,    setActiveFloor]    = useState<string>("all");
   const [selectedTile,   setSelectedTile]   = useState<TableTile | null>(null);
   const [billDialogSession, setBillDialogSession] = useState<TableSession | null>(null);
-  const [cols,           setCols]           = useState<number>(4);
-  const [rowsPerPage,    setRowsPerPage]    = useState<number>(3);
+  const [cols,           setCols]           = useState<number>(() => {
+    if (typeof window === "undefined") return 4;
+    return parseInt(localStorage.getItem("ts_cols") ?? "4", 10);
+  });
+  const [rowsPerPage,    setRowsPerPage]    = useState<number>(() => {
+    if (typeof window === "undefined") return 3;
+    return parseInt(localStorage.getItem("ts_rows") ?? "3", 10);
+  });
   const [currentPage,    setCurrentPage]    = useState<number>(1);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
   const [addOrderSession, setAddOrderSession] = useState<TableSession | null>(null);
@@ -453,6 +487,10 @@ export default function TableSessions({ restaurantId }: Props) {
   }, [restaurantId, reminderSent]);
 
   useEffect(() => { load(); }, [restaurantId]);
+
+  // Persist cols/rows to localStorage
+  useEffect(() => { localStorage.setItem("ts_cols", String(cols)); }, [cols]);
+  useEffect(() => { localStorage.setItem("ts_rows", String(rowsPerPage)); }, [rowsPerPage]);
 
   useEffect(() => {
     const client = getSupabaseClient();
@@ -640,9 +678,9 @@ export default function TableSessions({ restaurantId }: Props) {
               <Filter className="h-3.5 w-3.5" /> Filters
             </button>
 
-            {/* Columns selector */}
+            {/* Columns selector — desktop only */}
             {viewMode === "grid" && (
-              <div className="flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
+              <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
                 <span className="text-xs text-muted-foreground whitespace-nowrap">Cols</span>
                 <div className="flex items-center gap-0.5">
                   {[2, 3, 4, 5, 6].map(n => (
@@ -659,9 +697,9 @@ export default function TableSessions({ restaurantId }: Props) {
               </div>
             )}
 
-            {/* Rows selector */}
+            {/* Rows selector — desktop only */}
             {viewMode === "grid" && (
-              <div className="flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
+              <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
                 <span className="text-xs text-muted-foreground whitespace-nowrap">Rows</span>
                 <div className="flex items-center gap-0.5">
                   {[1, 2, 3, 4, 5].map(n => (
@@ -682,14 +720,7 @@ export default function TableSessions({ restaurantId }: Props) {
 
         {/* ── Grid ───────────────────────────────────────────── */}
         {viewMode === "grid" && (
-          <div className={cn(
-            "grid gap-3",
-            cols === 2 && "grid-cols-2",
-            cols === 3 && "grid-cols-3",
-            cols === 4 && "grid-cols-4",
-            cols === 5 && "grid-cols-5",
-            cols === 6 && "grid-cols-6",
-          )}>
+          <GridLayout cols={cols}>
             {pagedTiles.map((tile) => (
               <TableCard
                 key={tile.table_id}
@@ -703,7 +734,7 @@ export default function TableSessions({ restaurantId }: Props) {
                 reminderSent={reminderSent}
               />
             ))}
-          </div>
+          </GridLayout>
         )}
 
         {/* ── List ───────────────────────────────────────────── */}
@@ -725,10 +756,10 @@ export default function TableSessions({ restaurantId }: Props) {
 
         {/* ── Pagination ─────────────────────────────────────── */}
         <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-border">
-          <span>
+          <span className="hidden sm:block">
             Showing {Math.min((currentPage - 1) * pageSize + 1, visibleTiles.length)}–{Math.min(currentPage * pageSize, visibleTiles.length)} of {visibleTiles.length} tables
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 mx-auto sm:mx-0">
             <button
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1}
@@ -752,7 +783,7 @@ export default function TableSessions({ restaurantId }: Props) {
             >›</button>
           </div>
           {viewMode === "grid" && (
-            <span className="text-muted-foreground">{cols} cols × {rowsPerPage} rows</span>
+            <span className="hidden sm:block text-muted-foreground">{cols} cols × {rowsPerPage} rows</span>
           )}
         </div>
       </div>
@@ -835,7 +866,7 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
     <div
       onClick={onClick}
       className={cn(
-        "rounded-xl border-2 p-3 cursor-pointer transition-all duration-150 select-none",
+        "rounded-xl border-2 p-3 cursor-pointer transition-all duration-150 select-none flex flex-col",
         STATE_CARD[state],
         selected && "ring-2 ring-primary ring-offset-1"
       )}
@@ -868,7 +899,7 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
 
       {/* Free table */}
       {isFree ? (
-        <div className="flex flex-col items-center justify-center py-4 gap-2">
+        <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2">
           <svg viewBox="0 0 64 40" className="w-16 h-10 text-muted-foreground/30 fill-current">
             <rect x="8" y="12" width="48" height="6" rx="3"/>
             <rect x="12" y="18" width="4" height="14" rx="2"/>
@@ -885,7 +916,7 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
           </button>
         </div>
       ) : (
-        <>
+        <div className="flex flex-col flex-1">
           {/* Customer */}
           {session?.customer_name && (
             <div className="flex items-center gap-1.5 mb-1">
@@ -935,7 +966,7 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
               <span className="text-muted-foreground">···</span>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

@@ -273,9 +273,14 @@ On load:
 Real-time:
   useKitchenOrders() subscribes to channel: kitchen:{restaurant_id}
   Event: order_changed
-  └─ INSERT → re-fetches single order to get full joined data
-             → prepends to list with 4s highlight animation
-  └─ UPDATE → patches status in-place (optimistic update already applied)
+  └─ INSERT → re-fetches single order (300ms delay for order_items to commit)
+             → upserts into list; prepends if new, patches if already present
+             → 4s highlight animation via newOrderIds set
+  └─ UPDATE → if order is on the board:
+               - status still kitchen-relevant → patches status in-place
+               - status left kitchen scope (e.g. served/cancelled) → removes from board
+             if order is NOT on the board and new status is kitchen-relevant
+               (e.g. pending_waiter → confirmed) → full re-fetch + upsert with highlight
 ```
 
 ### Order Actions
@@ -296,7 +301,7 @@ advanceStatus():
 ### Variations
 
 - **Direct-to-kitchen mode:** Orders arrive as `pending` — kitchen sees them immediately.
-- **Waiter-first mode:** Orders arrive as `pending_waiter` — kitchen does NOT see them until waiter accepts (status becomes `confirmed`).
+- **Waiter-first mode:** Orders arrive as `pending_waiter` — kitchen does NOT see them until waiter accepts. When the waiter accepts, the status transitions to `confirmed` and the UPDATE handler detects the order is not yet on the board, triggering a full re-fetch so the kitchen sees it with a 4s highlight.
 - **New order highlight:** New orders get a pulsing border for 4 seconds via `newOrderIds` set.
 
 ### Pitfalls
@@ -321,6 +326,14 @@ On load:
 Real-time:
   Subscribes to channel: waiter:{restaurant_id}
   Event: order_changed
+
+  On UPDATE event:
+    - If order exists in local state:
+        - status = 'served'  → remove from list (order is done)
+        - waiter_id changed to another waiter → remove from list (reassigned)
+        - otherwise → update status/waiter_id in place
+    - If order does NOT exist in local state:
+        - waiter_id = currentWaiterId → fetch full order and add to list (newly assigned)
 ```
 
 ### Two Sections
@@ -376,7 +389,14 @@ markServed(orderId):
 
 **Protected by:** `ProtectedRoute` (role = `manager`)
 
-The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups:
+The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups.
+
+**AppHeader** (`components/layout/AppHeader.tsx`) is shared across all role dashboards (manager, waiter, kitchen) and provides:
+
+- **Command palette** — opens via the search bar click or `⌘K` / `Ctrl+K`. Fuzzy-searches all navigable tabs (Dashboard, Orders, Analytics, Menu, Categories, Tables, Staff, Billing, Settings, Integrations) and navigates on selection via the `onNavigate(tab)` prop.
+- **Profile dropdown** — clicking the avatar/name reveals a dropdown with the user's name, role, and a **Sign Out** button that calls the `onSignOut` prop.
+- **Sidebar footer Sign Out** — `AppSidebar` also renders a **Sign Out** button at the bottom of the sidebar (below the nav links) when `onSignOut` is provided, giving desktop users a persistent, always-visible sign-out option without opening the header dropdown.
+- **Notification badge** — shown only when `notificationCount > 0`.
 
 ### Operations Group
 
@@ -387,6 +407,7 @@ TableSessions component
 - Grid view has configurable layout: Cols selector (2–6 columns) and Rows selector (1–5 rows per page)
   - Both selectors are shown only in grid view mode
   - Changing either resets to page 1
+  - On mobile (< md breakpoint) the grid is always 2 columns regardless of the Cols selector; the selector only takes effect on md+ screens
 - Each table tile has one of five states:
     free        — no active session
     active      — session open, orders in progress
@@ -492,6 +513,8 @@ MenuManager component
 - Delete item (blocked if referenced by existing order_items — FK constraint)
 - Image upload to Supabase Storage
 - Real-time: menu changes broadcast to customer pages instantly
+- State updates: after add/edit, the local items list is NOT patched optimistically.
+  The postgres_changes Realtime subscription reloads the list when the DB write lands.
 ```
 
 **Categories & Tags (`categories` tab)**
@@ -606,6 +629,13 @@ After billing:
   - When ALL served orders at a table have billed_at set:
     → Customer sessionStorage session clears
     → Table shows as "free" in Live Tables
+
+State update strategy (OrderBilling component):
+  - No optimistic update is applied after generate_bill() succeeds.
+  - The postgres_changes Realtime subscription on the orders table
+    triggers a full re-fetch of both unbilled and billed order lists.
+  - This ensures the UI always reflects the true DB state, at the cost
+    of a small delay between billing and list refresh.
 ```
 
 ### Payment Method & Discount

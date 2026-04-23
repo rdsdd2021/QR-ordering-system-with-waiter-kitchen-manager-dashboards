@@ -31,7 +31,7 @@ export async function getRestaurant(
 ): Promise<Restaurant | null> {
   const { data, error } = await supabase
     .from("restaurants")
-    .select("id, name, slug, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters")
+    .select("id, name, slug, logo_url, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters")
     .eq("id", restaurantId)
     .maybeSingle(); // maybeSingle returns null instead of error when 0 rows found
 

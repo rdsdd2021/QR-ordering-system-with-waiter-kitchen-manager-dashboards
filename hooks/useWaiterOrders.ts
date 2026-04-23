@@ -152,12 +152,27 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
           // Fetch the full order with items
           fetchAndUpsertOrder(p.id);
         } else if (p.event === "UPDATE") {
-          // Patch status/waiter in-place — items are preserved via spread
-          setOrders((prev) =>
-            prev.map((o) =>
-              o.id === p.id ? { ...o, status: p.status, waiter_id: p.waiter_id } : o
-            )
-          );
+          const assignedToMe = p.waiter_id === waiterId;
+          const assignedToOther = p.waiter_id && p.waiter_id !== waiterId;
+          const isServed = p.status === "served";
+
+          setOrders((prev) => {
+            const exists = prev.some((o) => o.id === p.id);
+
+            if (exists) {
+              // Order is in our list — remove it if it's now served or taken by someone else
+              if (isServed || assignedToOther) {
+                return prev.filter((o) => o.id !== p.id);
+              }
+              return prev.map((o) =>
+                o.id === p.id ? { ...o, status: p.status, waiter_id: p.waiter_id } : o
+              );
+            } else if (assignedToMe) {
+              // Order just got assigned to me — fetch full data and add it
+              fetchAndUpsertOrder(p.id);
+            }
+            return prev;
+          });
         }
       })
       // Postgres changes as fallback
@@ -171,11 +186,25 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
           if (msg.eventType === "INSERT") {
             fetchAndUpsertOrder(row.id);
           } else if (msg.eventType === "UPDATE") {
-            setOrders((prev) =>
-              prev.map((o) =>
-                o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
-              )
-            );
+            const assignedToMe = row.waiter_id === waiterId;
+            const assignedToOther = row.waiter_id && row.waiter_id !== waiterId;
+            const isServed = row.status === "served";
+
+            setOrders((prev) => {
+              const exists = prev.some((o) => o.id === row.id);
+
+              if (exists) {
+                if (isServed || assignedToOther) {
+                  return prev.filter((o) => o.id !== row.id);
+                }
+                return prev.map((o) =>
+                  o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
+                );
+              } else if (assignedToMe) {
+                fetchAndUpsertOrder(row.id);
+              }
+              return prev;
+            });
           }
         }
       )

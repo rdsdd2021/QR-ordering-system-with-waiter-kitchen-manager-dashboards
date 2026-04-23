@@ -64,9 +64,7 @@ export default function OrderBilling({ restaurantId }: Props) {
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         () => { loadRef.current?.(); }
       )
-      .subscribe((status: string) => {
-        if (status === "SUBSCRIBED") loadRef.current?.();
-      });
+      .subscribe();
 
     channelRef.current = channel;
     return () => {
@@ -81,14 +79,7 @@ export default function OrderBilling({ restaurantId }: Props) {
     const result = await generateBill(orderId);
 
     if (result.success) {
-      const billedOrder = unbilledOrders.find((o) => o.id === orderId);
-      if (billedOrder) {
-        setUnbilledOrders((prev) => prev.filter((o) => o.id !== orderId));
-        setBilledOrders((prev) => [
-          { ...billedOrder, total_amount: result.net || 0, billed_at: new Date().toISOString() },
-          ...prev,
-        ]);
-      }
+      // Realtime postgres_changes subscription will reload the lists
     } else {
       alert(`Failed to generate bill: ${result.error}`);
     }

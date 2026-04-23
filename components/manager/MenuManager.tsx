@@ -69,7 +69,7 @@ export default function MenuManager({ restaurantId }: Props) {
         { event: "*", schema: "public", table: "menu_items", filter: `restaurant_id=eq.${restaurantId}` },
         () => { loadRef.current?.(); }
       )
-      .subscribe((status: string) => { if (status === "SUBSCRIBED") loadRef.current?.(); });
+      .subscribe();
     channelRef.current = channel;
     return () => { client.removeChannel(channel); channelRef.current = null; };
   }, [restaurantId]);
@@ -125,7 +125,7 @@ export default function MenuManager({ restaurantId }: Props) {
           setMenuItemCategories(newItem.id, formCategoryIds),
           setMenuItemTags(newItem.id, formTagIds),
         ]);
-        setItems(prev => [...prev, newItem].sort((a, b) => a.name.localeCompare(b.name)));
+        // Realtime postgres_changes subscription will reload the list
         closeDialog();
       }
     } else if (formMode === "edit" && editingItem) {
@@ -135,11 +135,7 @@ export default function MenuManager({ restaurantId }: Props) {
           setMenuItemCategories(editingItem.id, formCategoryIds),
           setMenuItemTags(editingItem.id, formTagIds),
         ]);
-        setItems(prev =>
-          prev.map(item => item.id === editingItem.id
-            ? { ...item, ...itemData } as MenuItem : item
-          ).sort((a, b) => a.name.localeCompare(b.name))
-        );
+        // Realtime postgres_changes subscription will reload the list
         closeDialog();
       }
     }
@@ -147,14 +143,24 @@ export default function MenuManager({ restaurantId }: Props) {
   }
 
   async function handleToggleAvailability(item: MenuItem) {
+    // Optimistic update for instant feedback; realtime will confirm
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_available: !i.is_available } : i));
     const success = await updateMenuItem(item.id, { is_available: !item.is_available });
-    if (success) setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_available: !i.is_available } : i));
+    if (!success) {
+      // Revert on failure
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_available: item.is_available } : i));
+    }
   }
 
   async function handleDelete(item: MenuItem) {
     if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    // Optimistic removal; realtime will confirm
+    setItems(prev => prev.filter(i => i.id !== item.id));
     const success = await deleteMenuItem(item.id);
-    if (success) setItems(prev => prev.filter(i => i.id !== item.id));
+    if (!success) {
+      // Revert on failure
+      setItems(prev => [...prev, item].sort((a, b) => a.name.localeCompare(b.name)));
+    }
   }
 
   // Build label for category (shows "Parent / Child" for sub-categories)

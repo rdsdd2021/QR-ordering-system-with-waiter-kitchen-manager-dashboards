@@ -387,6 +387,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 - Kitchen display optimized for large text and one-tap actions (used in noisy, fast-paced environments)
 - All dashboards mobile-responsive
 - No page refresh required for real-time updates on any dashboard
+- Dark/light mode theming support with system preference detection (via `next-themes`)
 
 ### Data Integrity
 
