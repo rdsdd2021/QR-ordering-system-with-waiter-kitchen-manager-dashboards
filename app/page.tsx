@@ -86,6 +86,14 @@ export default function Home() {
 
         {/* Pricing */}
         <PricingSection />
+
+        {/* About */}
+        <section className="mx-auto max-w-5xl px-6 pb-16 text-center">
+          <p className="text-xs text-muted-foreground">
+            QR Order is a product of <strong className="text-foreground">Assistt</strong> · India ·{" "}
+            <a href="mailto:support@assistt.in" className="hover:text-foreground transition-colors">support@assistt.in</a>
+          </p>
+        </section>
       </main>
 
       <footer className="border-t py-6 text-center text-xs text-muted-foreground">
@@ -95,7 +103,8 @@ export default function Home() {
           <Link href="/refunds" className="hover:text-foreground transition-colors">Refunds</Link>
           <Link href="/shipping" className="hover:text-foreground transition-colors">Shipping</Link>
         </div>
-        © {new Date().getFullYear()} QR Order · All rights reserved
+        <p>© {new Date().getFullYear()} <strong className="text-foreground">Assistt</strong> · QR Order · All rights reserved</p>
+
       </footer>
     </div>
   );

@@ -101,7 +101,8 @@ export default function RefundsPage() {
           <Link href="/refunds" className="hover:text-foreground">Refunds</Link>
           <Link href="/shipping" className="hover:text-foreground">Shipping</Link>
         </div>
-        <p className="mt-2">© {new Date().getFullYear()} QR Order · All rights reserved</p>
+        <p className="mt-2">© {new Date().getFullYear()} <strong className="text-foreground">Assistt</strong> · QR Order · All rights reserved</p>
+
       </footer>
     </div>
   );
