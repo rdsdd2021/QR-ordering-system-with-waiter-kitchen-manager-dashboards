@@ -507,12 +507,21 @@ Status badge colours:
 **Analytics (`analytics` tab)**
 ```
 Analytics component
-- Revenue over time (daily/weekly/monthly)
-- Top menu items by order count
-- Average prep time, serve time, turnaround
-- Waiter performance metrics
-- Uses PerformanceMetrics type from DB
+- Date range selector: today / last 7 days / last 30 days
+- KPI cards: total revenue, total orders, avg order value — each with % delta vs. prior period
+- SVG area chart for revenue or orders over the selected period — real data points shown as filled circles; estimated/projected segments rendered as a dashed line with reduced opacity
+- Top 6 menu items by quantity sold (with revenue) — filtered by restaurant and date range client-side: fetches up to 500 `order_items` rows, then cross-references against the set of `order.id`s that fall within the selected range
+- Hourly traffic SVG bar chart (real `created_at` data scoped to selected range, peak hour highlighted in orange; bar colour intensity scales with relative order volume; header shows total orders + peak hour summary; legend shows Peak/High/Low traffic indicators)
+- Waiter performance cards: orders handled, revenue generated, and avg revenue per order — scoped to selected date range; empty state shown as a dashed placeholder when no waiter data exists for the period
+- Payment method split: cash / UPI / card (donut chart + breakdown) — scoped to selected date range
+- Order status distribution (donut chart) — scoped to selected date range (filters by `created_at >= rangeStart`)
+- Average prep / serve / turnaround times from getPerformanceMetrics()
+- Hourly traffic uses real `created_at` data only; hours with no orders render as zero (no baseline blending); empty state renders a dashed bordered placeholder with "No order data in this period"
 ```
+
+> **Pitfall:** If `get_sales_summary` RPC does not exist the component silently falls back to a raw `orders` query — revenue aggregation may differ slightly between the two paths.
+
+> **Note:** Top items are filtered client-side by cross-referencing a set of `order.id`s scoped to the selected date range (fetched in the same parallel batch). The top-items list is only populated when at least one order exists in the selected range — if `rangedIdSet` is empty (no orders in range), the list renders empty rather than showing unscoped items. Waiter stats and payment split are scoped at the query level via `billed_at` range filters. Order status counts are scoped by `created_at >= rangeStart`. The hourly traffic chart shows only real `created_at` data — hours with no orders render as zero bars. This means sparse date ranges (e.g. "Today" with few orders) will show mostly empty bars rather than a filled curve. The `order_items` fetch is capped at 500 rows, so very high-volume periods may under-count top items.
 
 ### Menu Group
 

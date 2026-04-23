@@ -89,7 +89,13 @@ export default function Home() {
       </main>
 
       <footer className="border-t py-6 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} QR Order
+        <div className="flex items-center justify-center gap-4 mb-2">
+          <Link href="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+          <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+          <Link href="/refunds" className="hover:text-foreground transition-colors">Refunds</Link>
+          <Link href="/shipping" className="hover:text-foreground transition-colors">Shipping</Link>
+        </div>
+        © {new Date().getFullYear()} QR Order · All rights reserved
       </footer>
     </div>
   );

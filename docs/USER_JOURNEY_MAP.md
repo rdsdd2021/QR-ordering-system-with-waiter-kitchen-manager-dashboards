@@ -614,14 +614,16 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **System** | Aggregation queries on `orders`, `order_items`, `order_status_logs` |
 
 **Pain points:**
-- No date range picker — analytics may show all-time data by default
 - No export to CSV/PDF for accounting
-- No comparison view (this week vs. last week)
 
 **Opportunities:**
-- Add date range filter to Analytics (today / this week / this month / custom) — note: Order Log tab already has this filter implemented
 - Add CSV export for orders and revenue
-- Add week-over-week comparison charts
+- ~~Replace dummy hourly baseline with real per-hour DB aggregation~~ ✅ Implemented (real data only — hours with no orders show zero, empty state shown when no data exists)
+- Add custom date range picker beyond today / 7d / 30d presets
+
+**Implemented:**
+- ✅ Date range filter: today / last 7 days / last 30 days
+- ✅ Period-over-period % delta on all KPI cards (revenue, orders, AOV)
 
 ---
 
