@@ -34,7 +34,7 @@ export default function TermsPage() {
           </p>
 
           <p>
-            This document is published in accordance with the provisions of Rule 3(1) of the Information Technology (Intermediaries Guidelines) Rules, 2011, requiring publication of rules, regulations, privacy policy, and Terms of Use for access or usage of <strong className="text-foreground">https://qrorder.in/</strong> ("Platform"), including the related web application.
+            This document is published in accordance with the provisions of Rule 3(1) of the Information Technology (Intermediaries Guidelines) Rules, 2011, requiring publication of rules, regulations, privacy policy, and Terms of Use for access or usage of <strong className="text-foreground">https://assistt.in/</strong> ("Platform"), including the related web application.
           </p>
 
           <p>

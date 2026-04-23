@@ -43,7 +43,7 @@ export default function ShippingPage() {
             </p>
             <ul className="list-disc pl-5 space-y-1 mt-2">
               <li>A confirmation email to your registered email address.</li>
-              <li>Immediate access to your restaurant dashboard at <strong className="text-foreground">qrorder.in</strong>.</li>
+              <li>Immediate access to your restaurant dashboard at <strong className="text-foreground">assistt.in</strong>.</li>
               <li>The ability to set up your menu, tables, staff, and QR codes right away.</li>
             </ul>
           </section>

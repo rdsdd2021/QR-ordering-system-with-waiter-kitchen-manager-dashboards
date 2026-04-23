@@ -32,7 +32,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-base font-semibold text-foreground mb-2">1. Introduction</h2>
             <p>
-              This Privacy Policy describes how <strong className="text-foreground">QR Order</strong> (a product of Assistt, "we", "us", "our") collects, uses, and protects information through our web platform at <strong className="text-foreground">https://qrorder.in/</strong>. By using the Platform, you agree to the practices described here.
+              This Privacy Policy describes how <strong className="text-foreground">QR Order</strong> (a product of Assistt, "we", "us", "our") collects, uses, and protects information through our web platform at <strong className="text-foreground">https://assistt.in/</strong>. By using the Platform, you agree to the practices described here.
             </p>
             <p className="mt-2">
               Your data is primarily stored and processed in India via Supabase (our database provider) and Stripe (our payment processor), both of which maintain industry-standard security practices.
