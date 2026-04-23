@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import AdminClient from "./AdminClient";
 
+export const dynamic = "force-dynamic";
+
 async function getSuperAdminData() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
