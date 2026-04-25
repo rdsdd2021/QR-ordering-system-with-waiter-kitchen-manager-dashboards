@@ -686,12 +686,38 @@ No automated payment processing — purely manual recording.
 
 ### Plans
 
-| Plan | Price | Limits |
-|------|-------|--------|
-| Free | ₹0 | 5 tables, 20 menu items |
-| Pro | ₹799/month | Unlimited tables & menu items |
+| Plan | Monthly Price | Yearly Price | Limits | Self-serve? |
+|------|--------------|--------------|--------|-------------|
+| Starter | ₹499/month | ₹399/month | 5 tables, 1 staff account | No — downgrade via support |
+| Pro | ₹999/month | ₹799/month | 20 tables, 5 staff accounts, priority support | Yes |
+| Business | ₹1,999/month | ₹1,599/month | 50 tables, 15 staff accounts, custom roles | No — contact sales |
+| Enterprise | Custom | Custom | Unlimited tables & staff, dedicated account manager, API access | No — contact sales |
 
-7-day free trial on all new Pro subscriptions (no credit card required during trial).
+Yearly billing saves ~20% vs monthly. Business and Enterprise plans require contacting sales. Downgrading from Pro to Starter is not self-serve — users must contact support.
+
+The `BillingPanel` component (`components/manager/BillingPanel.tsx`) renders the full billing page in the manager dashboard with:
+- Plan selector cards with monthly/yearly toggle (switching cycle resets any applied coupon)
+- Coupon input on the Pro card (for non-Pro users); discount preview only shown when coupon actually reduces the price
+- Billing history table (from `payment_transactions`) — loads up to 50 rows, shows 4 by default with a "View All / Show Less" toggle
+- Invoice download generates a plain-text `.txt` receipt client-side (no server round-trip)
+- Right sidebar: current plan summary, payment method, editable billing address, support link
+
+**Plan availability & CTA behaviour:**
+
+| Plan | CTA | Action |
+|------|-----|--------|
+| Starter | "Contact Support" | Opens `mailto:support@qrorder.in?subject=Downgrade%20Request` — downgrade is not self-serve |
+| Pro | "Upgrade — ₹X/mo" | Initiates PhonePe checkout with the selected billing cycle |
+| Business | "Contact Sales" | Opens `mailto:support@qrorder.in` — not yet purchasable |
+| Enterprise | "Contact Sales" | Opens `mailto:support@qrorder.in` |
+
+The billing cycle (`monthly` / `yearly`) is passed to `startUpgrade()` so the correct PhonePe plan key (`pro_monthly` / `pro_yearly`) is used. An optional `planOverride` parameter can be passed to bypass the billing-cycle logic and use a specific plan key directly (e.g. for custom or legacy plans).
+
+**Billing address:** Editable inline via a text input in the sidebar. The value is local state only (not persisted to the DB yet).
+
+**Payment method button:**
+- Non-Pro users: clicking "Add Payment Method" triggers the Pro upgrade flow directly.
+- Pro users: clicking "Update Payment Method" opens a support email (PhonePe does not support saved payment methods).
 
 ### Payment Providers
 
@@ -704,14 +730,22 @@ PhonePe configuration is in `lib/phonepe.ts` and uses the official `pg-sdk-node`
 
 ```
 getPhonePeClient() → StandardCheckoutClient.getInstance(clientId, clientSecret, clientVersion, env)
+  ↳ Resets the SDK singleton (_client = undefined) before each call so getInstance always
+    picks up the current env credentials (the SDK checks === undefined, not null)
   clientId      → PHONEPE_CLIENT_ID env var
   clientSecret  → PHONEPE_CLIENT_SECRET env var
   clientVersion → PHONEPE_CLIENT_VERSION env var (default: 1)
   env           → PHONEPE_ENV=production → Env.PRODUCTION
                 → otherwise             → Env.SANDBOX
 
+PHONEPE_PLANS.pro_monthly:
+  amountPaise: 99900  (₹999/month)
+
+PHONEPE_PLANS.pro_yearly:
+  amountPaise: 958800  (₹799/month × 12, billed annually)
+
 PHONEPE_PLANS.pro:
-  amountPaise: 79900  (₹799/month)
+  amountPaise: 99900  (same as pro_monthly)
 ```
 
 Checksum generation and webhook verification are handled internally by the SDK — no manual SHA256/X-VERIFY logic is needed.
@@ -748,6 +782,46 @@ Stripe Webhook → POST /api/stripe/webhook:
     → update subscriptions.status = 'past_due'
 ```
 
+### Upgrade Flow (PhonePe)
+
+```
+BillingPanel → "Upgrade — ₹X/mo" (Pro card)
+
+POST /api/phonepe/checkout:
+  1. Validate coupon (if provided) via validate_coupon() RPC
+  2. Apply discount → compute finalAmountPaise
+  3. Generate merchantOrderId (uuid)
+  4. Resolve plan key from billing cycle (or planOverride if provided):
+       planOverride        → use directly
+       billing='monthly'  → PHONEPE_PLANS.pro_monthly (₹999/month)
+       billing='yearly'   → PHONEPE_PLANS.pro_yearly  (₹799/month × 12)
+  5. Call PhonePe SDK: standardCheckout.initiatePayment(request)
+  6. Upsert subscriptions row:
+     - plan='pro', status='pending'
+     - phonepe_transaction_id = merchantOrderId
+  7. Insert payment_transactions row:
+     - status='pending', amount_paise, coupon_code
+  8. Return checkout URL
+
+Client (useSubscription.startUpgrade):
+  - Signature: startUpgrade(returnUrl, couponCode?, billingCycle?, planOverride?)
+  - planOverride (optional): if provided, used as the plan key directly, bypassing billingCycle logic
+  - Otherwise resolves plan key from billingCycle: 'monthly' → pro_monthly, 'yearly' → pro_yearly
+  - returnUrl is set to /api/phonepe/popup-callback?orderId=<merchantOrderId> (not the caller's page)
+  - Opens checkout URL in a narrow 400×750 popup window (mobile-sized so PhonePe renders its mobile payment UI)
+  - Falls back to full-page redirect if the popup is blocked by the browser
+  - Listens for a `postMessage` from the popup (type: 'PHONEPE_CALLBACK'):
+      → Popup calls /api/phonepe/verify with the orderId to confirm payment server-side
+      → Posts { type, orderId, success } to window.opener, then closes itself
+      → Parent receives the message, calls verify, and updates local state
+
+PhonePe Webhook → POST /api/phonepe/webhook:
+  → Verify callback via SDK
+  → On success: upsert subscriptions (status='active')
+               record_coupon_usage() if coupon applied
+  → On failure: update subscriptions.status = 'failed'
+```
+
 ### Plan Limit Enforcement
 
 ```
@@ -770,8 +844,12 @@ Manager UI checks limits before allowing:
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
 - Trial period means the subscription status is `trialing`, not `active`. The `get_restaurant_plan()` function treats `trialing` as Pro — but any code checking `status = 'active'` directly will incorrectly treat trialing users as free.
 - `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
-- PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`.
+- PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`. Credentials are read inside the function (not at module load time) so they are always fresh — do not hoist them to module scope.
+- `getPhonePeClient()` resets `StandardCheckoutClient._client = undefined` before calling `getInstance()` to force the SDK to reinitialise with the current env credentials on every call. The SDK's singleton check uses `=== undefined` (not `=== null`), so setting it to `null` would not trigger reinitialisation.
 - Set `PHONEPE_ENV=production` to switch PhonePe from the sandbox to the live API. Omitting the variable defaults to sandbox.
+- The PhonePe checkout opens in a popup window. If the browser blocks popups (common in Safari or with strict popup blockers), the flow falls back to a full-page redirect. In that case the `postMessage` is never received and the UI only updates after the next page load or manual refresh.
+- `/api/phonepe/popup-callback` receives `orderId` and `upgrade` query params from PhonePe. It posts `{ type: 'PHONEPE_CALLBACK', orderId, success }` to the parent window via `postMessage`, then closes itself. The parent must listen for this message and call `/api/phonepe/verify` to confirm the payment server-side. If `window.opener` is null (e.g. full-page redirect fallback), the postMessage is skipped and the popup just closes after a short delay.
+- `/api/phonepe/popup-callback` is used as the `returnUrl` passed to PhonePe. This route must exist and return a valid HTML response. If it is missing, PhonePe will land on a 404 inside the popup.
 
 ---
 
@@ -807,7 +885,7 @@ Manager UI checks limits before allowing:
 - Uses pg_advisory_lock(coupon_id hash) for race-condition safety
 - Idempotent: checks coupon_usages before inserting
 - Increments coupons.used_count atomically
-- Called ONLY from Stripe webhook (checkout.session.completed)
+- Called from Stripe webhook (`checkout.session.completed`) and PhonePe webhook (on success)
   → Ensures usage is only recorded after successful payment
 ```
 
@@ -1057,6 +1135,21 @@ See [Flow 9 — Coupon System](#11-flow-9--coupon-system) for full field referen
 | `used_at` | timestamptz | |
 
 Unique constraint on `(coupon_id, restaurant_id)` — prevents a restaurant from using the same coupon twice.
+
+### `payment_transactions`
+
+Audit log of every payment attempt initiated via PhonePe checkout. One row is inserted at checkout initiation (`status='pending'`) and updated by the webhook on success or failure.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid PK | |
+| `restaurant_id` | uuid → restaurants | |
+| `merchant_order_id` | text (unique) | PhonePe order reference (uuid generated at checkout) |
+| `plan` | text | `pro` (plan being purchased) |
+| `amount_paise` | int | Final amount after any coupon discount |
+| `status` | text | `pending` \| `success` \| `failed` |
+| `coupon_code` | text (nullable) | Coupon applied at checkout, if any |
+| `created_at` | timestamptz | |
 
 ### `webhook_endpoints` (1 row) / `webhook_deliveries` (1 row)
 

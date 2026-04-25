@@ -88,6 +88,16 @@ export async function POST(req: NextRequest) {
       updated_at:             new Date().toISOString(),
     }, { onConflict: "restaurant_id" });
 
+    // ── Record in payment_transactions ───────────────────────────────────
+    await supabase.from("payment_transactions").insert({
+      restaurant_id:    restaurantId,
+      merchant_order_id: merchantOrderId,
+      plan,
+      amount_paise:     finalAmountPaise,
+      status:           "pending",
+      coupon_code:      couponCode ?? null,
+    });
+
     return NextResponse.json({ url: checkoutUrl });
   } catch (err) {
     console.error("[phonepe/checkout]", err);

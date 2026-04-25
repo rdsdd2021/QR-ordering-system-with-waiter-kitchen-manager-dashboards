@@ -22,6 +22,7 @@ import RestaurantDetails from "@/components/manager/RestaurantDetails";
 import WebhooksManager from "@/components/manager/WebhooksManager";
 import CategoryTagManager from "@/components/manager/CategoryTagManager";
 import UpgradeBanner from "@/components/manager/UpgradeBanner";
+import BillingPanel from "@/components/manager/BillingPanel";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { useSubscription } from "@/hooks/useSubscription";
 import { cn } from "@/lib/utils";
@@ -83,7 +84,7 @@ const PAGE_META: Record<Tab, { title: string; description: string }> = {
   staff:      { title: "Staff",              description: "Manage your team accounts" },
   tables:     { title: "Table Setup",        description: "Configure tables and generate QR codes" },
   details:    { title: "Restaurant Details", description: "Edit your restaurant profile" },
-  billing:    { title: "Billing",            description: "Subscription and payment management" },
+  billing:    { title: "Billing & Subscription",  description: "Manage your plan, billing details and invoices" },
   settings:   { title: "Settings",           description: "Order routing and preferences" },
   webhooks:   { title: "Integrations",       description: "Connect to external services" },
 };
@@ -162,7 +163,7 @@ function ManagerClientContent({ restaurant }: Props) {
       onSignOut={signOut}
       onManagePlan={() => setActiveTab("billing")}
       onLogoUpload={handleLogoUpload}
-      maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : "xl"}
+      maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : activeTab === "billing" ? "2xl" : "xl"}
       mobileNav={<MobileBottomNav activeTab={activeTab} onNavigate={setActiveTab} />}
     >
       {activeTab === "sessions"   && <TableSessions restaurantId={restaurant.id} />}
@@ -175,13 +176,7 @@ function ManagerClientContent({ restaurant }: Props) {
       {activeTab === "tables"     && <TablesManager restaurantId={restaurant.id} restaurantName={restaurant.name} />}
       {activeTab === "details"    && <RestaurantDetails restaurant={restaurant} />}
       {activeTab === "billing"    && (
-        <div className="space-y-8 max-w-2xl">
-          <div>
-            <h2 className="text-lg font-semibold">Billing</h2>
-            <p className="text-sm text-muted-foreground">Manage your subscription and payment details</p>
-          </div>
-          <UpgradeBanner restaurantId={restaurant.id} />
-        </div>
+        <BillingPanel restaurantId={restaurant.id} restaurantName={restaurant.name} />
       )}
       {activeTab === "settings"   && (
         <SettingsPanel

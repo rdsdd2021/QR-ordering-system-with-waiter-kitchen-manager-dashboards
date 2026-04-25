@@ -666,7 +666,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 
 **Pain points:**
 - No live demo or video walkthrough — he has to imagine how it works
-- Pricing is shown (₹799/month) but no comparison to competitors
+- Pricing is shown (₹999/month or ₹799/month billed yearly) but no comparison to competitors
 
 **Opportunities:**
 - Add a 60-second demo video on the homepage

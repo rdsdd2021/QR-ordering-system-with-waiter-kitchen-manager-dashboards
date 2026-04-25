@@ -232,7 +232,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M11 | Staff management | Must Have | Create waiter/kitchen accounts, toggle active/inactive, delete |
 | M12 | Order routing mode | Must Have | Switch between direct-to-kitchen and waiter-first per restaurant |
 | M13 | Geo-fencing settings | Nice to Have | Set restaurant coordinates + radius for customer location check |
-| M14 | Subscription management | Must Have | View current plan, upgrade to Pro, apply coupon |
+| M14 | Subscription management | Must Have | View current plan, upgrade/downgrade plan, apply coupon, view billing history |
 | M15 | Webhooks | Nice to Have | Register HTTPS endpoints to receive real-time event notifications |
 | M16 | Restaurant details | Must Have | Edit restaurant name and slug. Upload a logo image (stored in Supabase `restaurant-logos` bucket, `{restaurant_id}/logo.{ext}`); `logo_url` is saved to the `restaurants` table and the page reloads to reflect the new logo. |
 | M17 | Manager-initiated orders | Should Have | Manager can place a new order on behalf of a customer directly from the Live Tables detail panel. Opens an "Add Order" modal with menu search, cart, and running total. Uses the same `placeOrder()` API as the customer ordering page, pre-filling session customer info. |
@@ -245,7 +245,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 |---|---------|----------|-------------|
 | O1 | Self-serve signup | Must Have | Owner creates account with email + password |
 | O2 | Restaurant creation | Must Have | Name restaurant. System auto-creates: 1 floor, 5 tables, manager profile, free subscription |
-| O3 | Plan selection | Must Have | Choose Free or Pro. Apply coupon. Redirect to Stripe for Pro. |
+| O3 | Plan selection | Must Have | Choose Starter, Pro, Business, or Enterprise. Apply coupon. Redirect to PhonePe/Stripe for paid plans. |
 | O4 | 7-day free trial | Must Have | Pro plan includes 7-day trial, no credit card required |
 
 ---
@@ -254,8 +254,10 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 
 | # | Feature | Priority | Description |
 |---|---------|----------|-------------|
-| S1 | Free plan | Must Have | 5 tables, 20 menu items. No payment required. |
-| S2 | Pro plan | Must Have | ₹799/month. Unlimited tables and menu items. |
+| S1 | Starter plan | Must Have | ₹499/month (₹399/month yearly). 5 tables, 1 staff account. |
+| S2 | Pro plan | Must Have | ₹999/month (₹799/month yearly). 20 tables, 5 staff accounts, priority support. |
+| S2b | Business plan | Should Have | ₹1,999/month (₹1,599/month yearly). 50 tables, 15 staff accounts, custom roles. |
+| S2c | Enterprise plan | Should Have | Custom pricing. Unlimited tables & staff, dedicated account manager, API access. Contact sales. |
 | S3 | Stripe checkout | Must Have | Hosted Stripe checkout with coupon support |
 | S4 | Subscription webhooks | Must Have | Handle Stripe events: completed, updated, deleted, payment_failed |
 | S5 | Plan limit enforcement | Must Have | Block adding tables/items beyond plan limits. Show upgrade prompt. |

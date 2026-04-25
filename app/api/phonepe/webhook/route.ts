@@ -53,10 +53,23 @@ export async function POST(req: NextRequest) {
 
   const restaurantId = sub.restaurant_id as string;
 
+  // Look up the transaction to determine billing cycle
+  const { data: txRow } = await supabase
+    .from("payment_transactions")
+    .select("plan")
+    .eq("merchant_order_id", merchantOrderId)
+    .maybeSingle();
+
+  const isYearly = (txRow?.plan as string | null)?.includes("yearly");
+
   try {
     if (type === "CHECKOUT_ORDER_COMPLETED" || payload.state === "COMPLETED") {
       const periodEnd = new Date();
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      if (isYearly) {
+        periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      } else {
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+      }
 
       await supabase.from("subscriptions").upsert({
         restaurant_id:          restaurantId,
@@ -67,6 +80,10 @@ export async function POST(req: NextRequest) {
         pending_coupon_id:      null,
         updated_at:             new Date().toISOString(),
       }, { onConflict: "restaurant_id" });
+
+      await supabase.from("payment_transactions")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .eq("merchant_order_id", merchantOrderId);
 
       if (sub.pending_coupon_id) {
         await supabase.rpc("record_coupon_usage", {
@@ -83,6 +100,10 @@ export async function POST(req: NextRequest) {
           updated_at:       new Date().toISOString(),
         })
         .eq("restaurant_id", restaurantId);
+
+      await supabase.from("payment_transactions")
+        .update({ status: "failed" })
+        .eq("merchant_order_id", merchantOrderId);
     }
   } catch (err) {
     console.error("[phonepe/webhook] handler error:", err);
