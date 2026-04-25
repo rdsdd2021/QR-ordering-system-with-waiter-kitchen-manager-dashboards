@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { Minus, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MenuItem } from "@/types/database";
 
@@ -47,27 +47,17 @@ export default function MenuItemCard({
 }: Props) {
   const finalPrice = item.price * priceMultiplier;
   const inCart = quantity > 0;
-  const [popping, setPopping] = useState(false);
-
-  function handleAdd() {
-    onAddToCart(item);
-    setPopping(true);
-    setTimeout(() => setPopping(false), 350);
-  }
 
   return (
     <div className={cn(
-      "flex gap-3 rounded-2xl bg-card p-3.5 transition-all duration-200 cursor-default",
-      "hover:shadow-lg hover:-translate-y-0.5",
-      inCart
-        ? "ring-2 ring-primary/60 shadow-md shadow-primary/10 bg-primary/[0.03]"
-        : "border border-border/70 hover:border-primary/30",
+      "flex gap-3 rounded-lg bg-card p-3.5 border transition-colors duration-150 cursor-default",
+      inCart ? "border-2 border-primary" : "border-border",
       disabled && "opacity-50 pointer-events-none",
     )}>
       {/* Image */}
       {item.image_url && (
-        <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-muted">
-          <img src={item.image_url} alt={item.name} className="h-full w-full object-cover transition-transform duration-300 hover:scale-105" loading="lazy" />
+        <div className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
+          <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" loading="lazy" />
         </div>
       )}
 
@@ -97,37 +87,36 @@ export default function MenuItemCard({
           {/* Stepper / Add */}
           {inCart ? (
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 text-destructive hover:text-destructive"
                 onClick={() => onDecrement(item.id, quantity)}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-rose-100 text-rose-600 hover:bg-rose-200 active:scale-90 transition-all duration-150"
-                aria-label={`Remove ${item.name}`}
+                aria-label={`Remove one ${item.name}`}
               >
                 <Minus className="h-3 w-3" />
-              </button>
-              <span className={cn("w-5 text-center text-sm font-bold tabular-nums", popping && "animate-pop")}>
-                {quantity}
-              </span>
-              <button
-                onClick={handleAdd}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/85 hover:shadow-md hover:shadow-primary/30 active:scale-90 transition-all duration-150"
-                aria-label={`Add ${item.name}`}
+              </Button>
+              <span className="w-5 text-center text-sm font-bold tabular-nums">{quantity}</span>
+              <Button
+                variant="default"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => onAddToCart(item)}
+                aria-label={`Add another ${item.name}`}
               >
                 <Plus className="h-3 w-3" />
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
-              onClick={handleAdd}
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary/50 text-primary",
-                "hover:bg-primary hover:text-primary-foreground hover:border-primary hover:shadow-md hover:shadow-primary/30 hover:scale-110",
-                "active:scale-90 transition-all duration-150",
-                popping && "animate-pop",
-              )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onAddToCart(item)}
               aria-label={`Add ${item.name} to cart`}
             >
               <Plus className="h-4 w-4" />
-            </button>
+            </Button>
           )}
         </div>
       </div>

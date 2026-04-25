@@ -37,9 +37,9 @@ export default function CartDrawer({
   savedCustomerInfo,
   onSaveCustomerInfo,
 }: Props) {
-  const [step, setStep]       = useState<Step>("cart");
+  const [step, setStep]         = useState<Step>("cart");
   const [expanded, setExpanded] = useState(false);
-  const [orderId, setOrderId] = useState<string | null>(null);
+  const [orderId, setOrderId]   = useState<string | null>(null);
 
   const [name, setName]           = useState(savedCustomerInfo?.name ?? "");
   const [phone, setPhone]         = useState(savedCustomerInfo?.phone ?? "");
@@ -93,10 +93,10 @@ export default function CartDrawer({
   if (step === "success") {
     return (
       <div className="bg-card border-t px-4 py-6 text-center">
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-200 animate-pop">
-          <CheckCircle2 className="h-7 w-7 text-white" />
+        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary">
+          <CheckCircle2 className="h-7 w-7 text-primary-foreground" />
         </div>
-        <p className="font-bold text-base">Order placed! 🎉</p>
+        <p className="font-bold text-base">Order placed!</p>
         <p className="mt-1 text-xs text-muted-foreground">Track it in My Orders</p>
         {orderId && <p className="mt-2 font-mono text-[11px] bg-muted rounded-lg px-3 py-1.5 inline-block text-muted-foreground">#{orderId.slice(0, 8).toUpperCase()}</p>}
       </div>
@@ -107,11 +107,11 @@ export default function CartDrawer({
   if (step === "loading") {
     return (
       <div className="bg-card border-t px-4 py-6 text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
         <p className="text-sm font-medium">Placing your order…</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">Just a moment!</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">Just a moment</p>
       </div>
     );
   }
@@ -120,8 +120,8 @@ export default function CartDrawer({
   if (step === "error") {
     return (
       <div className="bg-card border-t px-4 py-4 space-y-3">
-        <p className="text-sm text-destructive text-center animate-wiggle">Something went wrong. Please try again.</p>
-        <Button className="w-full h-10" onClick={() => setStep("cart")}>Back to cart</Button>
+        <p className="text-sm text-destructive text-center">Something went wrong. Please try again.</p>
+        <Button className="w-full" onClick={() => setStep("cart")}>Back to cart</Button>
       </div>
     );
   }
@@ -130,7 +130,6 @@ export default function CartDrawer({
   if (step === "info") {
     return (
       <div className="bg-card border-t">
-        {/* Handle */}
         <div className="flex items-center gap-3 px-4 pt-3 pb-2">
           <button onClick={() => { setStep("cart"); setFieldError(null); }} className="text-muted-foreground hover:text-foreground transition-colors p-1 -ml-1">
             <ArrowLeft className="h-4 w-4" />
@@ -179,13 +178,8 @@ export default function CartDrawer({
   }
 
   // ── Cart ─────────────────────────────────────────────────────────────
-  // Collapsed: single bar showing total + place order button
-  // Expanded: shows item list above the bar
   return (
-    <div className="bg-card border-t shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
-      {/* Gradient accent strip */}
-      <div className="h-1 w-full bg-gradient-to-r from-orange-400 via-amber-400 to-yellow-400" />
-
+    <div className="bg-card border-t">
       {/* Expanded item list */}
       {expanded && (
         <div className="max-h-56 overflow-y-auto overscroll-contain divide-y divide-border/60">
@@ -193,22 +187,25 @@ export default function CartDrawer({
             <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
               <p className="flex-1 min-w-0 text-sm font-medium truncate">{item.name}</p>
               <div className="flex items-center gap-1.5 shrink-0">
-                <button
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className={cn("h-6 w-6", item.quantity === 1 && "text-destructive hover:text-destructive")}
                   onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                  className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full transition-all duration-150 active:scale-90",
-                    item.quantity === 1 ? "bg-rose-100 text-rose-600 hover:bg-rose-200" : "bg-orange-100 text-orange-600 hover:bg-orange-200"
-                  )}
+                  aria-label={item.quantity === 1 ? `Remove ${item.name}` : `Decrease ${item.name}`}
                 >
                   {item.quantity === 1 ? <Trash2 className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
-                </button>
+                </Button>
                 <span className="w-5 text-center text-sm font-bold tabular-nums">{item.quantity}</span>
-                <button
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-6 w-6"
                   onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all duration-150 active:scale-90"
+                  aria-label={`Increase ${item.name}`}
                 >
                   <Plus className="h-3 w-3" />
-                </button>
+                </Button>
               </div>
               <p className="w-14 text-right text-sm font-bold tabular-nums shrink-0 text-primary">{fmt(item.price * item.quantity)}</p>
             </div>
@@ -223,7 +220,7 @@ export default function CartDrawer({
           onClick={() => setExpanded(v => !v)}
           className="flex items-center gap-1.5 text-sm font-semibold shrink-0 hover:opacity-80 transition-opacity"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white text-[11px] font-bold shadow-sm">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-[11px] font-bold">
             {itemCount}
           </span>
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />}
@@ -239,12 +236,9 @@ export default function CartDrawer({
 
         <span className="text-sm font-bold tabular-nums">{fmt(totalPrice)}</span>
 
-        <button
-          className="h-10 px-5 font-bold text-sm rounded-xl shrink-0 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 hover:shadow-lg hover:shadow-orange-300/40 hover:scale-105 active:scale-95 transition-all duration-150"
-          onClick={handleProceed}
-        >
-          Place order 🍽️
-        </button>
+        <Button onClick={handleProceed} className="h-10 px-5 font-bold text-sm shrink-0">
+          Place order
+        </Button>
       </div>
     </div>
   );

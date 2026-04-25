@@ -1,11 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { Store, Users, ShoppingCart, Zap, CheckCircle2, XCircle, Search, ToggleLeft, ToggleRight } from "lucide-react";
+import { Store, Users, ShoppingCart, Zap, CheckCircle2, Search, ToggleLeft, ToggleRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import CouponManager from "@/components/admin/CouponManager";
 
@@ -32,17 +42,17 @@ type Props = {
   hasServiceRole: boolean;
 };
 
-// Simple PIN gate — replace with proper auth in production
 const ADMIN_PIN = process.env.NEXT_PUBLIC_ADMIN_PIN ?? "admin123";
 
 export default function AdminClient({ restaurants, subscriptions, orderCounts, hasServiceRole }: Props) {
-  const [pin, setPin]         = useState("");
-  const [authed, setAuthed]   = useState(false);
+  const [pin, setPin]           = useState("");
+  const [authed, setAuthed]     = useState(false);
   const [pinError, setPinError] = useState(false);
-  const [search, setSearch]   = useState("");
+  const [search, setSearch]     = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
   const [activeTab, setActiveTab] = useState<"restaurants" | "coupons">("restaurants");
+  const [confirmTarget, setConfirmTarget] = useState<Restaurant | null>(null);
 
   const subMap = Object.fromEntries(subscriptions.map((s) => [s.restaurant_id, s]));
 
@@ -52,7 +62,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
       <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
         <Card className="w-full max-w-sm p-6 space-y-4">
           <div className="text-center">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Store className="h-6 w-6" />
             </div>
             <h1 className="text-xl font-bold">Admin Panel</h1>
@@ -84,9 +94,9 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────
-  const totalOrders  = Object.values(orderCounts).reduce((a, b) => a + b, 0);
-  const proCount     = subscriptions.filter((s) => s.plan === "pro" && s.status === "active").length;
-  const activeCount  = localRestaurants.filter((r) => r.is_active).length;
+  const totalOrders = Object.values(orderCounts).reduce((a, b) => a + b, 0);
+  const proCount    = subscriptions.filter((s) => s.plan === "pro" && s.status === "active").length;
+  const activeCount = localRestaurants.filter((r) => r.is_active).length;
 
   // ── Toggle restaurant active state ────────────────────────────────────
   async function toggleActive(restaurant: Restaurant) {
@@ -111,6 +121,34 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Confirm toggle AlertDialog */}
+      <AlertDialog open={!!confirmTarget} onOpenChange={(open) => { if (!open) setConfirmTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmTarget?.is_active ? "Deactivate" : "Activate"} restaurant?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmTarget?.is_active
+                ? `This will prevent all access to "${confirmTarget?.name}".`
+                : `This will restore access to "${confirmTarget?.name}".`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setConfirmTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={confirmTarget?.is_active ? "bg-destructive hover:bg-destructive/90" : ""}
+              onClick={() => {
+                if (confirmTarget) toggleActive(confirmTarget);
+                setConfirmTarget(null);
+              }}
+            >
+              {confirmTarget?.is_active ? "Deactivate" : "Activate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div>
@@ -123,7 +161,6 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
       <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
 
-        {/* Service role warning */}
         {!hasServiceRole && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             ⚠️ <strong>SUPABASE_SERVICE_ROLE_KEY</strong> is not set. Inactive restaurants may not appear.
@@ -134,7 +171,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: "Total Restaurants", value: localRestaurants.length, icon: Store, color: "" },
+            { label: "Total Restaurants", value: localRestaurants.length, icon: Store,        color: "" },
             { label: "Active",            value: activeCount,             icon: CheckCircle2, color: "text-green-600" },
             { label: "Pro Subscribers",   value: proCount,                icon: Zap,          color: "text-primary" },
             { label: "Total Orders",      value: totalOrders,             icon: ShoppingCart, color: "" },
@@ -170,97 +207,92 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
         </div>
 
         {activeTab === "restaurants" && (<>
-        {/* Search */}
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search restaurants…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
+          {/* Search */}
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search restaurants…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
 
-        {/* Restaurant table */}
-        <div className="rounded-xl border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Restaurant</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Plan</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Sub Status</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Orders</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Created</th>
-                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Active</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {filtered.map((r) => {
-                const sub = subMap[r.id];
-                return (
-                  <tr key={r.id} className={cn("hover:bg-muted/30", !r.is_active && "opacity-50")}>
-                    <td className="px-4 py-3">
-                      <p className="font-medium">{r.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{r.id.slice(0, 8).toUpperCase()}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge className={cn(
-                        "text-xs",
-                        sub?.plan === "pro" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                      )}>
-                        {sub?.plan ?? "free"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        "text-xs font-medium",
-                        sub?.status === "active" ? "text-green-600" :
-                        sub?.status === "past_due" ? "text-red-600" :
-                        "text-muted-foreground"
-                      )}>
-                        {sub?.status ?? "—"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {orderCounts[r.id] ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">
-                      {new Date(r.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => {
-                          const action = r.is_active ? "deactivate" : "activate";
-                          if (confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${r.name}"? ${r.is_active ? "This will prevent all access to this restaurant." : "This will restore access."}`)) {
-                            toggleActive(r);
-                          }
-                        }}
-                        disabled={toggling === r.id}
-                        className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                        title={r.is_active ? "Click to deactivate" : "Click to activate"}
-                      >
-                        {toggling === r.id ? (
-                          <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        ) : r.is_active ? (
-                          <ToggleRight className="h-6 w-6 text-green-600" />
-                        ) : (
-                          <ToggleLeft className="h-6 w-6 text-muted-foreground" />
-                        )}
-                      </button>
+          {/* Restaurant table */}
+          <div className="rounded-lg border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 border-b">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Restaurant</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Plan</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Sub Status</th>
+                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">Orders</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Created</th>
+                  <th className="text-center px-4 py-3 font-medium text-muted-foreground">Active</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filtered.map((r) => {
+                  const sub = subMap[r.id];
+                  return (
+                    <tr key={r.id} className={cn("hover:bg-muted/30", !r.is_active && "opacity-50")}>
+                      <td className="px-4 py-3">
+                        <p className="font-medium">{r.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{r.id.slice(0, 8).toUpperCase()}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge className={cn(
+                          "text-xs",
+                          sub?.plan === "pro" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          {sub?.plan ?? "free"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn(
+                          "text-xs font-medium",
+                          sub?.status === "active"   ? "text-green-600" :
+                          sub?.status === "past_due" ? "text-red-600"   :
+                          "text-muted-foreground"
+                        )}>
+                          {sub?.status ?? "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {orderCounts[r.id] ?? 0}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">
+                        {new Date(r.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => setConfirmTarget(r)}
+                          disabled={toggling === r.id}
+                          className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                          title={r.is_active ? "Click to deactivate" : "Click to activate"}
+                        >
+                          {toggling === r.id ? (
+                            <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          ) : r.is_active ? (
+                            <ToggleRight className="h-6 w-6 text-green-600" />
+                          ) : (
+                            <ToggleLeft className="h-6 w-6 text-muted-foreground" />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      No restaurants found
                     </td>
                   </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                    No restaurants found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                )}
+              </tbody>
+            </table>
+          </div>
         </>)}
 
         {activeTab === "coupons" && (

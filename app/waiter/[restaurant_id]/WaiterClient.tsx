@@ -2,6 +2,8 @@
 
 import { RefreshCw, Wifi, WifiOff, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import WaiterOrderCard from "@/components/waiter/WaiterOrderCard";
@@ -51,9 +53,11 @@ function WaiterClientContent({ restaurant }: Props) {
   if (!profile || !currentWaiterId) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground animate-pulse">
-          Loading waiter profile...
-        </p>
+        <div className="flex flex-col gap-3 p-4 w-full max-w-sm">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+        </div>
       </div>
     );
   }
@@ -64,9 +68,9 @@ function WaiterClientContent({ restaurant }: Props) {
       <header className="sticky top-0 z-40 border-b border-border bg-card">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
-              <span className="text-white text-xs font-bold">W</span>
-            </div>
+            <Avatar className="h-8 w-8 shrink-0">
+              <AvatarFallback className="text-xs font-bold">W</AvatarFallback>
+            </Avatar>
             <div>
               <h1 className="font-semibold text-sm text-foreground">{restaurant.name}</h1>
               <p className="text-xs text-muted-foreground">
@@ -109,10 +113,13 @@ function WaiterClientContent({ restaurant }: Props) {
 
       {/* ── Loading skeleton ─────────────────────────────────────────── */}
       {loading && (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground animate-pulse">
-            Loading orders…
-          </p>
+        <div className="flex-1 p-4 space-y-6">
+          <Skeleton className="h-6 w-32 rounded-lg" />
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map(i => (
+              <Skeleton key={i} className="h-40 w-full rounded-lg" />
+            ))}
+          </div>
         </div>
       )}
 

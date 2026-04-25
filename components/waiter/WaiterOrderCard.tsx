@@ -52,7 +52,7 @@ export default function WaiterOrderCard({ order, currentWaiterId, onTakeOrder, o
 
   return (
     <div className={cn(
-      "rounded-xl border bg-card flex flex-col overflow-hidden transition-all duration-200",
+      "rounded-lg border bg-card flex flex-col overflow-hidden transition-colors duration-200",
       cfg.border,
       isMe && "ring-2 ring-primary/30",
     )}>
@@ -101,7 +101,8 @@ export default function WaiterOrderCard({ order, currentWaiterId, onTakeOrder, o
         <div className="px-4 pb-4 pt-1 space-y-2">
           {canAccept && (
             <Button
-              className="w-full h-9 text-sm font-semibold rounded-lg bg-purple-500 hover:bg-purple-600 text-white"
+              variant="default"
+              className="w-full h-9 text-sm font-semibold rounded-lg bg-purple-500 hover:bg-purple-600"
               onClick={() => act(() => onAcceptOrder(order.id, currentWaiterId))}
               disabled={busy}
             >
@@ -113,7 +114,8 @@ export default function WaiterOrderCard({ order, currentWaiterId, onTakeOrder, o
           )}
           {canTake && (
             <Button
-              className="w-full h-9 text-sm font-semibold rounded-lg bg-amber-500 hover:bg-amber-600 text-white"
+              variant="default"
+              className="w-full h-9 text-sm font-semibold rounded-lg bg-amber-500 hover:bg-amber-600"
               onClick={() => act(() => onTakeOrder(order.id, currentWaiterId))}
               disabled={busy}
             >
@@ -125,7 +127,8 @@ export default function WaiterOrderCard({ order, currentWaiterId, onTakeOrder, o
           )}
           {canServe && (
             <Button
-              className="w-full h-9 text-sm font-semibold rounded-lg bg-green-500 hover:bg-green-600 text-white"
+              variant="default"
+              className="w-full h-9 text-sm font-semibold rounded-lg"
               onClick={() => act(() => onMarkServed(order.id, currentWaiterId))}
               disabled={busy}
             >

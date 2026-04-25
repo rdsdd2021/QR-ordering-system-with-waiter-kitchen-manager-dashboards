@@ -87,9 +87,7 @@ export function DashboardShell({
           onMenuToggle={() => setSidebarOpen(true)}
           profileName={profileName}
           profileRole={profileRole}
-          notificationCount={notificationCount}
           onSignOut={onSignOut}
-          onNavigate={onNavigate}
         />
 
         {/* Scrollable content */}

@@ -180,38 +180,6 @@
   --sidebar-ring: 358 100% 67%;
 }
 
-/* ── Playful interaction animations ─────────────────────────── */
-@keyframes pop {
-  0%   { transform: scale(1); }
-  40%  { transform: scale(1.18); }
-  70%  { transform: scale(0.94); }
-  100% { transform: scale(1); }
-}
-
-@keyframes wiggle {
-  0%, 100% { transform: rotate(0deg); }
-  20%       { transform: rotate(-6deg); }
-  40%       { transform: rotate(6deg); }
-  60%       { transform: rotate(-4deg); }
-  80%       { transform: rotate(4deg); }
-}
-
-@keyframes badge-pop {
-  0%   { transform: scale(1); }
-  50%  { transform: scale(1.35); }
-  100% { transform: scale(1); }
-}
-
-@keyframes float-up {
-  0%   { opacity: 1; transform: translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateY(-28px) scale(0.8); }
-}
-
-.animate-pop        { animation: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.animate-wiggle     { animation: wiggle 0.5s ease-in-out; }
-.animate-badge-pop  { animation: badge-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.animate-float-up   { animation: float-up 0.6s ease-out forwards; }
-
 /* Smooth press feedback on all interactive elements */
 button:active:not(:disabled),
 [role="button"]:active:not(:disabled) {
@@ -289,7 +257,7 @@ button:active:not(:disabled),
 
 /* Pro plan badge */
 .plan-badge-pro {
-  background: linear-gradient(135deg, #FF5A5F, #FF8C42);
+  background-color: hsl(var(--primary));
   color: white;
   font-size: 10px;
   font-weight: 600;

@@ -101,7 +101,7 @@ function KpiCard({
   const up = delta !== null && delta !== undefined && delta >= 0;
   return (
     <div className={cn(
-      "rounded-2xl border p-5 space-y-3 transition-shadow hover:shadow-md",
+      "rounded-lg border p-5 space-y-3 transition-colors",
       accent ? "bg-primary text-primary-foreground border-primary" : "bg-card"
     )}>
       <div className="flex items-center justify-between">
@@ -109,7 +109,7 @@ function KpiCard({
           accent ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {label}
         </p>
-        <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl", iconBg)}>
+        <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", iconBg)}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
@@ -157,7 +157,7 @@ function RevenueChart({ data }: {
   const hov = hovered !== null ? data[hovered] : null;
 
   if (!hasAny) return (
-    <div className="flex h-28 items-center justify-center rounded-xl border border-dashed">
+    <div className="flex h-28 items-center justify-center rounded-lg border border-dashed">
       <p className="text-sm text-muted-foreground">No revenue in this period</p>
     </div>
   );
@@ -229,7 +229,7 @@ function HourlyChart({ data }: { data: HourlyBucket[] }) {
   const hasAny = data.some(d => d.orders > 0);
 
   if (!hasAny) return (
-    <div className="flex h-24 items-center justify-center rounded-xl border border-dashed">
+    <div className="flex h-24 items-center justify-center rounded-lg border border-dashed">
       <p className="text-sm text-muted-foreground">No order data in this period</p>
     </div>
   );
@@ -609,7 +609,7 @@ export default function Analytics({ restaurantId }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Revenue bar chart */}
-        <div className="lg:col-span-2 rounded-2xl border bg-card p-5">
+        <div className="lg:col-span-2 rounded-lg border bg-card p-5">
           <div className="flex items-start justify-between mb-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Revenue Overview</p>
@@ -632,10 +632,10 @@ export default function Analytics({ restaurantId }: Props) {
         </div>
 
         {/* Order status donut */}
-        <div className="rounded-2xl border bg-card p-5">
+        <div className="rounded-lg border bg-card p-5">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Order Status</p>
           {statusCounts.length === 0 ? (
-            <div className="flex h-32 items-center justify-center rounded-xl border border-dashed">
+            <div className="flex h-32 items-center justify-center rounded-lg border border-dashed">
               <p className="text-sm text-muted-foreground">No orders in this period</p>
             </div>
           ) : (
@@ -676,10 +676,10 @@ export default function Analytics({ restaurantId }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Top selling items */}
-        <div className="lg:col-span-2 rounded-2xl border bg-card p-5">
+        <div className="lg:col-span-2 rounded-lg border bg-card p-5">
           <SectionHeader title="Top Selling Items" />
           {topItems.length === 0 ? (
-            <div className="flex h-24 items-center justify-center rounded-xl border border-dashed">
+            <div className="flex h-24 items-center justify-center rounded-lg border border-dashed">
               <p className="text-sm text-muted-foreground">No sales data in this period</p>
             </div>
           ) : (
@@ -693,7 +693,7 @@ export default function Analytics({ restaurantId }: Props) {
                       rankColors[i] ?? "text-muted-foreground/40")}>{i + 1}</span>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={getFoodImage(item.item_name, item.image_url)} alt={item.item_name}
-                      className="h-10 w-10 rounded-xl object-cover shrink-0 ring-1 ring-border" />
+                      className="h-10 w-10 rounded-lg object-cover shrink-0 ring-1 ring-border" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2 mb-1.5">
                         <p className="text-sm font-semibold truncate">{item.item_name}</p>
@@ -715,10 +715,10 @@ export default function Analytics({ restaurantId }: Props) {
         </div>
 
         {/* Payment split */}
-        <div className="rounded-2xl border bg-card p-5">
+        <div className="rounded-lg border bg-card p-5">
           <SectionHeader title="Payment Methods" />
           {payments.length === 0 ? (
-            <div className="flex h-32 items-center justify-center rounded-xl border border-dashed">
+            <div className="flex h-32 items-center justify-center rounded-lg border border-dashed">
               <p className="text-sm text-muted-foreground">No billed orders in this period</p>
             </div>
           ) : (
@@ -740,7 +740,7 @@ export default function Analytics({ restaurantId }: Props) {
                   return (
                     <div key={method} className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0"
+                        <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
                           style={{ background: (paymentColors[method] ?? "#94a3b8") + "20" }}>
                           <Icon className="h-4 w-4" style={{ color: paymentColors[method] ?? "#94a3b8" }} />
                         </div>
@@ -765,7 +765,7 @@ export default function Analytics({ restaurantId }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Timing */}
-        <div className="rounded-2xl border bg-card p-5 space-y-4">
+        <div className="rounded-lg border bg-card p-5 space-y-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Avg. Timing</p>
           {[
             { label: "Kitchen Prep", value: fmtSecs(metrics?.avgPrepSeconds ?? null), fallback: "8m 30s", sub: "Confirmed → Ready", icon: ChefHat, color: "bg-orange-100 text-orange-600" },
@@ -776,7 +776,7 @@ export default function Analytics({ restaurantId }: Props) {
             const isEst = value === "—";
             return (
               <div key={label} className="flex items-center gap-3">
-                <div className={cn("h-9 w-9 rounded-xl flex items-center justify-center shrink-0", color)}>
+                <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0", color)}>
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="flex-1">
@@ -800,7 +800,7 @@ export default function Analytics({ restaurantId }: Props) {
         </div>
 
         {/* Hourly traffic */}
-        <div className="lg:col-span-2 rounded-2xl border bg-card p-5">
+        <div className="lg:col-span-2 rounded-lg border bg-card p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Hourly Traffic</p>
@@ -825,10 +825,10 @@ export default function Analytics({ restaurantId }: Props) {
       </div>
 
       {/* ── Waiter performance ─────────────────────────────────────── */}
-      <div className="rounded-2xl border bg-card p-5">
+      <div className="rounded-lg border bg-card p-5">
         <SectionHeader title="Staff Performance" />
         {waiters.length === 0 ? (
-          <div className="flex h-20 items-center justify-center rounded-xl border border-dashed">
+          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed">
             <p className="text-sm text-muted-foreground">No waiter data in this period</p>
           </div>
         ) : (
@@ -840,7 +840,7 @@ export default function Analytics({ restaurantId }: Props) {
               const avatarColors = ["bg-blue-500", "bg-purple-500", "bg-green-500", "bg-amber-500", "bg-rose-500"];
               const avgRev = w.orders_handled > 0 ? w.revenue_generated / w.orders_handled : 0;
               return (
-                <div key={i} className="rounded-xl border border-border p-4 space-y-3 hover:shadow-sm transition-shadow">
+                <div key={i} className="rounded-lg border border-border p-4 space-y-3 hover:shadow-sm transition-shadow">
                   <div className="flex items-center gap-3">
                     <div className={cn("h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0", avatarColors[i % avatarColors.length])}>
                       {initials}
@@ -878,3 +878,6 @@ export default function Analytics({ restaurantId }: Props) {
     </div>
   );
 }
+
+
+

@@ -386,7 +386,7 @@ export default function OrderLog({ restaurantId }: Props) {
                 <ChevronDown className="h-3 w-3" />
               </button>
               {showCustom && (
-                <div className="absolute top-full left-0 mt-1.5 z-30 bg-card border border-border rounded-xl shadow-lg p-4 flex flex-col gap-3 min-w-[220px]">
+                <div className="absolute top-full left-0 mt-1.5 z-30 bg-card border border-border rounded-lg shadow-lg p-4 flex flex-col gap-3 min-w-[220px]">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date Range</p>
                   <div className="flex flex-col gap-2">
                     <label className="text-xs text-muted-foreground">From</label>
@@ -486,7 +486,7 @@ export default function OrderLog({ restaurantId }: Props) {
               )}
             </button>
             {showFilters && (
-              <div className="absolute top-full right-0 mt-1.5 z-30 bg-card border border-border rounded-xl shadow-lg p-4 min-w-[180px] space-y-3">
+              <div className="absolute top-full right-0 mt-1.5 z-30 bg-card border border-border rounded-lg shadow-lg p-4 min-w-[180px] space-y-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</p>
                 <div className="flex flex-col gap-1">
                   {TABS.map(({ key, label }) => (
@@ -552,8 +552,8 @@ export default function OrderLog({ restaurantId }: Props) {
           { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value",  value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: rangeRows.length ? `across ${rangeRows.length} orders` : "No orders", up: false },
           { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Pending Orders",   value: pendingCount, sub: pendingCount > 0 ? "Need attention" : "All clear", up: false },
         ].map(({ icon: Icon, bg, ic, label, value, sub, up }) => (
-          <div key={label} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4 card-shadow">
-            <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", bg)}>
+          <div key={label} className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
+            <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-lg", bg)}>
               <Icon className={cn("h-6 w-6", ic)} />
             </div>
             <div className="min-w-0">
@@ -568,7 +568,7 @@ export default function OrderLog({ restaurantId }: Props) {
       </div>
 
       {/* ── Table ──────────────────────────────────────────────── */}
-      <div className="bg-card rounded-xl border border-border overflow-hidden card-shadow">
+      <div className="bg-card rounded-lg border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/20">
@@ -939,7 +939,7 @@ function OrderDetailPanel({
           <button
             onClick={handleCancel}
             disabled={actionLoading === "cancel"}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-destructive border border-destructive/30 rounded-xl py-2.5 hover:bg-destructive/5 transition-colors disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-destructive border border-destructive/30 rounded-lg py-2.5 hover:bg-destructive/5 transition-colors disabled:opacity-50"
           >
             {actionLoading === "cancel"
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -952,7 +952,7 @@ function OrderDetailPanel({
           <button
             onClick={handleAdvance}
             disabled={actionLoading === "advance"}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white bg-primary rounded-xl py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white bg-primary rounded-lg py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {actionLoading === "advance"
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -965,3 +965,4 @@ function OrderDetailPanel({
     </div>
   );
 }
+

@@ -2,6 +2,8 @@
 
 import { RefreshCw, Wifi, WifiOff, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import OrderCard from "@/components/kitchen/OrderCard";
@@ -33,9 +35,9 @@ function KitchenClientContent({ restaurant }: Props) {
       <header className="sticky top-0 z-40 border-b border-border bg-card">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
-              <span className="text-white text-xs font-bold">K</span>
-            </div>
+            <Avatar className="h-8 w-8 shrink-0">
+              <AvatarFallback className="text-xs font-bold">K</AvatarFallback>
+            </Avatar>
             <div>
               <h1 className="font-semibold text-sm text-foreground">{restaurant.name}</h1>
               <p className="text-xs text-muted-foreground">
@@ -78,10 +80,10 @@ function KitchenClientContent({ restaurant }: Props) {
 
       {/* ── Loading skeleton ─────────────────────────────────────────── */}
       {loading && (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground animate-pulse">
-            Loading orders…
-          </p>
+        <div className="flex flex-1 gap-3 p-4">
+          {[1, 2, 3, 4].map(i => (
+            <Skeleton key={i} className="h-48 w-72 rounded-lg shrink-0" />
+          ))}
         </div>
       )}
 

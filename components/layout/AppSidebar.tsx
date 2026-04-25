@@ -59,12 +59,12 @@ function RestaurantLogo({
 
   return (
     <div className="relative group shrink-0">
-      <div className="h-10 w-10 rounded-lg overflow-hidden bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+      <div className="h-10 w-10 rounded-lg overflow-hidden bg-muted flex items-center justify-center">
         {logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={logoUrl} alt={name} className="h-full w-full object-cover" />
         ) : (
-          <span className="text-white font-bold text-sm">{name.slice(0, 2).toUpperCase()}</span>
+          <span className="text-foreground font-bold text-sm">{name.slice(0, 2).toUpperCase()}</span>
         )}
       </div>
       {onUpload && (
@@ -190,7 +190,7 @@ export function AppSidebar({
 
       {/* ── Pro plan upsell / renewal ─────────────────────────────── */}
       {showPlanCard && (isPro ? (
-        <div className="mx-3 mb-3 rounded-xl bg-gradient-to-br from-primary/10 to-orange/10 border border-primary/20 p-3 shrink-0">
+        <div className="mx-3 mb-3 rounded-lg bg-primary/5 border border-primary/20 p-3 shrink-0">
           <div className="flex items-center gap-1.5 mb-1">
             <Crown className="h-3.5 w-3.5 text-primary" />
             <span className="text-xs font-semibold text-primary flex-1">You&apos;re on Pro Plan</span>
@@ -211,7 +211,7 @@ export function AppSidebar({
           )}
         </div>
       ) : (
-        <div className="mx-3 mb-3 rounded-xl bg-muted/60 border border-border p-3 shrink-0">
+        <div className="mx-3 mb-3 rounded-lg bg-muted/60 border border-border p-3 shrink-0">
           <div className="flex items-center gap-1.5 mb-0.5">
             <p className="text-xs font-semibold text-foreground flex-1">Upgrade to Pro</p>
             <button onClick={() => setShowPlanCard(false)} className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded">

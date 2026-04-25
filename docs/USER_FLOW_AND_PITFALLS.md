@@ -393,10 +393,12 @@ The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups.
 
 **AppHeader** (`components/layout/AppHeader.tsx`) is shared across all role dashboards (manager, waiter, kitchen) and provides:
 
-- **Command palette** — opens via the search bar click or `⌘K` / `Ctrl+K`. Fuzzy-searches all navigable tabs (Dashboard, Orders, Analytics, Menu, Categories, Tables, Staff, Billing, Settings, Integrations) and navigates on selection via the `onNavigate(tab)` prop.
+- **Page title + description** — rendered in the left section of the header.
 - **Profile dropdown** — clicking the avatar/name reveals a dropdown with the user's name, role, and a **Sign Out** button that calls the `onSignOut` prop.
 - **Sidebar footer Sign Out** — `AppSidebar` also renders a **Sign Out** button at the bottom of the sidebar (below the nav links) when `onSignOut` is provided, giving desktop users a persistent, always-visible sign-out option without opening the header dropdown.
-- **Notification badge** — shown only when `notificationCount > 0`.
+- **Theme toggle** — switches between light and dark mode.
+
+> Note: The command palette (`⌘K`), notification bell, and `ChevronDown` on the profile button were removed. Navigation is handled exclusively by the sidebar. The `notificationCount` and `onNavigate` props no longer exist on `AppHeader`.
 
 ### Operations Group
 

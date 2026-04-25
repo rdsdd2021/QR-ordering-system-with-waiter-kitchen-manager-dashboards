@@ -7,6 +7,7 @@ import {
   LayoutGrid, List, X, Receipt, Plus, Printer,
   ChevronDown, ChevronUp, Bell,
   MoreHorizontal, Filter, Minus, Search, ShoppingCart,
+  CheckCircle2, AlertCircle, Banknote,
 } from "lucide-react";
 import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { getTableAvailability, getFloors, getMenuItems, placeOrder } from "@/lib/api";
@@ -302,7 +303,7 @@ function AddOrderModal({
   return (
     <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-card rounded-2xl border border-border shadow-elevated w-full max-w-md flex flex-col max-h-[85vh]">
+      <div className="relative bg-card rounded-lg border border-border shadow-elevated w-full max-w-md flex flex-col max-h-[85vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <div>
@@ -341,7 +342,7 @@ function AddOrderModal({
             filtered.map((item) => {
               const qty = cart[item.id] ?? 0;
               return (
-                <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
+                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
                     <p className="text-xs text-muted-foreground">₹{item.price.toLocaleString("en-IN")}</p>
@@ -386,7 +387,7 @@ function AddOrderModal({
           <button
             onClick={handleSubmit}
             disabled={cartCount === 0 || submitting}
-            className="w-full bg-primary text-white font-semibold text-sm rounded-xl py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-primary text-white font-semibold text-sm rounded-lg py-2.5 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Place Order
@@ -582,35 +583,35 @@ export default function TableSessions({ restaurantId }: Props) {
         {/* ── Stat cards ─────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard
-            icon={<svg viewBox="0 0 24 24" className="h-5 w-5 fill-blue-500"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>}
+            icon={<LayoutGrid className="h-5 w-5 text-blue-500" />}
             iconBg="bg-blue-50"
             label="Active Tables"
             value={activeTables}
             sub="Live orders in progress"
           />
           <StatCard
-            icon={<svg viewBox="0 0 24 24" className="h-5 w-5 fill-green-500"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+            icon={<CheckCircle2 className="h-5 w-5 text-green-500" />}
             iconBg="bg-green-50"
             label="Bill Ready"
             value={billReadyCount}
             sub="Ready for checkout"
           />
           <StatCard
-            icon={<svg viewBox="0 0 24 24" className="h-5 w-5 fill-amber-500"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>}
+            icon={<AlertCircle className="h-5 w-5 text-amber-500" />}
             iconBg="bg-amber-50"
             label="Awaiting Attention"
             value={awaitingCount}
             sub="Need waiter attention"
           />
           <StatCard
-            icon={<svg viewBox="0 0 24 24" className="h-5 w-5 fill-primary"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>}
+            icon={<Banknote className="h-5 w-5 text-primary" />}
             iconBg="bg-primary/10"
             label="Today's Revenue"
             value={`₹${todayRevenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
             sub={`From ${pastSessions.length} sessions`}
           />
           <StatCard
-            icon={<svg viewBox="0 0 24 24" className="h-5 w-5 fill-purple-500"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>}
+            icon={<Users className="h-5 w-5 text-purple-500" />}
             iconBg="bg-purple-50"
             label="Avg. Order Value"
             value={`₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
@@ -830,8 +831,8 @@ function StatCard({ icon, iconBg, label, value, sub }: {
   label: string; value: string | number; sub: string;
 }) {
   return (
-    <div className="bg-card rounded-xl border border-border p-4 flex items-start gap-3 card-shadow">
-      <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", iconBg)}>
+    <div className="bg-card rounded-lg border border-border p-4 flex items-start gap-3 card-shadow">
+      <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", iconBg)}>
         {icon}
       </div>
       <div className="min-w-0">
@@ -866,7 +867,7 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
     <div
       onClick={onClick}
       className={cn(
-        "rounded-xl border-2 p-3 cursor-pointer transition-all duration-150 select-none flex flex-col",
+        "rounded-lg border-2 p-3 cursor-pointer transition-all duration-150 select-none flex flex-col",
         STATE_CARD[state],
         selected && "ring-2 ring-primary ring-offset-1"
       )}
@@ -985,7 +986,7 @@ function TableListRow({ tile, selected, onClick, onBill }: {
     <div
       onClick={onClick}
       className={cn(
-        "flex items-center gap-4 rounded-xl border-2 bg-card px-4 py-3 cursor-pointer transition-all",
+        "flex items-center gap-4 rounded-lg border-2 bg-card px-4 py-3 cursor-pointer transition-all",
         STATE_CARD[state],
         selected && "ring-2 ring-primary ring-offset-1"
       )}
@@ -1034,7 +1035,7 @@ function TableDetailPanel({ tile, onClose, onBill, onAddOrder }: {
   ) ?? 0;
 
   return (
-    <div className="bg-card rounded-xl border border-border card-shadow flex flex-col h-fit sticky top-4">
+    <div className="bg-card rounded-lg border border-border card-shadow flex flex-col h-fit sticky top-4">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div>
@@ -1204,7 +1205,7 @@ function TableDetailPanel({ tile, onClose, onBill, onAddOrder }: {
           <div className="px-4 py-3">
             <button
               onClick={() => onBill(session)}
-              className="w-full bg-primary text-white font-semibold text-sm rounded-xl py-2.5 hover:bg-primary/90 transition-colors"
+              className="w-full bg-primary text-white font-semibold text-sm rounded-lg py-2.5 hover:bg-primary/90 transition-colors"
             >
               Close Session
             </button>
@@ -1214,3 +1215,4 @@ function TableDetailPanel({ tile, onClose, onBill, onAddOrder }: {
     </div>
   );
 }
+

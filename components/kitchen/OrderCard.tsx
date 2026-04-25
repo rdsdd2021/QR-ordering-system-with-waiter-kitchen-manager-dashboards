@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Clock, Loader2, ChefHat } from "lucide-react";
-import { Button } from "@/components/ui/button"; // kept for potential future use
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import OrderItemList from "./OrderItemList";
 import type { KitchenOrder, OrderStatus } from "@/types/database";
@@ -24,35 +24,35 @@ const STATUS_CONFIG: Record<OrderStatus, {
 }> = {
   pending_waiter: {
     label: "Waiting for waiter",
-    dot: "bg-purple-400", border: "border-purple-200", stripe: "bg-gradient-to-b from-purple-400 to-purple-500",
+    dot: "bg-purple-400", border: "border-purple-200", stripe: "bg-purple-400",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
   pending: {
     label: "New order",
-    dot: "bg-amber-400 animate-pulse", border: "border-amber-200", stripe: "bg-gradient-to-b from-amber-400 to-orange-500",
+    dot: "bg-amber-400 animate-pulse", border: "border-amber-200", stripe: "bg-amber-400",
     nextStatus: "confirmed", actionLabel: "Accept order",
-    actionClass: "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-md shadow-amber-200",
+    actionClass: "bg-amber-500 hover:bg-amber-600 text-white",
   },
   confirmed: {
     label: "Confirmed",
-    dot: "bg-blue-400", border: "border-blue-200", stripe: "bg-gradient-to-b from-blue-400 to-blue-500",
+    dot: "bg-blue-400", border: "border-blue-200", stripe: "bg-blue-400",
     nextStatus: "preparing", actionLabel: "Start preparing",
-    actionClass: "bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white shadow-md shadow-blue-200",
+    actionClass: "bg-blue-500 hover:bg-blue-600 text-white",
   },
   preparing: {
     label: "Preparing",
-    dot: "bg-orange-400 animate-pulse", border: "border-orange-200", stripe: "bg-gradient-to-b from-orange-400 to-red-400",
+    dot: "bg-orange-400 animate-pulse", border: "border-orange-200", stripe: "bg-orange-400",
     nextStatus: "ready", actionLabel: "Mark ready",
-    actionClass: "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-200",
+    actionClass: "bg-emerald-500 hover:bg-emerald-600 text-white",
   },
   ready: {
     label: "Ready for pickup",
-    dot: "bg-green-500", border: "border-green-200", stripe: "bg-gradient-to-b from-emerald-400 to-green-500",
+    dot: "bg-green-500", border: "border-green-200", stripe: "bg-emerald-500",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
   served: {
     label: "Served",
-    dot: "bg-muted-foreground/40", border: "border-border", stripe: "bg-muted",
+    dot: "bg-muted-foreground/40", border: "border-border", stripe: "bg-muted-foreground/30",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
 };
@@ -77,11 +77,11 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
 
   return (
     <div className={cn(
-      "rounded-xl border bg-card flex overflow-hidden transition-all duration-300",
-      isNew && "ring-2 ring-primary/50 shadow-lg shadow-primary/10",
+      "rounded-lg border bg-card flex overflow-hidden transition-colors duration-200",
+      isNew && "ring-2 ring-primary/50",
       cfg.border,
     )}>
-      {/* Vivid status stripe on left */}
+      {/* Solid status stripe on left */}
       <div className={cn("w-1.5 shrink-0", cfg.stripe)} />
 
       <div className="flex flex-col flex-1 min-w-0">
@@ -121,7 +121,7 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
           <div className="px-4 pb-4 pt-1">
             <button
               className={cn(
-                "w-full h-10 text-sm font-bold rounded-xl transition-all duration-150 active:scale-95 hover:scale-[1.02] hover:shadow-lg",
+                "w-full h-10 text-sm font-bold rounded-lg transition-colors duration-150",
                 cfg.actionClass
               )}
               onClick={handleAdvance}
@@ -137,8 +137,8 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
 
         {order.status === "ready" && (
           <div className="px-4 pb-4 pt-1">
-            <div className="rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 px-3 py-2.5 text-center">
-              <p className="text-xs font-semibold text-emerald-700">✓ Ready for waiter pickup</p>
+            <div className="rounded-lg bg-muted/50 border border-border px-3 py-2.5 text-center">
+              <p className="text-xs font-semibold text-muted-foreground">✓ Ready for waiter pickup</p>
             </div>
           </div>
         )}

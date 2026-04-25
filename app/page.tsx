@@ -2,13 +2,13 @@ import { QrCode, Zap, Users, BarChart3, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import PricingSection from "@/components/PricingSection";
 import HomeNav from "@/components/HomeNav";
-import ShinyText from "@/components/ui/ShinyText";
+import { Button } from "@/components/ui/button";
 
 const features = [
-  { icon: QrCode,    title: "QR Ordering",       desc: "Customers scan and order instantly from their phone", color: "from-orange-400 to-amber-400" },
-  { icon: Zap,       title: "Real-time Kitchen",  desc: "Orders appear on the kitchen screen the moment they're placed", color: "from-yellow-400 to-orange-400" },
-  { icon: Users,     title: "Waiter Dashboard",   desc: "Staff manage tables and serve orders from one view", color: "from-teal-400 to-emerald-400" },
-  { icon: BarChart3, title: "Analytics",          desc: "Track revenue, prep times, and popular items", color: "from-violet-400 to-purple-400" },
+  { icon: QrCode,    title: "QR Ordering",       desc: "Customers scan and order instantly from their phone" },
+  { icon: Zap,       title: "Real-time Kitchen",  desc: "Orders appear on the kitchen screen the moment they're placed" },
+  { icon: Users,     title: "Waiter Dashboard",   desc: "Staff manage tables and serve orders from one view" },
+  { icon: BarChart3, title: "Analytics",          desc: "Track revenue, prep times, and popular items" },
 ];
 
 export default function Home() {
@@ -18,8 +18,8 @@ export default function Home() {
       <header className="border-b bg-background/80 backdrop-blur sticky top-0 z-10">
         <div className="mx-auto max-w-5xl px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 shadow-sm">
-              <QrCode className="h-4 w-4 text-white" />
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
+              <QrCode className="h-4 w-4 text-primary-foreground" />
             </div>
             <span className="font-bold text-sm tracking-tight">QR Order</span>
           </div>
@@ -36,44 +36,36 @@ export default function Home() {
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">
             QR ordering for<br />
-            <ShinyText
-              text="modern restaurants"
-              color="oklch(0.60 0.22 38)"
-              shineColor="oklch(0.85 0.18 60)"
-              speed={3}
-              className="text-4xl sm:text-5xl font-bold"
-            />
+            <span className="text-primary">modern restaurants</span>
           </h1>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto mb-10 leading-relaxed">
             Customers scan a QR code, browse your menu, and order — no app needed. Your kitchen and staff get real-time updates.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link
-              href="/onboarding"
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-6 py-3 text-sm font-bold text-white hover:from-orange-600 hover:to-amber-600 hover:shadow-xl hover:shadow-orange-300/40 hover:scale-105 active:scale-95 transition-all duration-150 shadow-md"
-            >
-              Start free trial
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-2 rounded-xl border-2 bg-card px-6 py-3 text-sm font-semibold hover:bg-muted hover:border-primary/40 hover:scale-[1.02] active:scale-95 transition-all duration-150"
-            >
-              Sign in to dashboard
-            </Link>
+            <Button asChild size="lg">
+              <Link href="/onboarding" className="inline-flex items-center gap-2">
+                Start free trial
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="lg">
+              <Link href="/login">
+                Sign in to dashboard
+              </Link>
+            </Button>
           </div>
         </section>
 
         {/* Features */}
         <section className="mx-auto max-w-5xl px-6 pb-16">
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {features.map(({ icon: Icon, title, desc, color }) => (
+            {features.map(({ icon: Icon, title, desc }) => (
               <div
                 key={title}
-                className="rounded-xl border bg-card p-5 space-y-3 hover:shadow-lg hover:-translate-y-1 hover:border-primary/20 transition-all duration-200 cursor-default"
+                className="rounded-lg border bg-card p-5 space-y-3 cursor-default"
               >
-                <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${color} shadow-sm`}>
-                  <Icon className="h-4.5 w-4.5 text-white" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Icon className="h-4 w-4" />
                 </div>
                 <div>
                   <p className="font-bold text-sm">{title}</p>
@@ -104,7 +96,6 @@ export default function Home() {
           <Link href="/shipping" className="hover:text-foreground transition-colors">Shipping</Link>
         </div>
         <p>© {new Date().getFullYear()} <strong className="text-foreground">Assistt</strong> · QR Order · All rights reserved</p>
-
       </footer>
     </div>
   );
