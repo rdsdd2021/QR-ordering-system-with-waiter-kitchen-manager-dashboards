@@ -14,20 +14,22 @@ type Props = {
 
 export default function PricingSection({ restaurantId, onUpgrade, upgrading }: Props) {
   const { plans } = usePlans();
+  // Reset coupon when restaurantId disappears (home page visitor with no context)
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
+  const effectiveCoupon = restaurantId ? coupon : null;
 
   const proPlan = plans.find(p => p.id === "pro");
   const PRO_PRICE_PAISE = proPlan?.monthly_paise ?? 99900;
 
-  const discountedPaise = coupon
-    ? coupon.type === "percentage"
-      ? PRO_PRICE_PAISE - Math.round((PRO_PRICE_PAISE * coupon.value) / 100)
-      : Math.max(0, PRO_PRICE_PAISE - Math.round(coupon.value * 100))
+  const discountedPaise = effectiveCoupon
+    ? effectiveCoupon.type === "percentage"
+      ? PRO_PRICE_PAISE - Math.round((PRO_PRICE_PAISE * effectiveCoupon.value) / 100)
+      : Math.max(0, PRO_PRICE_PAISE - Math.round(effectiveCoupon.value * 100))
     : PRO_PRICE_PAISE;
 
   const originalPrice = `₹${(PRO_PRICE_PAISE / 100).toFixed(0)}`;
   const finalPrice    = `₹${(discountedPaise / 100).toFixed(0)}`;
-  const showDiscount  = coupon && discountedPaise < PRO_PRICE_PAISE;
+  const showDiscount  = effectiveCoupon && discountedPaise < PRO_PRICE_PAISE;
   const proFeatures   = proPlan?.features ?? [];
 
   return (
@@ -96,7 +98,7 @@ export default function PricingSection({ restaurantId, onUpgrade, upgrading }: P
             <Button
               size="lg"
               className="w-full text-base h-12 shadow-md"
-              onClick={() => onUpgrade(coupon?.code)}
+              onClick={() => onUpgrade(effectiveCoupon?.code)}
               disabled={upgrading}
             >
               <Zap className="h-5 w-5 mr-2" />

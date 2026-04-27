@@ -31,7 +31,7 @@ export async function getRestaurant(
 ): Promise<Restaurant | null> {
   const { data, error } = await supabase
     .from("restaurants")
-    .select("id, name, slug, logo_url, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters")
+    .select("id, name, slug, logo_url, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters, auto_confirm_minutes")
     .eq("id", restaurantId)
     .maybeSingle(); // maybeSingle returns null instead of error when 0 rows found
 
@@ -423,13 +423,13 @@ export async function getWaiterOrders(
     // Assigned to me  OR  (unassigned AND not on a locked table AND right status)
     query = query.or(
       `waiter_id.eq.${waiterId},` +
-      `and(waiter_id.is.null,status.in.(pending_waiter,confirmed,ready),table_id.not.in.(${lockedTableIds.join(",")}))`
+      `and(waiter_id.is.null,status.in.(pending_waiter,ready),table_id.not.in.(${lockedTableIds.join(",")}))`
     );
   } else {
-    // No locked tables — show mine + all unassigned
+    // No locked tables — show mine + all unassigned pending_waiter/ready
     query = query.or(
       `waiter_id.eq.${waiterId},` +
-      `and(waiter_id.is.null,status.in.(pending_waiter,confirmed,ready))`
+      `and(waiter_id.is.null,status.in.(pending_waiter,ready))`
     );
   }
 

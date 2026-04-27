@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Copy, ExternalLink, Check, QrCode, Download, Printer } from 'lucide-react';
+import { Copy, ExternalLink, Check, QrCode, Download, Printer, Lock } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getTableAvailability, getFloors, createTable, updateTable, deleteTable, backfillQrCodes } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { getSupabaseClient } from '@/lib/supabase';
+import { useSubscription } from '@/hooks/useSubscription';
+import { cn } from '@/lib/utils';
 
 type TableStatus = {
   table_id: string;
@@ -231,6 +233,9 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
   const [formData, setFormData] = useState({ table_number: 1, floor_id: '', capacity: 4 });
   const [loading, setLoading] = useState(false);
 
+  const { limits, isPro } = useSubscription(restaurantId);
+  const atLimit = !isPro && tables.length >= limits.max_tables;
+
   useEffect(() => {
     fetchData();
 
@@ -297,10 +302,11 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
   function openDialog(table?: TableStatus) {
     if (table) {
       setEditingTable(table);
-      const floor = floors.find((f) => f.name === table.floor_name);
+      // Use floor_id directly from the table record — don't match by name
+      const floorId = (table as any).floor_id ?? floors.find((f) => f.name === table.floor_name)?.id ?? "";
       setFormData({
         table_number: table.table_number,
-        floor_id: floor?.id || '',
+        floor_id: floorId,
         capacity: table.capacity || 4,
       });
     } else {
@@ -320,10 +326,28 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
           <h2 className="text-lg font-semibold">Table Setup</h2>
           <p className="text-sm text-muted-foreground">
             Manage tables and view real-time availability
+            {!isPro && (
+              <span className={cn("ml-1.5", atLimit ? "text-destructive font-medium" : "text-muted-foreground")}>
+                · {tables.length}/{limits.max_tables} free limit
+              </span>
+            )}
           </p>
         </div>
-        <Button onClick={() => openDialog()}>Add Table</Button>
+        <Button
+          onClick={() => openDialog()}
+          disabled={atLimit}
+          title={atLimit ? `Free plan limit reached (${limits.max_tables} tables). Upgrade to Pro for unlimited tables.` : undefined}
+        >
+          {atLimit ? <><Lock className="h-4 w-4 mr-2" />Limit Reached</> : 'Add Table'}
+        </Button>
       </div>
+
+      {atLimit && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 mb-6">
+          <Lock className="h-4 w-4 shrink-0" />
+          Free plan is limited to {limits.max_tables} tables. Upgrade to Pro for unlimited tables.
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -345,7 +369,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
       {tables.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-muted-foreground">No tables created yet</p>
-          <Button className="mt-4" onClick={() => openDialog()}>
+          <Button className="mt-4" onClick={() => openDialog()} disabled={atLimit}>
             Create First Table
           </Button>
         </Card>
@@ -397,6 +421,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
                   className="flex-1"
                   onClick={() => handleDelete(table.table_id)}
                   disabled={table.status === 'occupied'}
+                  title={table.status === 'occupied' ? 'Cannot delete an occupied table' : undefined}
                 >
                   Delete
                 </Button>

@@ -118,7 +118,7 @@ const STATUS_DOT: Record<string, string> = {
   cancelled:      "bg-red-500",
 };
 const STATUS_LABEL: Record<string, string> = {
-  pending:        "Pending",
+  pending:        "New Order",
   pending_waiter: "Awaiting Waiter",
   confirmed:      "Confirmed",
   preparing:      "Preparing",
@@ -164,18 +164,19 @@ const DATE_SEGMENTS: { key: DateSegment; label: string }[] = [
 // ── CSV export ────────────────────────────────────────────────────────────────
 
 function exportCSV(rows: OrderLogRow[], label: string) {
-  const headers = ["Order ID","Status","Table","Floor","Customer","Phone","Items","Amount","Created At","Turnaround"];
+  const headers = ["Order ID","Status","Table","Floor","Customer","Phone","Item Details","Total Qty","Amount","Created At","Turnaround"];
   const lines = rows.map(r => [
     orderId(r.id), r.status,
     r.table_number ? `Table ${r.table_number}` : "—",
     r.floor_name ?? "—",
     r.customer_name ?? "—",
     r.customer_phone ?? "—",
+    r.items.map(i => `${i.name} x${i.quantity}`).join("; "),
     r.total_qty,
     r.order_total,
     new Date(r.created_at).toLocaleString(),
     r.turnaround_s !== null ? `${Math.round(r.turnaround_s / 60)}m` : "—",
-  ].map(v => `"${v}"`).join(","));
+  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
   const csv = [headers.join(","), ...lines].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url  = URL.createObjectURL(blob);
@@ -208,6 +209,13 @@ export default function OrderLog({ restaurantId }: Props) {
 
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
   const loadRef    = useRef<() => Promise<void>>(undefined);
+  // Refs so load() always reads the latest date range without needing to be in deps
+  const dateSegmentRef = useRef(dateSegment);
+  const customFromRef  = useRef(customFrom);
+  const customToRef    = useRef(customTo);
+  useEffect(() => { dateSegmentRef.current = dateSegment; }, [dateSegment]);
+  useEffect(() => { customFromRef.current  = customFrom;  }, [customFrom]);
+  useEffect(() => { customToRef.current    = customTo;    }, [customTo]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -221,6 +229,7 @@ export default function OrderLog({ restaurantId }: Props) {
 
   async function load() {
     if (rows.length === 0) setLoading(true); else setRefreshing(true);
+    const [rangeFrom, rangeTo] = getSegmentRange(dateSegmentRef.current, customFromRef.current, customToRef.current);
     const { data, error } = await supabase
       .from("orders")
       .select(`
@@ -231,8 +240,10 @@ export default function OrderLog({ restaurantId }: Props) {
         order_items(id, quantity, price, menu_item:menu_items(name))
       `)
       .eq("restaurant_id", restaurantId)
+      .gte("created_at", rangeFrom.toISOString())
+      .lte("created_at", rangeTo.toISOString())
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(500);
 
     if (error) { setLoading(false); setRefreshing(false); return; }
 
@@ -277,6 +288,8 @@ export default function OrderLog({ restaurantId }: Props) {
 
   loadRef.current = load;
   useEffect(() => { loadRef.current?.(); }, [restaurantId]);
+  // Re-fetch when date range changes (server-side filtering)
+  useEffect(() => { setPage(1); loadRef.current?.(); }, [dateSegment, customFrom, customTo]);
 
   useEffect(() => {
     const client = getSupabaseClient();
@@ -288,7 +301,16 @@ export default function OrderLog({ restaurantId }: Props) {
         (msg: any) => {
           if (msg.eventType === "INSERT") loadRef.current?.();
           else if (msg.eventType === "UPDATE" && msg.new?.id)
-            setRows(prev => prev.map(r => r.id === msg.new.id ? { ...r, ...msg.new } : r));
+            setRows(prev => prev.map(r => r.id === msg.new.id ? {
+              ...r,
+              status: msg.new.status ?? r.status,
+              billed_at: msg.new.billed_at ?? r.billed_at,
+              total_amount: msg.new.total_amount ?? r.total_amount,
+              confirmed_at: msg.new.confirmed_at ?? r.confirmed_at,
+              preparing_at: msg.new.preparing_at ?? r.preparing_at,
+              ready_at: msg.new.ready_at ?? r.ready_at,
+              served_at: msg.new.served_at ?? r.served_at,
+            } : r));
         })
       .subscribe();
     channelRef.current = ch;
@@ -302,22 +324,16 @@ export default function OrderLog({ restaurantId }: Props) {
   }, [rows]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const [rangeFrom, rangeTo] = getSegmentRange(dateSegment, customFrom, customTo);
-
-  // rows scoped to the selected date range
-  const rangeRows = rows.filter(r => {
-    const t = new Date(r.created_at).getTime();
-    return t >= rangeFrom.getTime() && t <= rangeTo.getTime();
-  });
-
-  const totalRevenue  = rangeRows.reduce((s, r) => s + r.order_total, 0);
-  const avgOrderValue = rangeRows.length ? totalRevenue / rangeRows.length : 0;
-  const pendingCount  = rangeRows.filter(r =>
+  // Server already filters by date range, so rows === rangeRows
+  const rangeRows     = rows; // alias kept for JSX references below
+  const totalRevenue  = rows.reduce((s, r) => s + r.order_total, 0);
+  const avgOrderValue = rows.length ? totalRevenue / rows.length : 0;
+  const pendingCount  = rows.filter(r =>
     ["pending","pending_waiter","confirmed","preparing","ready"].includes(r.status)
   ).length;
 
   // ── Filter + sort ──────────────────────────────────────────────────────────
-  const filtered = rangeRows
+  const filtered = rows
     .filter(r => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (search) {
@@ -329,7 +345,8 @@ export default function OrderLog({ restaurantId }: Props) {
           (r.customer_name?.toLowerCase().includes(q) ?? false) ||
           (r.customer_phone?.includes(q) ?? false) ||
           (r.waiter_name?.toLowerCase().includes(q) ?? false) ||
-          (r.floor_name?.toLowerCase().includes(q) ?? false)
+          (r.floor_name?.toLowerCase().includes(q) ?? false) ||
+          r.items.some(i => i.name.toLowerCase().includes(q))
         );
       }
       return true;
@@ -550,7 +567,7 @@ export default function OrderLog({ restaurantId }: Props) {
           { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",     value: rangeRows.length,  sub: dateSegment === "today" ? "Today" : dateSegment === "yesterday" ? "Yesterday" : dateSegment === "week" ? "Last 7 days" : dateSegment === "month" ? "Last 30 days" : `${fmtDate(new Date(customFrom))} – ${fmtDate(new Date(customTo))}`, up: false },
           { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",    value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: `${rangeRows.filter(r => r.status === "served").length} served`, up: true },
           { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value",  value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: rangeRows.length ? `across ${rangeRows.length} orders` : "No orders", up: false },
-          { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Pending Orders",   value: pendingCount, sub: pendingCount > 0 ? "Need attention" : "All clear", up: false },
+          { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Active Orders",   value: pendingCount, sub: pendingCount > 0 ? "Need attention" : "All clear", up: false },
         ].map(({ icon: Icon, bg, ic, label, value, sub, up }) => (
           <div key={label} className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
             <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-lg", bg)}>
@@ -691,17 +708,26 @@ export default function OrderLog({ restaurantId }: Props) {
           <div className="flex items-center gap-1">
             <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
               className="px-2 py-1 rounded border border-border text-xs hover:bg-muted disabled:opacity-40 transition-colors">‹</button>
-            {Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1).map(p => (
-              <button key={p} onClick={() => setPage(p)}
-                className={cn("px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                  page === p ? "bg-primary text-white" : "border border-border hover:bg-muted"
-                )}>{p}</button>
-            ))}
-            {totalPages > 3 && <span className="text-muted-foreground text-xs px-1">...</span>}
-            {totalPages > 3 && (
-              <button onClick={() => setPage(totalPages)}
-                className="px-2.5 py-1 rounded text-xs border border-border hover:bg-muted">{totalPages}</button>
-            )}
+            {(() => {
+              // Show up to 5 page buttons centered around current page
+              const delta = 2;
+              const start = Math.max(1, Math.min(page - delta, totalPages - delta * 2));
+              const end   = Math.min(totalPages, start + delta * 2);
+              const pages: (number | "...")[] = [];
+              if (start > 1) { pages.push(1); if (start > 2) pages.push("..."); }
+              for (let i = start; i <= end; i++) pages.push(i);
+              if (end < totalPages) { if (end < totalPages - 1) pages.push("..."); pages.push(totalPages); }
+              return pages.map((p, i) =>
+                p === "..." ? (
+                  <span key={`ellipsis-${i}`} className="text-muted-foreground text-xs px-1">…</span>
+                ) : (
+                  <button key={p} onClick={() => setPage(p as number)}
+                    className={cn("px-2.5 py-1 rounded text-xs font-medium transition-colors",
+                      page === p ? "bg-primary text-white" : "border border-border hover:bg-muted"
+                    )}>{p}</button>
+                )
+              );
+            })()}
             <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
               className="px-2 py-1 rounded border border-border text-xs hover:bg-muted disabled:opacity-40 transition-colors">›</button>
           </div>
@@ -828,9 +854,13 @@ function OrderDetailPanel({
               </div>
             </div>
             {order.customer_phone && (
-              <button className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors">
+              <a
+                href={`tel:${order.customer_phone}`}
+                className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted transition-colors"
+                title={`Call ${order.customer_phone}`}
+              >
                 <Phone className="h-3.5 w-3.5" />
-              </button>
+              </a>
             )}
           </div>
           {order.waiter_name && (

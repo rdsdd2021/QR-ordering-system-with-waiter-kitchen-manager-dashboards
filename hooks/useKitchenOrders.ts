@@ -74,24 +74,8 @@ export function useKitchenOrders(restaurantId: string) {
 
   // ── Initial data fetch ─────────────────────────────────────────────
   useEffect(() => {
-    let cancelled = false;
-    
-    async function loadInitialData() {
-      setLoading(true);
-      setError(null);
-      const data = await getKitchenOrders(restaurantId);
-      if (!cancelled) {
-        setOrders(data);
-        setLoading(false);
-      }
-    }
-    
-    loadInitialData();
-    
-    return () => {
-      cancelled = true;
-    };
-  }, [restaurantId]);
+    fetchOrders();
+  }, [fetchOrders]);
 
   // ── Real-time subscription ─────────────────────────────────────────
   useEffect(() => {

@@ -543,8 +543,17 @@ export default function CategoryTagManager({ restaurantId }: { restaurantId: str
   const existingTagNames = new Set(tags.map(t => t.name.toLowerCase()));
 
   async function handleDeleteCategory(cat: FoodCategory) {
-    if (!confirm(`Delete "${cat.name}"? Sub-categories will also be deleted.`)) return;
-    await deleteFoodCategory(cat.id);
+    const hasChildren = (cat.children?.length ?? 0) > 0;
+    const msg = hasChildren
+      ? `Delete "${cat.name}"? Sub-categories will also be deleted.`
+      : `Delete "${cat.name}"?`;
+    if (!confirm(msg)) return;
+    try {
+      await deleteFoodCategory(cat.id);
+    } catch {
+      alert(`Failed to delete "${cat.name}". It may still have items assigned to it.`);
+      return;
+    }
     load();
   }
 

@@ -1,21 +1,9 @@
-/**
- * useCart — custom hook for managing cart state.
- *
- * Provides:
- * - cartItems: current items in the cart
- * - addToCart: add a menu item (or increment quantity if already present)
- * - removeFromCart: remove a menu item entirely
- * - updateQuantity: set a specific quantity for an item
- * - clearCart: empty the cart
- * - totalPrice: computed total across all items
- * - totalItems: total number of individual items
- */
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
 import type { CartItem, MenuItem } from "@/types/database";
 
-export function useCart() {
+export function useCart(priceMultiplier = 1.0) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
   /** Add a menu item to the cart. If it already exists, increment quantity. */
@@ -23,7 +11,6 @@ export function useCart() {
     setCartItems((prev) => {
       const existing = prev.find((c) => c.id === item.id);
       if (existing) {
-        // Optimistically increment quantity
         return prev.map((c) =>
           c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c
         );
@@ -56,10 +43,13 @@ export function useCart() {
     setCartItems([]);
   }, []);
 
-  /** Computed total price across all cart items. */
+  /**
+   * Total price using the floor-adjusted price (matches what MenuItemCard displays).
+   * The server also applies the multiplier via calculate_item_prices_batch RPC.
+   */
   const totalPrice = useMemo(
-    () => cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    [cartItems]
+    () => cartItems.reduce((sum, item) => sum + item.price * priceMultiplier * item.quantity, 0),
+    [cartItems, priceMultiplier]
   );
 
   /** Total number of individual items (sum of quantities). */

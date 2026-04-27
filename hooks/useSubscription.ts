@@ -56,12 +56,31 @@ export function useSubscription(restaurantId: string | null) {
     }
 
     load();
+
+    // Realtime listener — updates when payment completes via webhook
+    // Use a unique channel name per mount to avoid "cannot add callbacks after subscribe()" errors
+    const channelName = `subscription:${restaurantId}:${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on("postgres_changes" as any, {
+        event: "UPDATE",
+        schema: "public",
+        table: "subscriptions",
+        filter: `restaurant_id=eq.${restaurantId}`,
+      }, (msg: any) => {
+        if (msg.new) {
+          setSubscription(msg.new as Subscription);
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [restaurantId]);
 
   const plan: Plan = subscription?.plan ?? "free";
   const isActive = subscription?.status === "active";
   const isTrial  = subscription?.status === "trialing";
-  const isExpired = subscription?.status === "expired";
+  const isExpired = subscription?.status === "expired" || subscription?.status === "incomplete";
   const isPro = (plan === "pro") && (isActive || isTrial);
   const trialEndsAt = isTrial ? subscription?.current_period_end ?? null : null;
   const limits: PlanLimits = isPro ? PRO_LIMITS : FREE_LIMITS;

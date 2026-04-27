@@ -97,17 +97,23 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
 
     // If all orders are billed (none left), clear the session
     if (orders.length === 0) {
-      // Check if there were previously active orders — if so, billing is done
-      // We only clear if the customer had a session (they ordered something)
+      // Only clear if the customer had a session AND their orders were billed
+      // (not just because old sessions from previous customers exist)
       const stored = sessionStorage.getItem(SESSION_KEY(tableId));
       if (stored) {
-        // Check if there are any billed orders (meaning session ended)
+        let sessionData: { name: string; phone: string; since?: string } | null = null;
+        try { sessionData = JSON.parse(stored); } catch {}
+
+        // Check if there are billed orders for THIS customer's phone number
+        // scoped to orders placed after the session was created
         const { data: billedCheck } = await supabase
           .from("orders")
           .select("id")
           .eq("table_id", tableId)
           .not("billed_at", "is", null)
+          .eq("customer_phone", sessionData?.phone ?? "")
           .limit(1);
+
         if (billedCheck && billedCheck.length > 0) {
           clearSession();
         }

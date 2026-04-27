@@ -129,24 +129,6 @@ function LoginForm() {
             </Button>
           </form>
 
-          <div className="space-y-3">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-background px-3 text-xs text-muted-foreground">Demo</span>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-muted/40 px-4 py-3 text-center">
-              <p className="text-xs text-muted-foreground">
-                <span className="font-mono">manager@demo.com</span>
-                {" / "}
-                <span className="font-mono">password123</span>
-              </p>
-            </div>
-          </div>
-
           <p className="text-center text-sm text-muted-foreground">
             New restaurant?{" "}
             <Link href="/onboarding" className="font-medium text-primary hover:underline">

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Loader2 } from 'lucide-react';
 
 type Floor = {
   id: string;
@@ -20,6 +21,7 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
   const [editingFloor, setEditingFloor] = useState<Floor | null>(null);
   const [formData, setFormData] = useState({ name: '', price_multiplier: 1.0 });
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
     fetchFloors();
@@ -28,6 +30,7 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
   async function fetchFloors() {
     const data = await getFloors(restaurantId);
     setFloors(data);
+    setPageLoading(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -58,10 +61,14 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
   }
 
   async function handleDelete(floorId: string) {
-    if (confirm('Delete this floor? Tables will be unassigned from this floor.')) {
+    if (!confirm('Delete this floor? Tables will be unassigned from this floor.')) return;
+    try {
       await deleteFloor(floorId);
-      fetchFloors();
+    } catch {
+      alert('Failed to delete floor. Make sure all tables are unassigned first.');
+      return;
     }
+    fetchFloors();
   }
 
   function openDialog(floor?: Floor) {
@@ -87,7 +94,11 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
         <Button onClick={() => openDialog()}>Add Floor</Button>
       </div>
 
-      {floors.length === 0 ? (
+      {pageLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : floors.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-muted-foreground">No floors created yet</p>
           <Button className="mt-4" onClick={() => openDialog()}>
@@ -172,6 +183,11 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
               <p className="text-xs text-muted-foreground mt-1">
                 1.0 = normal price, 1.2 = 20% premium, 1.5 = 50% premium
               </p>
+              {formData.price_multiplier !== 1.0 && !isNaN(formData.price_multiplier) && (
+                <p className="text-xs text-primary mt-1 font-medium">
+                  e.g. ₹100 item → ₹{(100 * formData.price_multiplier).toFixed(0)} on this floor
+                </p>
+              )}
             </div>
             <div className="flex gap-2">
               <Button type="submit" disabled={loading}>

@@ -92,7 +92,7 @@ export function useGeofence({ enabled, restaurantLat, restaurantLng, radiusMeter
           setMessage("Unable to determine your location. Please try again.");
         }
       },
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 10_000 }
     );
   }, [enabled, restaurantLat, restaurantLng, radiusMeters]);
 

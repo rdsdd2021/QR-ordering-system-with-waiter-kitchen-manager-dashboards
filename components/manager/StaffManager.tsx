@@ -26,6 +26,7 @@ type StaffMember = {
   role: StaffRole;
   is_active: boolean;
   active_orders: number;
+  last_action_at: string | null;
   status: 'available' | 'busy' | 'inactive';
 };
 
@@ -78,10 +79,10 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
   async function fetchStaff() {
     const client = getSupabaseClient();
-    // active_orders only counts non-served orders to get accurate busy/available status
+    // Fetch users and their non-served orders separately to get accurate busy/available status
     const { data, error } = await client
       .from('users')
-      .select(`id, name, email, role, is_active, active_orders:orders(id).neq(status,served)`)
+      .select(`id, name, email, role, is_active, active_orders:orders(id, status, served_at, ready_at, created_at)`)
       .eq('restaurant_id', restaurantId)
       .in('role', ['waiter', 'kitchen'])
       .order('name');
@@ -89,13 +90,22 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
     if (error) { console.error(error); return; }
 
     const mapped: StaffMember[] = (data ?? []).map((u: any) => {
-      const activeCount = Array.isArray(u.active_orders) ? u.active_orders.length : 0;
+      const allOrders = Array.isArray(u.active_orders) ? u.active_orders : [];
+      const activeCount = allOrders.filter((o: any) => o.status !== 'served').length;
+      // Derive last action time from most recent order
+      const timestamps = allOrders
+        .map((o: any) => o.served_at ?? o.ready_at ?? o.created_at)
+        .filter(Boolean) as string[];
+      const last_action_at = timestamps.length
+        ? timestamps.reduce((a, b) => (a > b ? a : b))
+        : null;
       let status: StaffMember['status'] = 'inactive';
       if (u.is_active) status = activeCount > 0 ? 'busy' : 'available';
       return {
         id: u.id, name: u.name, email: u.email,
         role: u.role as StaffRole,
-        is_active: u.is_active, active_orders: activeCount, status,
+        is_active: u.is_active, active_orders: activeCount,
+        last_action_at, status,
       };
     });
 
@@ -170,16 +180,20 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
       closeDialog();
       fetchStaff();
     } else if (formMode === 'edit' && editingId) {
-      const updates: any = { name: formName.trim() };
-      if (formEmail.trim()) updates.email = formEmail.trim().toLowerCase();
+      const res = await fetch('/api/staff/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: editingId,
+          restaurantId,
+          name: formName.trim(),
+          email: formEmail.trim() || undefined,
+        }),
+      });
 
-      const { error } = await getSupabaseClient()
-        .from('users')
-        .update(updates)
-        .eq('id', editingId);
-
-      if (error) {
-        setFormError(error.message);
+      const json = await res.json();
+      if (!res.ok) {
+        setFormError(json.error ?? 'Failed to update staff member.');
         setFormBusy(false);
         return;
       }
@@ -192,6 +206,10 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
   }
 
   async function handleToggleActive(member: StaffMember) {
+    // Warn if deactivating a waiter who has active orders
+    if (member.is_active && member.active_orders > 0) {
+      if (!confirm(`${member.name} has ${member.active_orders} active order(s). Deactivating them won't reassign these orders. Continue?`)) return;
+    }
     setBusy(member.id);
     await getSupabaseClient().from('users').update({ is_active: !member.is_active }).eq('id', member.id);
     await fetchStaff();
@@ -205,7 +223,15 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
     }
     if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
     setBusy(member.id);
-    await getSupabaseClient().from('users').delete().eq('id', member.id);
+    const res = await fetch('/api/staff/delete', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: member.id, restaurantId }),
+    });
+    if (!res.ok) {
+      const json = await res.json();
+      alert(json.error ?? 'Failed to delete staff member.');
+    }
     await fetchStaff();
     setBusy(null);
   }
@@ -417,6 +443,18 @@ function StaffCard({
   onDelete: () => void;
   StatusBadge: React.FC<{ status: StaffMember['status'] }>;
 }) {
+  function fmtLastSeen(iso: string | null) {
+    if (!iso) return null;
+    const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  const lastSeen = fmtLastSeen(member.last_action_at);
+
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between mb-3">
@@ -432,6 +470,12 @@ function StaffCard({
           <div className="flex justify-between">
             <span className="text-muted-foreground">Active orders</span>
             <span className="font-medium">{member.active_orders}</span>
+          </div>
+        )}
+        {lastSeen && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Last active</span>
+            <span className="font-medium text-xs">{lastSeen}</span>
           </div>
         )}
       </div>

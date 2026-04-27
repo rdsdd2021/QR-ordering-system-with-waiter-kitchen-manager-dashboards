@@ -18,7 +18,7 @@ type Props = {
 const STATUS_CONFIG: Record<OrderStatus, {
   label: string; dot: string; border: string; description: string;
 }> = {
-  pending:        { label: "Pending",           dot: "bg-amber-400",              border: "border-amber-200",  description: "Waiting for kitchen" },
+  pending:        { label: "New Order",         dot: "bg-amber-400",              border: "border-amber-200",  description: "Waiting for kitchen" },
   pending_waiter: { label: "Needs acceptance",  dot: "bg-purple-400 animate-pulse", border: "border-purple-200", description: "Waiting for waiter to accept" },
   confirmed:      { label: "Confirmed",         dot: "bg-blue-400",               border: "border-blue-200",   description: "Kitchen is preparing" },
   preparing:      { label: "Preparing",         dot: "bg-orange-400 animate-pulse", border: "border-orange-200", description: "Being prepared in kitchen" },
@@ -41,7 +41,7 @@ export default function WaiterOrderCard({ order, currentWaiterId, onTakeOrder, o
   const isUnassigned = !order.waiter_id;
 
   const canAccept = (isUnassigned || isMe) && order.status === "pending_waiter";
-  const canTake   = isUnassigned && (order.status === "confirmed" || order.status === "ready");
+  const canTake   = isUnassigned && order.status === "ready";
   const canServe  = isMe && order.status === "ready";
 
   async function act(fn: () => Promise<void>) {

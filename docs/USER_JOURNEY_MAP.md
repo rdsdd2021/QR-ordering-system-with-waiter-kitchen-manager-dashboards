@@ -80,7 +80,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 
 **Pain points:**
 - Slow mobile connection → page takes > 3 seconds → Sneha thinks it's broken
-- Restaurant is deactivated (`is_active=false`) → 404 page with no explanation
+- ~~Restaurant is deactivated (`is_active=false`) → 404 page with no explanation~~ ✅ Fixed: now shows a friendly "Restaurant is currently closed" screen with the restaurant name and table number
 - Table ID is invalid → 404 with no helpful message
 
 **Opportunities:**
@@ -235,6 +235,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 - After billing, the "Orders" tab goes blank — no receipt or summary shown
 
 **Opportunities:**
+- ✅ **Call Waiter button** — customer can tap "Call Waiter" on the ordering page; sends a `call_waiter` broadcast on the `restaurant:{id}` Supabase channel. Button is disabled for 60 s after use to prevent spam. The manager's Live Tables view (`TableSessions`) displays a dismissible amber banner for each active call, showing the table number and customer name.
 - Add a "Request Bill" button that notifies the waiter/manager
 - Show a final receipt summary after `billed_at` is set
 - Send a push notification or in-page alert when bill is generated (future)
@@ -440,7 +441,8 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 **Opportunities:**
 - Default to oldest-first (FIFO) for kitchen — this matches how a real kitchen works
 - Add status filter tabs: All / Pending / Preparing / Ready
-- Add a count badge per status in the header
+- ~~Add a count badge per status in the header~~ ✅ Implemented — count badge shown in each column header
+- ~~Add bulk "All Ready" action for the Preparing column~~ ✅ Implemented — "All Ready" button appears in the Preparing header when ≥ 2 orders are preparing
 
 ---
 
@@ -540,11 +542,14 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 
 **UI features (implemented):**
 - Stat bar: Active Tables · Bill Ready · Awaiting Attention · Today's Revenue · Avg. Order Value
+  - "Today's Revenue" counts only sessions billed (or started) on the current calendar day, with a sub-label showing the session count (e.g. "From 3 sessions today")
+  - Clicking the "Bill Ready" stat card activates a `showBillReadyOnly` filter in `TableSessions`, instantly narrowing the tile grid to tables in `bill-ready` state. The filter is passed via the `billReadyFilter` prop; `onBillReadyFilterClear` resets the parent's state after the filter is applied to avoid re-triggering on re-renders.
 - Floor tabs filter tiles by floor; "All Floors" shows everything
 - Grid / List view toggle
 - Table tile states: `free` · `active` · `bill-ready` · `awaiting` · `billed`
 - Selecting a tile opens a detail panel on the right
 - `BillDialog` triggered from tile or detail panel
+- ✅ **Call Waiter notifications** — when a customer taps "Call Waiter", a banner appears at the top of the Live Tables view showing the table number and customer name (if known). Each banner has an `X` dismiss button. Multiple simultaneous calls are stacked. Powered by the `call_waiter` broadcast on the `restaurant:{id}` Supabase channel.
 
 **Pain points:**
 - No floor plan view — tables are listed, not laid out spatially
@@ -639,12 +644,12 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 **Pain points:**
 - Temporary password is shown once — if Ravi doesn't share it immediately, it's lost
 - No password reset flow for staff — Ravi has to delete and recreate the account
-- No way to see when a staff member last logged in
+- No way to see when a staff member last performed an action (last login is not tracked separately)
 
 **Opportunities:**
 - Send a welcome email with login credentials automatically
 - Add a "Reset Password" button that triggers Supabase password reset email
-- Show "Last active" timestamp per staff member
+- Show "Last active" timestamp per staff member ✅ implemented (`last_action_at` field, shown on staff cards)
 
 ---
 
@@ -951,7 +956,7 @@ Homepage   Sign up   Restaurant setup   Plan choice   Dashboard   First order
 | 🟢 Low | "Preview as Customer" button in manager dashboard | Manager |
 | 🟢 Low | Bulk menu item availability toggle | Manager |
 | 🟢 Low | End-of-service summary for kitchen | Kitchen |
-| 🟢 Low | "Last active" timestamp for staff members | Manager |
+| 🟢 Low | "Last active" timestamp for staff members ✅ | Manager |
 
 ---
 

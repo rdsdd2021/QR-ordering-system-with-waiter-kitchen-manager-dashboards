@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Clock, Loader2, ChefHat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -64,9 +64,24 @@ function elapsed(iso: string) {
   return `${mins} mins ago`;
 }
 
+function urgencyClass(iso: string, status: string): string {
+  if (status === "ready" || status === "served" || status === "pending_waiter") return "";
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins >= 20) return "border-red-400 bg-red-50/30";
+  if (mins >= 12) return "border-amber-400 bg-amber-50/30";
+  return "";
+}
+
 export default function OrderCard({ order, isNew, onAdvance }: Props) {
   const [busy, setBusy] = useState(false);
+  const [, setTick] = useState(0);
   const cfg = STATUS_CONFIG[order.status];
+
+  // Re-render every 60s so elapsed times stay accurate
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function handleAdvance() {
     if (!cfg.nextStatus) return;
@@ -79,7 +94,7 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
     <div className={cn(
       "rounded-lg border bg-card flex overflow-hidden transition-colors duration-200",
       isNew && "ring-2 ring-primary/50",
-      cfg.border,
+      urgencyClass(order.created_at, order.status) || cfg.border,
     )}>
       {/* Solid status stripe on left */}
       <div className={cn("w-1.5 shrink-0", cfg.stripe)} />
@@ -101,7 +116,15 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
           </div>
           <div className="text-right space-y-1">
             <span className="text-xs font-semibold text-muted-foreground">{cfg.label}</span>
-            <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
+            <div className={cn(
+              "flex items-center justify-end gap-1 text-xs",
+              (() => {
+                const mins = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
+                if (mins >= 20 && order.status !== "ready" && order.status !== "served") return "text-red-600 font-semibold";
+                if (mins >= 12 && order.status !== "ready" && order.status !== "served") return "text-amber-600 font-semibold";
+                return "text-muted-foreground";
+              })()
+            )}>
               <Clock className="h-3 w-3" />
               {elapsed(order.created_at)}
             </div>

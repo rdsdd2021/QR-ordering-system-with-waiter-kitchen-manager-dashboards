@@ -37,6 +37,25 @@ export default async function TableOrderPage({ params }: Props) {
     notFound();
   }
 
+  // If the restaurant is deactivated by admin, show a closed screen
+  if (restaurant.is_active === false) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border bg-card shadow-sm">
+          <span className="text-3xl">🔒</span>
+        </div>
+        <h1 className="text-xl font-bold">{restaurant.name}</h1>
+        <p className="mt-1 text-sm font-medium text-muted-foreground">Table {table.table_number}</p>
+        <div className="mt-6 rounded-xl border bg-card px-6 py-5 shadow-sm max-w-xs w-full">
+          <p className="font-semibold text-base">Restaurant is currently closed</p>
+          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+            We&apos;re not accepting orders right now. Please check back later or ask your server.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <OrderPageClient
       restaurant={restaurant}

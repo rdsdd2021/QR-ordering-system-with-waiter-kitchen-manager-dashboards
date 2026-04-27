@@ -13,6 +13,7 @@ export type NavItem = {
   label: string;
   icon: LucideIcon;
   badge?: number | string;
+  onBadgeClick?: () => void;
   children?: NavItem[];
 };
 
@@ -113,12 +114,28 @@ function NavItemButton({
       <Icon className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
       <span className="flex-1 truncate font-medium">{item.label}</span>
       {item.badge !== undefined && (
-        <span className={cn(
-          "text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none",
-          active ? "bg-primary text-white" : "bg-muted-foreground/20 text-muted-foreground"
-        )}>
-          {item.badge}
-        </span>
+        item.onBadgeClick ? (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); item.onBadgeClick!(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); item.onBadgeClick!(); } }}
+            title="View bill-ready tables"
+            className={cn(
+              "text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none cursor-pointer hover:opacity-80 transition-opacity",
+              active ? "bg-primary text-white" : "bg-amber-500 text-white"
+            )}
+          >
+            {item.badge}
+          </span>
+        ) : (
+          <span className={cn(
+            "text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none",
+            active ? "bg-primary text-white" : "bg-muted-foreground/20 text-muted-foreground"
+          )}>
+            {item.badge}
+          </span>
+        )
       )}
       {active && !item.badge && <ChevronRight className="h-3 w-3 shrink-0 opacity-50" />}
     </button>
@@ -190,18 +207,20 @@ export function AppSidebar({
         ))}
       </nav>
 
-      {/* ── Pro plan upsell / renewal ─────────────────────────────── */}
-      {showPlanCard && (isPro ? (
+      {/* ── Pro plan upsell / renewal — hidden when expired (paywall handles it) */}
+      {showPlanCard && !isExpiredLabel && (isPro ? (
         <div className="mx-3 mb-3 rounded-lg bg-primary/5 border border-primary/20 p-3 shrink-0">
           <div className="flex items-center gap-1.5 mb-1">
             <Crown className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-semibold text-primary flex-1">{isTrial ? "Free Trial Active" : "You're on Pro Plan"}</span>
+            <span className="text-xs font-semibold text-primary flex-1">{isTrial ? "Trial Active" : "You're on Pro"}</span>
             <button onClick={() => setShowPlanCard(false)} className="text-primary/50 hover:text-primary transition-colors p-0.5 rounded">
               <X className="h-3 w-3" />
             </button>
           </div>
           {planRenewal && (
-            <p className="text-[11px] text-muted-foreground mb-2">{isTrial ? planRenewal : `Your plan renews on`}<br />{!isTrial && <span className="font-medium text-foreground">{planRenewal}</span>}</p>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              {isTrial ? planRenewal : <><span>Your plan renews on </span><span className="font-medium text-foreground">{planRenewal}</span></>}
+            </p>
           )}
           {onManagePlan && (
             <button
@@ -249,7 +268,9 @@ export function AppSidebar({
               <X className="h-3 w-3" />
             </button>
           </div>
-          <button className="w-full text-xs font-medium text-muted-foreground border border-border rounded-lg py-1.5 hover:bg-muted hover:text-foreground transition-colors">
+          <button
+            onClick={() => window.open("mailto:support@qrorder.in?subject=Support%20Request", "_blank")}
+            className="w-full text-xs font-medium text-muted-foreground border border-border rounded-lg py-1.5 hover:bg-muted hover:text-foreground transition-colors">
             Contact Support
           </button>
         </div>

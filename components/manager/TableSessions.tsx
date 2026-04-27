@@ -15,7 +15,11 @@ import { cn } from "@/lib/utils";
 import BillDialog from "@/components/manager/BillDialog";
 import type { MenuItem } from "@/types/database";
 
-type Props = { restaurantId: string };
+type Props = {
+  restaurantId: string;
+  billReadyFilter?: boolean;
+  onBillReadyFilterClear?: () => void;
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,7 +122,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  pending:        "Pending",
+  pending:        "New Order",
   pending_waiter: "Awaiting Waiter",
   confirmed:      "Confirmed",
   preparing:      "Preparing",
@@ -312,9 +316,17 @@ function AddOrderModal({
               Table {String(session.table_number).padStart(2, "0")} · {session.customer_name ?? "Guest"}
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-3">
+            {session.session_total > 0 && (
+              <div className="text-right">
+                <p className="text-[10px] text-muted-foreground">Running total</p>
+                <p className="text-sm font-bold text-foreground">₹{session.session_total.toLocaleString("en-IN")}</p>
+              </div>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -428,7 +440,7 @@ function GridLayout({ cols, children }: { cols: number; children: React.ReactNod
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function TableSessions({ restaurantId }: Props) {
+export default function TableSessions({ restaurantId, billReadyFilter: initBillReadyFilter = false, onBillReadyFilterClear }: Props) {
   const [tiles,          setTiles]          = useState<TableTile[]>([]);
   const [floors,         setFloors]         = useState<Floor[]>([]);
   const [activeSessions, setActiveSessions] = useState<TableSession[]>([]);
@@ -452,6 +464,17 @@ export default function TableSessions({ restaurantId }: Props) {
   const [addOrderSession, setAddOrderSession] = useState<TableSession | null>(null);
   // tableId → timestamp of last reminder sent (for cooldown + visual feedback)
   const [reminderSent, setReminderSent] = useState<Record<string, number>>({});
+  // Call waiter notifications: tableId → { table_number, customer_name, at }
+  const [waiterCalls, setWaiterCalls] = useState<Record<string, { table_number: number; customer_name: string | null; at: number }>>({});
+  const [showBillReadyOnly, setShowBillReadyOnly] = useState(initBillReadyFilter);
+
+  // Sync external billReadyFilter prop
+  useEffect(() => {
+    if (initBillReadyFilter) {
+      setShowBillReadyOnly(true);
+      onBillReadyFilterClear?.();
+    }
+  }, [initBillReadyFilter]);
 
   async function load(silent = false) {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -501,6 +524,22 @@ export default function TableSessions({ restaurantId }: Props) {
       .on("postgres_changes" as any,
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         () => load(true))
+      .on("broadcast" as any, { event: "call_waiter" }, (msg: any) => {
+        const p = msg.payload ?? {};
+        if (!p.table_id) return;
+        setWaiterCalls((prev) => ({
+          ...prev,
+          [p.table_id]: { table_number: p.table_number, customer_name: p.customer_name ?? null, at: Date.now() },
+        }));
+        // Auto-dismiss after 60s
+        setTimeout(() => {
+          setWaiterCalls((prev) => {
+            const next = { ...prev };
+            delete next[p.table_id];
+            return next;
+          });
+        }, 60_000);
+      })
       .subscribe();
     channelRef.current = channel;
     return () => { client.removeChannel(channel); channelRef.current = null; };
@@ -527,6 +566,7 @@ export default function TableSessions({ restaurantId }: Props) {
   ];
 
   const visibleTiles = tiles.filter((t) => {
+    if (showBillReadyOnly && getTileState(t.session) !== "bill-ready") return false;
     if (activeFloor === "all") return true;
     return t.floor_id === activeFloor;
   });
@@ -541,7 +581,16 @@ export default function TableSessions({ restaurantId }: Props) {
   const activeTables   = activeSessions.length;
   const billReadyCount = tiles.filter((t) => getTileState(t.session) === "bill-ready").length;
   const awaitingCount  = tiles.filter((t) => getTileState(t.session) === "awaiting").length;
-  const todayRevenue   = pastSessions.reduce((s, p) => s + p.session_total, 0);
+
+  // Only count sessions billed today
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayRevenue = pastSessions
+    .filter((p) => (p.session_end ?? p.session_start).startsWith(todayStr))
+    .reduce((s, p) => s + p.session_total, 0);
+  const todaySessionCount = pastSessions.filter((p) =>
+    (p.session_end ?? p.session_start).startsWith(todayStr)
+  ).length;
+
   const avgOrderValue  = activeSessions.length
     ? activeSessions.reduce((s, a) => s + a.session_total, 0) / activeSessions.length
     : 0;
@@ -580,6 +629,54 @@ export default function TableSessions({ restaurantId }: Props) {
           document.body
         )}
 
+        {/* ── Bill-ready filter banner ────────────────────────── */}
+        {showBillReadyOnly && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-green-300 bg-green-50 px-4 py-2.5">
+            <div className="flex items-center gap-2">
+              <Receipt className="h-4 w-4 text-green-600 shrink-0" />
+              <p className="text-sm font-semibold text-green-800">
+                Showing bill-ready tables only
+                {billReadyCount > 0 && <span className="font-normal text-green-700"> · {billReadyCount} table{billReadyCount !== 1 ? "s" : ""}</span>}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowBillReadyOnly(false)}
+              className="text-green-500 hover:text-green-700 transition-colors shrink-0 text-xs font-medium"
+            >
+              Show all
+            </button>
+          </div>
+        )}
+
+        {/* ── Call Waiter notifications ───────────────────────── */}
+        {Object.entries(waiterCalls).length > 0 && (
+          <div className="space-y-2">
+            {Object.entries(waiterCalls).map(([tableId, call]) => (
+              <div
+                key={tableId}
+                className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5"
+              >
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4 text-amber-600 animate-pulse shrink-0" />
+                  <p className="text-sm font-semibold text-amber-800">
+                    Table {String(call.table_number).padStart(2, "0")} is calling for a waiter
+                    {call.customer_name && (
+                      <span className="font-normal text-amber-700"> · {call.customer_name}</span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setWaiterCalls((prev) => { const n = { ...prev }; delete n[tableId]; return n; })}
+                  className="text-amber-500 hover:text-amber-700 transition-colors shrink-0"
+                  title="Dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ── Stat cards ─────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <StatCard
@@ -608,7 +705,7 @@ export default function TableSessions({ restaurantId }: Props) {
             iconBg="bg-primary/10"
             label="Today's Revenue"
             value={`₹${todayRevenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-            sub={`From ${pastSessions.length} sessions`}
+            sub={`From ${todaySessionCount} session${todaySessionCount !== 1 ? "s" : ""} today`}
           />
           <StatCard
             icon={<Users className="h-5 w-5 text-purple-500" />}
@@ -675,7 +772,7 @@ export default function TableSessions({ restaurantId }: Props) {
                 <List className="h-3.5 w-3.5" /> List
               </button>
             </div>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
+            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors" disabled title="Filters coming soon">
               <Filter className="h-3.5 w-3.5" /> Filters
             </button>
 
@@ -923,6 +1020,13 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
             <div className="flex items-center gap-1.5 mb-1">
               <User className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs font-medium text-foreground truncate">{session.customer_name}</span>
+            </div>
+          )}
+          {/* Waiter */}
+          {session?.waiter_name && (
+            <div className="flex items-center gap-1.5 mb-1">
+              <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="text-xs text-muted-foreground truncate">{session.waiter_name}</span>
             </div>
           )}
           {/* Orders + items */}

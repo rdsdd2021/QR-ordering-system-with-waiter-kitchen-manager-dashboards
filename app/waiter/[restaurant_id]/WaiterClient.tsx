@@ -15,26 +15,29 @@ type Props = {
   restaurant: Restaurant;
 };
 
-// Order sections for waiter dashboard
-const SECTIONS = [
-  { 
-    key: "my_orders", 
-    label: "My Orders", 
-    emptyText: "No orders assigned to you",
-    filter: (orders: any[], waiterId: string) => 
-      orders.filter(o => o.waiter_id === waiterId)
-  },
-  { 
-    key: "available", 
-    label: "Available Orders", 
-    emptyText: "No orders need attention",
-    filter: (orders: any[], waiterId: string) => 
-      orders.filter(o => !o.waiter_id && (o.status === "pending_waiter" || o.status === "confirmed" || o.status === "ready"))
-  },
-] as const;
-
 function WaiterClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
+  const isWaiterMode = restaurant.order_routing_mode === "waiter_first";
+
+  // Order sections — labels adapt to routing mode
+  const SECTIONS = [
+    {
+      key: "my_orders",
+      label: "My Orders",
+      emptyText: "No orders assigned to you",
+      filter: (orders: any[], waiterId: string) =>
+        orders.filter(o => o.waiter_id === waiterId),
+    },
+    {
+      key: "available",
+      // In waiter_first mode: pending_waiter needs acceptance + ready needs serving
+      // In direct_to_kitchen mode: only ready orders need waiter action
+      label: isWaiterMode ? "Needs Attention" : "Ready to Serve",
+      emptyText: isWaiterMode ? "Nothing needs attention right now" : "No orders ready to serve",
+      filter: (orders: any[], _waiterId: string) =>
+        orders.filter(o => !o.waiter_id && (o.status === "pending_waiter" || o.status === "ready")),
+    },
+  ];
   
   // Get current waiter ID from authenticated user profile
   const currentWaiterId = profile?.id;

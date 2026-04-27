@@ -6,8 +6,7 @@ import type { ActiveOrder } from "@/hooks/useCustomerSession";
 const STATUS_CONFIG: Record<string, {
   label: string; color: string; dot: string; bg: string; description: string;
 }> = {
-  pending:        { label: "Received",        color: "text-amber-700",  dot: "bg-amber-400 animate-pulse", bg: "bg-amber-50/60 border-amber-100",   description: "Your order has been received" },
-  pending_waiter: { label: "Awaiting waiter", color: "text-purple-700", dot: "bg-purple-400 animate-pulse", bg: "bg-purple-50/60 border-purple-100", description: "A waiter will confirm shortly" },
+  pending:        { label: "Received",        color: "text-amber-700",  dot: "bg-amber-400 animate-pulse", bg: "bg-amber-50/60 border-amber-100",   description: "Your order has been received" },  pending_waiter: { label: "Awaiting waiter", color: "text-purple-700", dot: "bg-purple-400 animate-pulse", bg: "bg-purple-50/60 border-purple-100", description: "A waiter will confirm shortly" },
   confirmed:      { label: "Confirmed",       color: "text-blue-700",   dot: "bg-blue-500",                bg: "bg-blue-50/60 border-blue-100",     description: "Confirmed — kitchen is next" },
   preparing:      { label: "Preparing",       color: "text-orange-700", dot: "bg-orange-500 animate-pulse", bg: "bg-orange-50/60 border-orange-100", description: "Kitchen is preparing your order 🍳" },
   ready:          { label: "Ready!",          color: "text-green-700",  dot: "bg-green-500",               bg: "bg-green-50/60 border-green-100",   description: "Your order is ready — waiter is on the way 🚀" },

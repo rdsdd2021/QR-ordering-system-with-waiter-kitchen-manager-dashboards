@@ -41,7 +41,7 @@ export function DashboardShell({
   restaurant, navGroups, activeTab, onNavigate,
   pageTitle, pageDescription, headerActions, mobileNav,
   children, planLabel, planRenewal, profileName, profileRole,
-  notificationCount, onManagePlan, onSignOut, maxWidth = "xl", onLogoUpload,
+  onManagePlan, onSignOut, maxWidth = "xl", onLogoUpload,
 }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 

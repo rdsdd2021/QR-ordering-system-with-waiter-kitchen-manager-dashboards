@@ -96,6 +96,8 @@ export async function POST(req: NextRequest) {
         });
       }
     } else if (type === "CHECKOUT_ORDER_FAILED" || payload.state === "FAILED") {
+      // Don't downgrade a trialing subscription on payment failure/cancellation.
+      // The user may have been on a free trial and cancelled the payment — keep them trialing.
       await supabase
         .from("subscriptions")
         .update({
@@ -103,7 +105,8 @@ export async function POST(req: NextRequest) {
           pending_coupon_id: null,
           updated_at:       new Date().toISOString(),
         })
-        .eq("restaurant_id", restaurantId);
+        .eq("restaurant_id", restaurantId)
+        .neq("status", "trialing");
 
       await supabase.from("payment_transactions")
         .update({ status: "failed" })

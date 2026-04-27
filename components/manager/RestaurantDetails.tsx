@@ -122,7 +122,7 @@ export default function RestaurantDetails({ restaurant }: Props) {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Lowercase letters, numbers, and hyphens only. Leave blank to use the default ID-based URL.
+              Lowercase letters, numbers, and hyphens only. Used as a human-readable alias — QR codes always use the ID-based URL and are unaffected by slug changes.
             </p>
           </div>
 

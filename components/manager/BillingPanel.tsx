@@ -74,7 +74,12 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
 
   // Billing address edit state
   const [editingAddress, setEditingAddress] = useState(false);
-  const [addressLine, setAddressLine] = useState("");
+  const [addressLine, setAddressLine] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(`billing_address_${restaurantId}`) ?? "";
+    }
+    return "";
+  });
   const addressRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -95,7 +100,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
     if (editingAddress) addressRef.current?.focus();
   }, [editingAddress]);
 
-  // Trial/expired users see Pro as the upgrade target — no "current plan" to highlight
+  // Only paid Pro users have a "current plan" to highlight — trial/expired users are upgrading
   const currentPlanId = (isPro && !isTrial) ? "pro" : null;
   const renewalDate = (isPro && !isTrial && subscription?.current_period_end)
     ? fmtDate(subscription.current_period_end)
@@ -189,15 +194,17 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 "text-[10px] font-bold px-1.5 py-0.5 rounded-full",
                 billing === "yearly" ? "bg-white/20 text-white" : "bg-green-100 text-green-700"
               )}>
-                Save 20%
+                {proMonthlyPaise > 0 && proYearlyPaise > 0
+                  ? `Save ${Math.round((1 - proYearlyPaise / proMonthlyPaise) * 100)}%`
+                  : "Save 20%"}
               </span>
             </button>
           </div>
         </div>
 
-        {/* Plan cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {plans.map((plan) => {
+        {/* Plan cards — exclude "free" since there's no free tier, only trial + paid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {plans.filter(p => p.id !== "free").map((plan) => {
             const { icon: PlanIcon, iconColor, iconBg } = getPlanIcon(plan.id);
             const price = planPrice(plan);
             const isCurrent = plan.id === currentPlanId;
@@ -237,7 +244,9 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                   {price !== null ? (
                     <div className="flex items-baseline gap-1">
                       <span className="text-2xl font-bold">{fmtRupees(price)}</span>
-                      <span className="text-xs text-muted-foreground">/month</span>
+                      <span className="text-xs text-muted-foreground">
+                        {billing === "yearly" ? "/mo (billed yearly)" : "/month"}
+                      </span>
                     </div>
                   ) : (
                     <span className="text-2xl font-bold">Custom</span>
@@ -396,20 +405,33 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                           {tx.status === "completed" ? (
                             <button
                               onClick={() => {
-                                // Generate a simple text receipt and trigger download
-                                const lines = [
-                                  `Invoice: ${invNum}`,
-                                  `Date: ${fmtDate(tx.created_at)}`,
-                                  `Plan: ${planLabel(tx.plan)}`,
-                                  `Amount: ${fmtRupees(tx.amount_paise)}`,
-                                  `Status: Paid`,
-                                  `Transaction ID: ${tx.merchant_order_id}`,
-                                ].join("\n");
-                                const blob = new Blob([lines], { type: "text/plain" });
+                                // Generate a formatted HTML receipt and trigger download
+                                const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${invNum}</title>
+<style>body{font-family:monospace;font-size:13px;padding:20px;max-width:320px;margin:0 auto}
+h2{text-align:center;margin:0 0 4px}
+.sub{text-align:center;color:#555;margin-bottom:12px;font-size:11px}
+hr{border:none;border-top:1px dashed #999;margin:8px 0}
+.row{display:flex;justify-content:space-between;margin:3px 0}
+.total{font-weight:bold;font-size:15px}
+.footer{text-align:center;margin-top:12px;font-size:11px;color:#777}
+</style></head><body>
+<h2>Receipt</h2>
+<p class="sub">${invNum} · ${fmtDate(tx.created_at)}</p>
+<hr/>
+${transactions.find(t => t.id === tx.id) ? '' : ''}
+<div class="row"><span>Plan</span><span>${planLabel(tx.plan)}</span></div>
+<div class="row total"><span>Amount</span><span>${fmtRupees(tx.amount_paise)}</span></div>
+<div class="row"><span>Status</span><span>Paid</span></div>
+<div class="row"><span>Transaction ID</span><span style="font-size:10px">${tx.merchant_order_id}</span></div>
+<hr/>
+<p class="footer">Thank you for your business!</p>
+</body></html>`;
+                                const blob = new Blob([html], { type: "text/html" });
                                 const url = URL.createObjectURL(blob);
                                 const a = document.createElement("a");
                                 a.href = url;
-                                a.download = `${invNum}.txt`;
+                                a.download = `${invNum}.html`;
                                 a.click();
                                 URL.revokeObjectURL(url);
                               }}
@@ -442,10 +464,10 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
               </div>
               <div>
                 <p className="font-semibold text-sm">
-                  {isTrial ? "Free Trial" : (isPro && !isTrial) ? "Pro Plan" : isExpired ? "Trial Expired" : "No Active Plan"}
+                  {isTrial ? "Trial" : (isPro && !isTrial) ? "Pro" : "Trial Expired"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {isTrial ? "7-day trial · all features included" : isPro ? "Full access · all features" : "Upgrade to access all features"}
+                  {isTrial ? "7-day trial · all features included" : isPro ? "Full access · all features" : "Upgrade to restore access"}
                 </p>
               </div>
             </div>
@@ -454,11 +476,21 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 <span className="text-2xl font-bold text-green-600">Free</span>
               ) : isPro ? (
                 <>
-                  <span className="text-2xl font-bold">{fmtRupees(proMonthlyPaise)}</span>
-                  <span className="text-xs text-muted-foreground">/month</span>
+                  <span className="text-2xl font-bold">
+                    {(() => {
+                      const lastCompleted = transactions.find(t => t.status === "completed");
+                      return lastCompleted?.plan?.includes("yearly")
+                        ? fmtRupees(proYearlyPaise)
+                        : fmtRupees(proMonthlyPaise);
+                    })()}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {transactions.find(t => t.status === "completed")?.plan?.includes("yearly")
+                      ? "/mo (yearly)" : "/month"}
+                  </span>
                 </>
               ) : (
-                <span className="text-sm text-muted-foreground">—</span>
+                <span className="text-sm text-destructive font-medium">No active subscription</span>
               )}
             </div>
             {isTrial && subscription?.current_period_end ? (
@@ -472,7 +504,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
               </p>
             ) : (
               <p className="text-xs text-muted-foreground mb-3">
-                {isExpired ? "Trial expired — upgrade to continue" : "Upgrade to get full access"}
+                {isExpired ? "Trial expired — upgrade to continue" : "Upgrade to unlock all features"}
               </p>
             )}
             <Button
@@ -544,7 +576,10 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 <Button
                   size="sm"
                   className="w-full h-7 text-xs"
-                  onClick={() => setEditingAddress(false)}
+                  onClick={() => {
+                    localStorage.setItem(`billing_address_${restaurantId}`, addressLine);
+                    setEditingAddress(false);
+                  }}
                 >
                   Save Address
                 </Button>

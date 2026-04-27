@@ -21,7 +21,11 @@ export default function CustomerHistoryPage() {
     setError(null);
     setSearched(true);
     try {
-      const res  = await fetch(`/api/customer/history?phone=${encodeURIComponent(phone.trim())}`);
+      const res  = await fetch(`/api/customer/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: phone.trim() }),
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Failed to fetch history"); setSessions([]); }
       else setSessions(data.sessions || []);

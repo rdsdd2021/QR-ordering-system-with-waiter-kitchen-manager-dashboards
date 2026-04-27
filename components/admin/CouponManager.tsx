@@ -37,7 +37,7 @@ const EMPTY_FORM = {
   is_active: true,
 };
 
-export default function CouponManager() {
+export default function CouponManager({ pin }: { pin: string }) {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -47,9 +47,17 @@ export default function CouponManager() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  async function proxyFetch(endpoint: string, method: string, body?: unknown) {
+    return fetch("/api/admin/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin, endpoint, method, body }),
+    });
+  }
+
   async function load() {
     setLoading(true);
-    const res = await fetch("/api/admin/coupons");
+    const res = await proxyFetch("/api/admin/coupons", "GET");
     const data = await res.json();
     setCoupons(Array.isArray(data) ? data : []);
     setLoaded(true);
@@ -110,11 +118,7 @@ export default function CouponManager() {
     const url = editing ? `/api/admin/coupons/${editing.id}` : "/api/admin/coupons";
     const method = editing ? "PATCH" : "POST";
 
-    const res = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await proxyFetch(url, method, payload);
     const data = await res.json();
 
     if (!res.ok) {
@@ -133,11 +137,7 @@ export default function CouponManager() {
   }
 
   async function toggleActive(c: Coupon) {
-    const res = await fetch(`/api/admin/coupons/${c.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active: !c.is_active }),
-    });
+    const res = await proxyFetch(`/api/admin/coupons/${c.id}`, "PATCH", { is_active: !c.is_active });
     if (res.ok) {
       const data = await res.json();
       setCoupons((prev) => prev.map((x) => (x.id === c.id ? data : x)));
@@ -146,7 +146,7 @@ export default function CouponManager() {
 
   async function deleteCoupon(c: Coupon) {
     if (!confirm(`Delete coupon "${c.code}"? This cannot be undone.`)) return;
-    const res = await fetch(`/api/admin/coupons/${c.id}`, { method: "DELETE" });
+    const res = await proxyFetch(`/api/admin/coupons/${c.id}`, "DELETE");
     if (res.ok) setCoupons((prev) => prev.filter((x) => x.id !== c.id));
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Plus, Edit2, Trash2, Loader2, X, Image as ImageIcon, FolderOpen, Tag } from "lucide-react";
+import { Plus, Edit2, Trash2, Loader2, X, Image as ImageIcon, FolderOpen, Tag, Lock, Upload, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,11 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import CSVUploadTab from "@/components/manager/bulk-upload/CSVUploadTab";
+import BulkEditTab from "@/components/manager/bulk-upload/BulkEditTab";
+import {
+  Tabs, TabsContent, TabsList, TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   getAllMenuItems, createMenuItem, updateMenuItem, deleteMenuItem,
   getFoodCategories, getFoodTags,
@@ -19,15 +24,18 @@ import {
   setMenuItemCategories, setMenuItemTags,
 } from "@/lib/api";
 import { getSupabaseClient } from "@/lib/supabase";
+import { useSubscription } from "@/hooks/useSubscription";
 import { cn } from "@/lib/utils";
 import type { MenuItem, FoodCategory, FoodTag } from "@/types/database";
 
 type Props = { restaurantId: string };
 type FormMode = "add" | "edit" | null;
+type MenuTab = "items" | "csv" | "bulk";
 
 export default function MenuManager({ restaurantId }: Props) {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<MenuTab>("items");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -42,6 +50,9 @@ export default function MenuManager({ restaurantId }: Props) {
   const [formBusy, setFormBusy] = useState(false);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
   const loadRef = useRef<() => Promise<void>>(async () => {});
+
+  const { limits, isPro } = useSubscription(restaurantId);
+  const atLimit = !isPro && items.length >= limits.max_menu_items;
 
   async function loadItems() {
     setLoading(true);
@@ -179,15 +190,45 @@ export default function MenuManager({ restaurantId }: Props) {
 
   return (
     <div className="space-y-4">
+      <Tabs defaultValue="items">
+        <TabsList className="mb-2">
+          <TabsTrigger value="items" className="gap-1.5">
+            <Table2 className="h-3.5 w-3.5" /> Menu Items
+          </TabsTrigger>
+          <TabsTrigger value="csv" className="gap-1.5">
+            <Upload className="h-3.5 w-3.5" /> CSV Upload
+          </TabsTrigger>
+          <TabsTrigger value="bulk" className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Bulk Edit
+          </TabsTrigger>
+        </TabsList>
+
+        {/* ── Existing Menu Items tab ── */}
+        <TabsContent value="items" className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Menu Items</h2>
-          <p className="text-sm text-muted-foreground">{items.length} {items.length === 1 ? "item" : "items"}</p>
+          <p className="text-sm text-muted-foreground">
+            {items.length} {items.length === 1 ? "item" : "items"}
+            {!isPro && (
+              <span className={cn("ml-1.5", atLimit ? "text-destructive font-medium" : "text-muted-foreground")}>
+                · {items.length}/{limits.max_menu_items} free limit
+              </span>
+            )}
+          </p>
         </div>
-        <Button onClick={openAddDialog} size="sm">
-          <Plus className="mr-2 h-4 w-4" /> Add Item
+        <Button onClick={openAddDialog} size="sm" disabled={atLimit} title={atLimit ? `Free plan limit reached (${limits.max_menu_items} items). Upgrade to Pro for unlimited items.` : undefined}>
+          {atLimit ? <Lock className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+          {atLimit ? "Limit Reached" : "Add Item"}
         </Button>
       </div>
+
+      {atLimit && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
+          <Lock className="h-4 w-4 shrink-0" />
+          Free plan is limited to {limits.max_menu_items} menu items. Upgrade to Pro for unlimited items.
+        </div>
+      )}
 
       <div className="rounded-md border">
         <Table>
@@ -260,6 +301,30 @@ export default function MenuManager({ restaurantId }: Props) {
           </TableBody>
         </Table>
       </div>
+        </TabsContent>
+
+        {/* ── CSV Upload tab ── */}
+        <TabsContent value="csv">
+          <CSVUploadTab
+            restaurantId={restaurantId}
+            categories={allCategories}
+            tags={allTags}
+            remainingSlots={isPro ? 9999 : Math.max(0, limits.max_menu_items - items.length)}
+            onImportComplete={loadItems}
+          />
+        </TabsContent>
+
+        {/* ── Bulk Edit tab ── */}
+        <TabsContent value="bulk">
+          <BulkEditTab
+            restaurantId={restaurantId}
+            categories={allCategories}
+            tags={allTags}
+            remainingSlots={isPro ? 9999 : Math.max(0, limits.max_menu_items - items.length)}
+            onImportComplete={loadItems}
+          />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

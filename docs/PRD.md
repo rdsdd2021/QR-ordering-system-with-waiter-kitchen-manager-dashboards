@@ -5,7 +5,7 @@
 |-------|-------|
 | Document version | 1.0 |
 | Status | Living document |
-| Last updated | April 22, 2026 |
+| Last updated | April 27, 2026 |
 | Author | Engineering Team |
 
 ---
@@ -182,10 +182,12 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | C4 | Place order | Must Have | Customer enters name + phone (first order only). Subsequent orders in the same session skip the form. |
 | C5 | Real-time order tracking | Must Have | Customer sees live status: Placed → Confirmed → Preparing → Ready → Served |
 | C6 | Multiple orders per session | Should Have | Customer can place additional orders at the same table without re-entering info |
-| C7 | Order history by phone | Should Have | Customer can look up past orders at `/history` using their phone number |
+| C7 | Order history by phone | Should Have | Customer can look up past orders at `/history` using their phone number. The page POSTs to `POST /api/customer/history` with `{ phone }` in the request body (avoids exposing phone numbers in URL query params). |
 | C8 | Geo-fencing | Should Have | Optionally restrict ordering to customers physically inside the restaurant |
 | C9 | Floor-based pricing | Should Have | Items on premium floors (e.g. rooftop) automatically priced with a multiplier |
 | C10 | Table occupancy guard | Must Have | If another customer has unpaid orders at the table, new customers are blocked from ordering |
+| C11 | Call waiter | Should Have | Customer can broadcast a "call waiter" signal from the ordering page. Sends a Supabase broadcast event (`call_waiter`) on the `restaurant:{id}` channel with `table_id`, `table_number`, and optional `customer_name`. Button is disabled for 60 seconds after use to prevent spam. Non-blocking — failure is silently swallowed. |
+| C12 | Estimated wait time | Should Have | After placing an order, the cart drawer fetches `getPerformanceMetrics()` and displays an estimated wait time (derived from `avgPrepSeconds`) with a `Clock` icon. Addresses the customer pain point of not knowing how long "Preparing" will take. |
 
 ---
 
@@ -199,6 +201,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | K4 | New order highlight | Should Have | New orders visually highlighted for 4 seconds |
 | K5 | Real-time updates | Must Have | No page refresh needed — new orders appear instantly |
 | K6 | Waiter-first mode support | Should Have | Kitchen only sees orders after waiter has accepted them |
+| K7 | Bulk mark ready | Should Have | "All Ready" button in the Preparing column header marks all preparing orders as ready in one tap (visible only when ≥ 2 orders are preparing) |
 
 ---
 
@@ -233,6 +236,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M12 | Order routing mode | Must Have | Switch between direct-to-kitchen and waiter-first per restaurant |
 | M13 | Geo-fencing settings | Nice to Have | Set restaurant coordinates + radius for customer location check |
 | M14 | Subscription management | Must Have | View current plan, upgrade/downgrade plan, apply coupon, view billing history |
+| M18 | Upgrade banner on sessions tab | Should Have | When a restaurant is not on Pro and not in a trial, an inline upgrade banner is shown at the top of the Live Tables (sessions) tab. The banner displays Pro plan features, a coupon input, dynamic pricing, and a CTA to start the 7-day free trial or upgrade directly. Hidden once the restaurant is on an active Pro subscription. |
 | M15 | Webhooks | Nice to Have | Register HTTPS endpoints to receive real-time event notifications |
 | M16 | Restaurant details | Must Have | Edit restaurant name and slug. Upload a logo image (stored in Supabase `restaurant-logos` bucket, `{restaurant_id}/logo.{ext}`); `logo_url` is saved to the `restaurants` table and the page reloads to reflect the new logo. |
 | M17 | Manager-initiated orders | Should Have | Manager can place a new order on behalf of a customer directly from the Live Tables detail panel. Opens an "Add Order" modal with menu search, cart, and running total. Uses the same `placeOrder()` API as the customer ordering page, pre-filling session customer info. |
@@ -332,6 +336,8 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 
 > **As a manager on the free plan**, I want to see a clear upgrade prompt when I hit the table or menu item limit, so I know what I need to do to grow.
 
+> **As a manager whose trial has expired or who is on the free plan**, I want to see an upgrade banner directly on the Live Tables tab with pricing, features, and a coupon field, so I can upgrade without navigating away from my main workflow.
+
 ---
 
 ### Restaurant Owner (Onboarding)
@@ -376,7 +382,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 - Customer ordering requires no authentication (by design)
 - RLS policies enforce restaurant-scoped data access for all staff
 - Webhook payloads signed with HMAC-SHA256 — receivers can verify authenticity
-- Admin panel protected by PIN (to be replaced with proper auth in production)
+- Admin API routes protected by `ADMIN_SECRET` bearer token (validated server-side via `lib/admin-auth.ts`). The browser never sees `ADMIN_SECRET` — the admin panel sends only the PIN to `POST /api/admin/proxy`, which validates the PIN and forwards requests to admin endpoints with the secret attached server-side.
 - Stripe webhook signature verified before processing any event
 
 ### Scalability
@@ -488,7 +494,7 @@ These are explicitly not being built in the current version. They are documented
 | R2 | Customer refuses to enter phone number | Medium | Medium | Phone is required for billing safety scoping. Consider making it optional with a trade-off. |
 | R3 | Kitchen staff find the interface too complex | Low | High | Kitchen UI is intentionally minimal — large text, one-tap actions only. |
 | R4 | Stripe payment failure during onboarding | Low | Medium | Free plan available as fallback. Stripe errors shown clearly. |
-| R5 | Restaurant deactivated mid-service | Low | High | Admin deactivation is immediate. No grace period currently. |
+| R5 | Restaurant deactivated mid-service | Low | High | Admin deactivation is immediate. No grace period currently. Customers scanning QR codes will see a friendly "Restaurant is currently closed" screen instead of a 404. |
 | R6 | Two customers scan same QR simultaneously | Medium | Medium | Billing safety check + sessionStorage scoping handles this. |
 | R7 | Menu item deleted while in customer cart | Low | Medium | Order fails at DB level. Customer sees generic error. No graceful recovery. |
 | R8 | Geo-fencing blocks legitimate customers | Medium | Medium | Customers can request staff to place order manually. Geo-fence is optional. |
@@ -504,7 +510,7 @@ These are explicitly not being built in the current version. They are documented
 | Q1 | Should phone number be optional for customers? What's the fallback for billing safety? | Product | Open |
 | Q2 | Should inactive staff (`is_active=false`) be blocked at login, not just at the data layer? | Engineering | Open |
 | Q3 | Should `past_due` subscriptions be automatically downgraded to free after a grace period? | Product | Open |
-| Q4 | Should the admin panel be protected by proper auth instead of a PIN? | Engineering | Open |
+| Q4 | Should the admin panel be protected by proper auth instead of a PIN? | Engineering | Resolved — API routes use `ADMIN_SECRET` bearer token auth. The secret is kept server-side; the browser sends only the PIN to `/api/admin/proxy`, which forwards requests with the secret attached. |
 | Q5 | Should webhook retries be executed automatically by a cron job? | Engineering | Open |
 | Q6 | Should managers be able to force-bill an order that isn't in `served` status? | Product | Open |
 | Q7 | Should cart state persist across page refreshes (localStorage)? | Product | Open |

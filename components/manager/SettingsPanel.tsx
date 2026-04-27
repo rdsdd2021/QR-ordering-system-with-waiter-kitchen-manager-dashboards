@@ -19,6 +19,7 @@ type Props = {
   geoLatitude?: number | null;
   geoLongitude?: number | null;
   geoRadiusMeters?: number;
+  autoConfirmMinutes?: number | null;
 };
 
 export default function SettingsPanel({
@@ -28,6 +29,7 @@ export default function SettingsPanel({
   geoLatitude: initLat = null,
   geoLongitude: initLng = null,
   geoRadiusMeters: initRadius = 100,
+  autoConfirmMinutes: initAutoConfirm = null,
 }: Props) {
   const router = useRouter();
 
@@ -35,6 +37,30 @@ export default function SettingsPanel({
   const [routingMode, setRoutingMode] = useState(currentRoutingMode);
   const [routingSaving, setRoutingSaving] = useState(false);
   const [routingSaved, setRoutingSaved] = useState(false);
+
+  // ── Auto-confirm ───────────────────────────────────────────────────
+  const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(initAutoConfirm !== null && initAutoConfirm > 0);
+  const [autoConfirmMins, setAutoConfirmMins] = useState(initAutoConfirm?.toString() ?? "5");
+  const [autoConfirmSaving, setAutoConfirmSaving] = useState(false);
+  const [autoConfirmSaved, setAutoConfirmSaved] = useState(false);
+
+  async function handleAutoConfirmSave() {
+    setAutoConfirmSaving(true);
+    setAutoConfirmSaved(false);
+    const mins = autoConfirmEnabled ? (parseInt(autoConfirmMins) || 5) : null;
+    const { error } = await supabase
+      .from("restaurants")
+      .update({ auto_confirm_minutes: mins })
+      .eq("id", restaurantId);
+    if (!error) {
+      setAutoConfirmSaved(true);
+      router.refresh();
+      setTimeout(() => setAutoConfirmSaved(false), 3000);
+    } else {
+      alert("Failed to save auto-confirm setting");
+    }
+    setAutoConfirmSaving(false);
+  }
 
   // ── Geo-fencing ────────────────────────────────────────────────────
   const [geoEnabled, setGeoEnabled] = useState(initGeoEnabled);
@@ -114,6 +140,7 @@ export default function SettingsPanel({
       setGeoError("Your browser doesn't support geolocation.");
       return;
     }
+    if (!confirm("Set the restaurant's geo-fence location to your current position?")) return;
     setDetectingLocation(true);
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
@@ -316,6 +343,61 @@ export default function SettingsPanel({
               ) : geoSaved ? (
                 <><Check className="mr-2 h-4 w-4" />Saved!</>
               ) : "Save Geo-fencing"}
+            </Button>
+          </div>
+        </Card>
+      </section>
+      {/* ── Auto-confirm Orders ───────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Auto-confirm Orders</h2>
+          <p className="text-sm text-muted-foreground">
+            Automatically confirm new orders after a set time — useful for busy kitchens
+          </p>
+        </div>
+
+        <Card className="p-6 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Enable auto-confirm</p>
+              <p className="text-sm text-muted-foreground">
+                New orders will be confirmed automatically after the delay below
+              </p>
+            </div>
+            <Switch
+              checked={autoConfirmEnabled}
+              onCheckedChange={setAutoConfirmEnabled}
+            />
+          </div>
+
+          {autoConfirmEnabled && (
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-confirm-mins">Confirm after (minutes)</Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="auto-confirm-mins"
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={autoConfirmMins}
+                  onChange={(e) => setAutoConfirmMins(e.target.value)}
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">minutes after order is placed</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Recommended: 2–5 minutes. Only applies to orders in "New" status.
+              </p>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <Button onClick={handleAutoConfirmSave} disabled={autoConfirmSaving}>
+              {autoConfirmSaving ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</>
+              ) : autoConfirmSaved ? (
+                <><Check className="mr-2 h-4 w-4" />Saved!</>
+              ) : "Save"}
             </Button>
           </div>
         </Card>

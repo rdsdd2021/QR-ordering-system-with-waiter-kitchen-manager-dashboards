@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCustomerOrderHistory } from "@/lib/api";
 
 /**
- * GET /api/customer/history?phone=+1234567890
+ * POST /api/customer/history
  * 
  * Returns order history for a customer by phone number.
  * Groups orders by table sessions and includes waiter names.
+ * Uses POST to avoid exposing phone numbers in URL query params.
  */
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const phone = searchParams.get("phone");
+    const { phone } = await req.json();
 
     if (!phone || phone.trim().length === 0) {
       return NextResponse.json({ error: "Phone number is required" }, { status: 400 });

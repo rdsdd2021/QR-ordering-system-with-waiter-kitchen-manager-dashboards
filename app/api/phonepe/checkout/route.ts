@@ -102,14 +102,34 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Store pending transaction ────────────────────────────────────────
-    await supabase.from("subscriptions").upsert({
-      restaurant_id:          restaurantId,
-      plan:                   "free",
-      status:                 "incomplete",
-      phonepe_transaction_id: merchantOrderId,
-      pending_coupon_id:      couponDbId ?? null,
-      updated_at:             new Date().toISOString(),
-    }, { onConflict: "restaurant_id" });
+    // Only overwrite the subscription if it's NOT already on an active trial.
+    // A trialing subscription means the user just onboarded — we don't want to
+    // clobber it with "free/incomplete" before the payment completes.
+    const { data: existingSub } = await supabase
+      .from("subscriptions")
+      .select("status")
+      .eq("restaurant_id", restaurantId)
+      .maybeSingle();
+
+    if (existingSub?.status !== "trialing") {
+      await supabase.from("subscriptions").upsert({
+        restaurant_id:          restaurantId,
+        plan:                   "free",
+        status:                 "incomplete",
+        phonepe_transaction_id: merchantOrderId,
+        pending_coupon_id:      couponDbId ?? null,
+        updated_at:             new Date().toISOString(),
+      }, { onConflict: "restaurant_id" });
+    } else {
+      // Just store the pending transaction id so the webhook can upgrade later
+      await supabase.from("subscriptions")
+        .update({
+          phonepe_transaction_id: merchantOrderId,
+          pending_coupon_id:      couponDbId ?? null,
+          updated_at:             new Date().toISOString(),
+        })
+        .eq("restaurant_id", restaurantId);
+    }
 
     await supabase.from("payment_transactions").insert({
       restaurant_id:        restaurantId,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Store, Users, ShoppingCart, Zap, CheckCircle2, Search, ToggleLeft, ToggleRight } from "lucide-react";
+import { Store, Users, ShoppingCart, Zap, CheckCircle2, Search, ToggleLeft, ToggleRight, KeyRound, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,8 +55,24 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
   const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans">("restaurants");
   const [confirmTarget, setConfirmTarget] = useState<Restaurant | null>(null);
+  // Change password dialog
+  const [pwTarget, setPwTarget] = useState<Restaurant | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [pwLoading, setPwLoading] = useState(false);
+  const [pwResult, setPwResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const subMap = Object.fromEntries(subscriptions.map((s) => [s.restaurant_id, s]));
+
+  // Helper: call admin endpoints via server-side proxy (keeps ADMIN_SECRET out of browser)
+  async function adminFetch(endpoint: string, method: string, body?: unknown) {
+    const res = await fetch("/api/admin/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin, endpoint, method, body }),
+    });
+    return res;
+  }
 
   // ── PIN gate ─────────────────────────────────────────────────────────
   if (!authed) {
@@ -97,16 +113,20 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
   // ── Stats ─────────────────────────────────────────────────────────────
   const totalOrders = Object.values(orderCounts).reduce((a, b) => a + b, 0);
-  const proCount    = subscriptions.filter((s) => s.plan === "pro" && (s.status === "active" || s.status === "trialing")).length;
-  const activeCount = localRestaurants.filter((r) => r.is_active).length;
+  const proCount    = subscriptions.filter((s) => s.plan === "pro" && s.status === "active").length;
+  const trialCount  = subscriptions.filter((s) => s.status === "trialing").length;
+  const activeCount = localRestaurants.filter((r) => {
+    const sub = subMap[r.id];
+    const isExpired = sub?.status === "expired" || sub?.status === "incomplete";
+    return r.is_active && !isExpired;
+  }).length;
 
   // ── Toggle restaurant active state ────────────────────────────────────
   async function toggleActive(restaurant: Restaurant) {
     setToggling(restaurant.id);
-    const res = await fetch("/api/admin/toggle-restaurant", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ restaurantId: restaurant.id, isActive: !restaurant.is_active }),
+    const res = await adminFetch("/api/admin/toggle-restaurant", "POST", {
+      restaurantId: restaurant.id,
+      isActive: !restaurant.is_active,
     });
     if (res.ok) {
       setLocalRestaurants((prev) =>
@@ -114,6 +134,24 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
       );
     }
     setToggling(null);
+  }
+
+  async function handleChangePassword() {
+    if (!pwTarget || newPassword.length < 8) return;
+    setPwLoading(true);
+    setPwResult(null);
+    const res = await adminFetch("/api/admin/change-password", "POST", {
+      restaurantId: pwTarget.id,
+      newPassword,
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setPwResult({ ok: true, msg: `Password updated for ${data.managerEmail}` });
+      setNewPassword("");
+    } else {
+      setPwResult({ ok: false, msg: data.error ?? "Failed to update password" });
+    }
+    setPwLoading(false);
   }
 
   const filtered = localRestaurants.filter((r) =>
@@ -151,6 +189,59 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Change password dialog */}
+      <AlertDialog open={!!pwTarget} onOpenChange={(open) => { if (!open) { setPwTarget(null); setPwResult(null); setNewPassword(""); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4" /> Change manager password
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Set a new password for the manager of <strong>{pwTarget?.name}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="relative">
+              <Input
+                type={showPw ? "text" : "password"}
+                placeholder="New password (min 8 chars)"
+                value={newPassword}
+                onChange={(e) => { setNewPassword(e.target.value); setPwResult(null); }}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            {pwResult && (
+              <p className={cn("text-sm px-3 py-2 rounded-lg border", pwResult.ok
+                ? "text-green-700 bg-green-50 border-green-200"
+                : "text-destructive bg-destructive/5 border-destructive/20"
+              )}>
+                {pwResult.msg}
+              </p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setPwTarget(null); setPwResult(null); setNewPassword(""); }}>
+              {pwResult?.ok ? "Close" : "Cancel"}
+            </AlertDialogCancel>
+            {!pwResult?.ok && (
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); handleChangePassword(); }}
+                disabled={pwLoading || newPassword.length < 8}
+              >
+                {pwLoading ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : "Update password"}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div>
@@ -171,11 +262,12 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {[
             { label: "Total Restaurants", value: localRestaurants.length, icon: Store,        color: "" },
             { label: "Active",            value: activeCount,             icon: CheckCircle2, color: "text-green-600" },
             { label: "Pro Subscribers",   value: proCount,                icon: Zap,          color: "text-primary" },
+            { label: "On Trial",          value: trialCount,              icon: Zap,          color: "text-blue-500" },
             { label: "Total Orders",      value: totalOrders,             icon: ShoppingCart, color: "" },
           ].map(({ label, value, icon: Icon, color }) => (
             <Card key={label} className="p-4">
@@ -231,6 +323,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
                   <th className="text-right px-4 py-3 font-medium text-muted-foreground">Orders</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Created</th>
                   <th className="text-center px-4 py-3 font-medium text-muted-foreground">Active</th>
+                  <th className="text-center px-4 py-3 font-medium text-muted-foreground">Password</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -243,35 +336,51 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
                         <p className="text-xs text-muted-foreground font-mono">{r.id.slice(0, 8).toUpperCase()}</p>
                       </td>
                       <td className="px-4 py-3">
-                        <Badge className={cn(
-                          "text-xs",
-                          sub?.plan === "pro" && sub?.status === "active"    ? "bg-primary text-primary-foreground" :
-                          sub?.plan === "pro" && sub?.status === "trialing"  ? "bg-blue-500 text-white" :
-                          sub?.status === "expired"                          ? "bg-orange-100 text-orange-700" :
-                          "bg-muted text-muted-foreground"
-                        )}>
-                          {sub?.status === "trialing" ? "Trial" : sub?.status === "expired" ? "Expired" : (sub?.plan ?? "free")}
-                        </Badge>
+                        {(() => {
+                          const isExpired = sub?.status === "expired" || sub?.status === "incomplete";
+                          const isPaidPro = sub?.plan === "pro" && sub?.status === "active";
+                          const isTrial   = sub?.status === "trialing";
+                          return (
+                            <Badge className={cn(
+                              "text-xs",
+                              isPaidPro  ? "bg-primary text-primary-foreground" :
+                              isTrial    ? "bg-blue-500 text-white" :
+                              isExpired  ? "bg-orange-100 text-orange-700 border border-orange-200" :
+                              "bg-muted text-muted-foreground"
+                            )}>
+                              {isPaidPro ? "Pro" : isTrial ? "Trial" : isExpired ? "Expired" : "—"}
+                            </Badge>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
-                        <div>
-                          <span className={cn(
-                            "text-xs font-medium",
-                            sub?.status === "active"    ? "text-green-600" :
-                            sub?.status === "trialing"  ? "text-blue-600"  :
-                            sub?.status === "expired"   ? "text-orange-500":
-                            sub?.status === "past_due"  ? "text-red-600"   :
-                            sub?.status === "incomplete"? "text-amber-600" :
-                            "text-muted-foreground"
-                          )}>
-                            {sub?.status ?? "—"}
-                          </span>
-                          {sub?.current_period_end && (
-                            <p className="text-[10px] text-muted-foreground">
-                              until {new Date(sub.current_period_end).toLocaleDateString()}
-                            </p>
-                          )}
-                        </div>
+                        {(() => {
+                          const status = sub?.status;
+                          const isExpired = status === "expired" || status === "incomplete";
+                          const label =
+                            status === "active"    ? "Active" :
+                            status === "trialing"  ? "Trial active" :
+                            isExpired              ? "Trial expired" :
+                            status === "past_due"  ? "Past due" :
+                            status === "canceled"  ? "Canceled" :
+                            "—";
+                          const color =
+                            status === "active"    ? "text-green-600" :
+                            status === "trialing"  ? "text-blue-600"  :
+                            isExpired              ? "text-orange-500":
+                            status === "past_due"  ? "text-red-600"   :
+                            "text-muted-foreground";
+                          return (
+                            <div>
+                              <span className={cn("text-xs font-medium", color)}>{label}</span>
+                              {sub?.current_period_end && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  until {new Date(sub.current_period_end).toLocaleDateString()}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {orderCounts[r.id] ?? 0}
@@ -295,12 +404,21 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
                           )}
                         </button>
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => { setPwTarget(r); setNewPassword(""); setPwResult(null); setShowPw(false); }}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                          title="Change manager password"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No restaurants found
                     </td>
                   </tr>
@@ -311,11 +429,11 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
         </>)}
 
         {activeTab === "coupons" && (
-          <CouponManager />
+          <CouponManager pin={pin} />
         )}
 
         {activeTab === "plans" && (
-          <PlanManager />
+          <PlanManager pin={pin} />
         )}
 
       </main>

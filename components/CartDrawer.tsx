@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { CheckCircle2, Loader2, ShoppingBag, ArrowLeft, User, Phone, Users, ChevronUp, ChevronDown, Trash2, Minus, Plus } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { CheckCircle2, Loader2, ShoppingBag, ArrowLeft, User, Phone, Users, ChevronUp, ChevronDown, Trash2, Minus, Plus, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { placeOrder } from "@/lib/api";
+import { placeOrder, getPerformanceMetrics } from "@/lib/api";
 import type { CartItem } from "@/types/database";
 import type { CustomerInfo } from "@/hooks/useCustomerSession";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,7 @@ type Props = {
   onSaveCustomerInfo: (info: CustomerInfo) => void;
 };
 
-type Step = "cart" | "info" | "loading" | "success" | "error";
+type Step = "cart" | "info" | "loading" | "success" | "error" | "occupied";
 
 function fmt(n: number) {
   return n % 1 === 0 ? `₹${n}` : `₹${n.toFixed(2)}`;
@@ -40,6 +40,7 @@ export default function CartDrawer({
   const [step, setStep]         = useState<Step>("cart");
   const [expanded, setExpanded] = useState(false);
   const [orderId, setOrderId]   = useState<string | null>(null);
+  const [waitMins, setWaitMins] = useState<number | null>(null);
 
   const [name, setName]           = useState(savedCustomerInfo?.name ?? "");
   const [phone, setPhone]         = useState(savedCustomerInfo?.phone ?? "");
@@ -62,9 +63,17 @@ export default function CartDrawer({
     if (id && id !== "UNPAID_ORDERS_EXIST") {
       onSaveCustomerInfo(info);
       setOrderId(id);
+      // Fetch avg turnaround to show estimated wait
+      getPerformanceMetrics(restaurantId).then((m) => {
+        if (m.avgTurnaroundSeconds && m.avgTurnaroundSeconds > 0) {
+          setWaitMins(Math.ceil(m.avgTurnaroundSeconds / 60));
+        }
+      });
       setStep("success");
       setExpanded(false);
-      setTimeout(() => { onOrderSuccess(); setStep("cart"); }, 2500);
+      setTimeout(() => { onOrderSuccess(); setStep("cart"); }, 4000);
+    } else if (id === "UNPAID_ORDERS_EXIST") {
+      setStep("occupied");
     } else {
       setStep("error");
     }
@@ -99,6 +108,12 @@ export default function CartDrawer({
         <p className="font-bold text-base">Order placed!</p>
         <p className="mt-1 text-xs text-muted-foreground">Track it in My Orders</p>
         {orderId && <p className="mt-2 font-mono text-[11px] bg-muted rounded-lg px-3 py-1.5 inline-block text-muted-foreground">#{orderId.slice(0, 8).toUpperCase()}</p>}
+        {waitMins && (
+          <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            Estimated wait: ~{waitMins} min{waitMins !== 1 ? "s" : ""}
+          </div>
+        )}
       </div>
     );
   }
@@ -112,6 +127,17 @@ export default function CartDrawer({
         </div>
         <p className="text-sm font-medium">Placing your order…</p>
         <p className="mt-0.5 text-xs text-muted-foreground">Just a moment</p>
+      </div>
+    );
+  }
+
+  // ── Occupied ─────────────────────────────────────────────────────────
+  if (step === "occupied") {
+    return (
+      <div className="bg-card border-t px-4 py-4 space-y-3">
+        <p className="text-sm font-medium text-center">Table has an active order</p>
+        <p className="text-xs text-muted-foreground text-center">This table already has an unpaid order from another customer. Please ask your waiter to clear the table first.</p>
+        <Button className="w-full" variant="outline" onClick={() => setStep("cart")}>Back to menu</Button>
       </div>
     );
   }

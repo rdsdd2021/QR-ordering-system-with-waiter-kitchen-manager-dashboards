@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { validateAdminRequest } from "@/lib/admin-auth";
 
 function getServiceClient() {
   return createClient(
@@ -8,30 +9,29 @@ function getServiceClient() {
   );
 }
 
-// GET /api/admin/coupons — list all coupons
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!validateAdminRequest(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("coupons")
     .select("*")
     .order("created_at", { ascending: false });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
 }
 
-// POST /api/admin/coupons — create coupon
 export async function POST(req: NextRequest) {
+  if (!validateAdminRequest(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { code, type, value, duration_days, max_uses, expires_at, applicable_plans, is_active } = body;
-
     if (!code || !type || value == null) {
       return NextResponse.json({ error: "code, type, value are required" }, { status: 400 });
     }
-
     const supabase = getServiceClient();
     const { data, error } = await supabase
       .from("coupons")
@@ -47,12 +47,9 @@ export async function POST(req: NextRequest) {
       })
       .select()
       .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json(data, { status: 201 });
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 }

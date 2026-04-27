@@ -128,6 +128,14 @@ function EndpointForm({
   function validateUrl(v: string) {
     if (!v) { setUrlErr(""); return; }
     if (!v.startsWith("https://")) { setUrlErr("URL must start with https://"); return; }
+    try {
+      const parsed = new URL(v);
+      const host = parsed.hostname.toLowerCase();
+      const blocked = [/^localhost$/, /^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^0\.0\.0\.0$/];
+      if (!host || !host.includes(".") || blocked.some(r => r.test(host))) {
+        setUrlErr("Please enter a valid public HTTPS URL"); return;
+      }
+    } catch { setUrlErr("Invalid URL"); return; }
     setUrlErr("");
   }
 

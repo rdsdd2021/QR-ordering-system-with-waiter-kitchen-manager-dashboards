@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Zap, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,41 +10,62 @@ import { cn } from "@/lib/utils";
 
 type Props = { restaurantId: string };
 
-// Pro plan price in paise (₹799/month = 79900 paise)
-const PRO_PRICE_PAISE = 79900;
-
 export default function UpgradeBanner({ restaurantId }: Props) {
   const { plan, isPro, subscription, loading, startUpgrade } = useSubscription(restaurantId);
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
   const [upgrading, setUpgrading] = useState(false);
+  const [proPricePaise, setProPricePaise] = useState(99900);
+
+  useEffect(() => {
+    fetch("/api/plans")
+      .then((r) => r.json())
+      .then((plans: Array<{ id: string; monthly_paise: number }>) => {
+        const pro = plans.find((p) => p.id === "pro");
+        if (pro) setProPricePaise(pro.monthly_paise);
+      })
+      .catch(() => {});
+  }, []);
 
   if (loading) return null;
 
   if (isPro) {
+    const isTrial = subscription?.status === "trialing";
+    const trialEnd = subscription?.current_period_end;
+    const daysLeft = trialEnd
+      ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400000))
+      : null;
+
     return (
       <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
         <Zap className="h-4 w-4 text-primary shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">Pro plan active</p>
-          {subscription?.current_period_end && (
+          <p className="text-sm font-medium">
+            {isTrial ? "Trial active" : "Pro plan active"}
+          </p>
+          {isTrial && daysLeft !== null ? (
+            <p className="text-xs text-muted-foreground">
+              {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining` : "Trial ends today"}
+            </p>
+          ) : subscription?.current_period_end ? (
             <p className="text-xs text-muted-foreground">
               Renews {new Date(subscription.current_period_end).toLocaleDateString()}
             </p>
-          )}
+          ) : null}
         </div>
-        <Badge className="bg-primary text-primary-foreground shrink-0">Pro</Badge>
+        <Badge className={isTrial ? "bg-amber-500 text-white shrink-0" : "bg-primary text-primary-foreground shrink-0"}>
+          {isTrial ? "Trial" : "Pro"}
+        </Badge>
       </div>
     );
   }
 
-  // flat coupon value is in rupees; PRO_PRICE_PAISE is in paise — convert to same unit
   const discountedPaise = coupon
     ? coupon.type === "percentage"
-      ? PRO_PRICE_PAISE - Math.round((PRO_PRICE_PAISE * coupon.value) / 100)
-      : Math.max(0, PRO_PRICE_PAISE - Math.round(coupon.value * 100))
-    : PRO_PRICE_PAISE;
+      ? proPricePaise - Math.round((proPricePaise * coupon.value) / 100)
+      : Math.max(0, proPricePaise - Math.round(coupon.value * 100))
+    : proPricePaise;
 
-  const originalPrice = `₹${(PRO_PRICE_PAISE / 100).toFixed(0)}`;
+  const originalPrice = `₹${(proPricePaise / 100).toFixed(0)}`;
   const finalPrice    = `₹${(discountedPaise / 100).toFixed(0)}`;
 
   async function handleUpgrade() {
@@ -62,7 +83,7 @@ export default function UpgradeBanner({ restaurantId }: Props) {
         <div>
           <p className="font-semibold">Upgrade to Pro</p>
           <p className="text-sm text-muted-foreground mt-0.5">
-            7-day free trial · then {`₹${(79900/100).toFixed(0)}`}/month
+            7-day free trial · then {originalPrice}/month
           </p>
         </div>
       </div>
@@ -87,7 +108,7 @@ export default function UpgradeBanner({ restaurantId }: Props) {
       <CouponInput
         plan="pro"
         restaurantId={restaurantId}
-        planPricePaise={PRO_PRICE_PAISE}
+        planPricePaise={proPricePaise}
         onApply={setCoupon}
       />
 
@@ -104,32 +125,17 @@ export default function UpgradeBanner({ restaurantId }: Props) {
       </div>
 
       {discountedPaise === 0 ? (
-        // Price is zero — no trial needed, just upgrade for free
-        <Button
-          className="w-full"
-          onClick={handleUpgrade}
-          disabled={upgrading}
-        >
+        <Button className="w-full" onClick={handleUpgrade} disabled={upgrading}>
           <Zap className="h-4 w-4 mr-2" />
           {upgrading ? "Redirecting…" : "Upgrade for Free"}
         </Button>
       ) : coupon ? (
-        // Coupon applied but price > 0 — show upgrade button (no trial copy)
-        <Button
-          className="w-full"
-          onClick={handleUpgrade}
-          disabled={upgrading}
-        >
+        <Button className="w-full" onClick={handleUpgrade} disabled={upgrading}>
           <Zap className="h-4 w-4 mr-2" />
           {upgrading ? "Redirecting…" : `Upgrade — ${finalPrice}/month`}
         </Button>
       ) : (
-        // No coupon — show trial button
-        <Button
-          className="w-full"
-          onClick={handleUpgrade}
-          disabled={upgrading}
-        >
+        <Button className="w-full" onClick={handleUpgrade} disabled={upgrading}>
           <Zap className="h-4 w-4 mr-2" />
           {upgrading ? "Redirecting…" : `Start 7-day free trial — ${finalPrice}/month after`}
         </Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, Wifi, WifiOff, LogOut } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, LogOut, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import OrderCard from "@/components/kitchen/OrderCard";
 import { useKitchenOrders } from "@/hooks/useKitchenOrders";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
+import { useState } from "react";
 
 type Props = {
   restaurant: Restaurant;
@@ -18,7 +19,7 @@ type Props = {
 // Status columns shown on the board — left to right = workflow order
 // Kitchen flow now ends at 'ready' (waiters handle 'served')
 const COLUMNS = [
-  { status: "pending",   label: "New",       emptyText: "No new orders" },
+  { status: "pending",   label: "Pending",   emptyText: "No new orders" },
   { status: "confirmed", label: "Confirmed", emptyText: "Nothing confirmed" },
   { status: "preparing", label: "Preparing", emptyText: "Nothing in progress" },
   { status: "ready",     label: "Ready",     emptyText: "Nothing ready yet" },
@@ -28,6 +29,15 @@ function KitchenClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
   const { orders, loading, error, advanceStatus, newOrderIds, refetch } =
     useKitchenOrders(restaurant.id);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  async function markAllReady() {
+    const preparing = orders.filter((o) => o.status === "preparing");
+    if (!preparing.length) return;
+    setBulkBusy(true);
+    await Promise.all(preparing.map((o) => advanceStatus(o.id, "ready")));
+    setBulkBusy(false);
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -102,18 +112,32 @@ function KitchenClientContent({ restaurant }: Props) {
                   <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                     {label}
                   </p>
-                  {col.length > 0 && (
-                    <span
-                      className={cn(
-                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
-                        status === "pending"
-                          ? "bg-warning-light text-warning"
-                          : "bg-muted text-muted-foreground"
-                      )}
-                    >
-                      {col.length}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {status === "preparing" && col.length > 1 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-[10px] gap-1"
+                        onClick={markAllReady}
+                        disabled={bulkBusy}
+                      >
+                        <CheckCheck className="h-3 w-3" />
+                        All Ready
+                      </Button>
+                    )}
+                    {col.length > 0 && (
+                      <span
+                        className={cn(
+                          "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
+                          status === "pending"
+                            ? "bg-warning-light text-warning"
+                            : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        {col.length}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Cards */}

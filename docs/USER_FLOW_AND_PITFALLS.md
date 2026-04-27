@@ -66,7 +66,7 @@ Super Admin (PIN-gated)
 | Waiter | Yes | Restaurant-scoped | Accept/serve orders, manage table sessions |
 | Kitchen | Yes | Restaurant-scoped | View queue, advance order status |
 | Manager | Yes | Restaurant-scoped | Full CRUD on menu, tables, staff, billing, settings |
-| Super Admin | PIN only | Platform-wide | Toggle restaurants, manage coupons |
+| Super Admin | PIN → `/api/admin/proxy` (secret kept server-side) | Platform-wide | Toggle restaurants, manage coupons |
 
 Role is stored in `users.role` (enum: `waiter`, `manager`, `kitchen`). Super admin is `users.is_super_admin = true`.
 
@@ -154,7 +154,9 @@ Step 3: Plan
 
 ```
 1. getRestaurant(restaurant_id)
-   └─ If null or is_active=false → 404 (not-found.tsx)
+   └─ If null → 404 (not-found.tsx)
+   └─ If is_active=false → friendly "Restaurant is currently closed" screen
+        (shows restaurant name, table number, and a message to check back later)
 2. getTable(restaurant_id, table_id)
    └─ If null → 404
 3. getMenuItems(restaurant_id) — only is_available=true items
@@ -181,6 +183,10 @@ useGeofence() calls browser navigator.geolocation.getCurrentPosition()
   └─ If 'outside' → cart "Add" buttons are disabled
   └─ If 'error' (permission denied) → cart is blocked with message
   └─ If geofencing_enabled=false → skipped entirely
+
+Options: { enableHighAccuracy: true, timeout: 10s, maximumAge: 10s }
+  └─ maximumAge: 10s — browser cached position older than 10 s triggers a fresh GPS fix
+     (previously 60 s; reduced to avoid stale location allowing entry from outside the fence)
 ```
 
 ### Menu Browsing
@@ -201,7 +207,9 @@ useGeofence() calls browser navigator.geolocation.getCurrentPosition()
 ```
 Tab: "Menu" (default) | "Orders"
 
-Cart state managed by useCart() — in-memory only (no persistence).
+Cart state managed by useCart(priceMultiplier) — in-memory only (no persistence).
+The `priceMultiplier` (floor's `price_multiplier`, default 1.0) is passed in so the cart's
+`totalPrice` matches the floor-adjusted prices shown on `MenuItemCard`.
 
 Add to cart → CartDrawer (bottom sheet, expandable)
 
@@ -243,7 +251,7 @@ Tab: "Orders"
 - **Multiple orders same session:** Customer can place additional orders. The billing safety check uses `customer_phone` to scope — same phone = same customer = allowed. Different phone = blocked.
 - **No phone number:** If customer skips phone, billing safety check uses `null` phone — any unpaid order at the table blocks them.
 - **Menu item deleted mid-session:** Real-time DELETE removes it from the displayed list. Items already in cart are NOT removed — they will fail at `order_items` INSERT if `menu_item_id` no longer exists (FK constraint).
-- **Floor pricing:** `calculate_item_prices_batch()` applies `floor.price_multiplier`. If the table has no `floor_id`, multiplier defaults to 1.0.
+- **Floor pricing:** `calculate_item_prices_batch()` applies `floor.price_multiplier`. If the table has no `floor_id`, multiplier defaults to 1.0. The same multiplier is passed to `useCart(priceMultiplier)` so the cart total shown to the customer is consistent with per-item prices before the order is submitted.
 
 ### Pitfalls
 
@@ -303,6 +311,7 @@ advanceStatus():
 - **Direct-to-kitchen mode:** Orders arrive as `pending` — kitchen sees them immediately.
 - **Waiter-first mode:** Orders arrive as `pending_waiter` — kitchen does NOT see them until waiter accepts. When the waiter accepts, the status transitions to `confirmed` and the UPDATE handler detects the order is not yet on the board, triggering a full re-fetch so the kitchen sees it with a 4s highlight.
 - **New order highlight:** New orders get a pulsing border for 4 seconds via `newOrderIds` set.
+- **Urgency coloring:** Active orders (not `ready`/`served`/`pending_waiter`) change border color based on age — amber border + tint at ≥12 minutes, red border + tint at ≥20 minutes. Cards re-render every 60 seconds to keep urgency state current. The urgency class takes precedence over the status-based border color.
 
 ### Pitfalls
 
@@ -389,7 +398,7 @@ markServed(orderId):
 
 **Protected by:** `ProtectedRoute` (role = `manager`)
 
-The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups.
+The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups. Nav groups are built dynamically via `buildNavGroups(pendingCount, onOrdersBadgeClick)` — the **Orders** item shows a live badge with the count of pending orders; the badge is hidden when there are none. When the badge is visible, clicking it invokes `onOrdersBadgeClick` (e.g. to jump directly to the Orders tab).
 
 **AppHeader** (`components/layout/AppHeader.tsx`) is shared across all role dashboards (manager, waiter, kitchen) and provides:
 
@@ -405,6 +414,12 @@ The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups.
 **Live Tables (`sessions` tab)**
 ```
 TableSessions component
+Props:
+  restaurantId          — required; scopes all data fetching and realtime subscriptions
+  billReadyFilter?      — optional boolean; when true, activates the "bill-ready only" filter on mount
+  onBillReadyFilterClear? — optional callback; called immediately after the filter is applied so the
+                            parent can reset its own state (prevents re-triggering on re-renders)
+
 - Shows all tables in grid or list view, filterable by floor
 - Grid view has configurable layout: Cols selector (2–6 columns) and Rows selector (1–5 rows per page)
   - Both selectors are shown only in grid view mode
@@ -433,7 +448,8 @@ TableSessions component
 **Order Log (`orderlog` tab)**
 ```
 OrderLog component
-- Fetches up to 300 most recent orders (created_at DESC) with full joins:
+- Fetches up to 500 most recent orders (created_at DESC) scoped to the active date range
+  (server-side `.gte`/`.lte` filter on `created_at`) with full joins:
   tables → floors, waiter (users), order_items → menu_items
 - Computes derived fields client-side:
     wait_to_confirm_s, prep_time_s, serve_time_s, turnaround_s
@@ -442,7 +458,7 @@ Order ID format: #ORD-XXXX (first 4 chars of UUID, uppercased)
 
 Stat cards (top of view):
   - Total Orders, Total Revenue, Avg. Order Value, Pending Orders
-  - Computed from rangeRows (the date-filtered subset, not the full fetched dataset)
+  - Computed directly from `rows` (server already scopes rows to the selected date range; no secondary client-side date filtering needed)
   - Sub-labels are dynamic:
       Total Orders  → shows the active date segment label (e.g. "Today", "Last 7 days",
                        or "MMM D – MMM D" for custom ranges)
@@ -460,13 +476,14 @@ Status tabs:
 Date filter toolbar:
   - Segments: Today | Yesterday | Last 7 days | Last 30 days | Custom
   - Custom range: two date inputs (from / to), applied on selection
-  - Filters are applied client-side against the fetched dataset
+  - Filters are applied server-side (`.gte`/`.lte` on `created_at`) — only orders within the selected range are fetched
+  - Additional client-side filtering (search, status tab) is applied against the fetched subset
   - Helper functions: startOfDay / endOfDay / getSegmentRange / fmtDate / toInputDate
     (defined in OrderLog.tsx)
 
 Search & sort toolbar:
   - Free-text search across: order ID, table number, floor name,
-    waiter name, customer name, customer phone
+    waiter name, customer name, customer phone, item names
   - Sortable columns: Table, Amount, Time (created_at)
   - Sort toggles asc/desc; defaults to created_at DESC
 
@@ -497,9 +514,9 @@ Order detail drawer:
       No advance action shown for served or cancelled orders
 ```
 
-Status badge colours:
-  pending        → amber
-  pending_waiter → purple
+Status badge colours (display label → colour):
+  pending        → amber  [label: "New Order"]
+  pending_waiter → purple [label: "Awaiting Waiter"]
   confirmed      → blue
   preparing      → orange
   ready          → green
@@ -558,6 +575,10 @@ FloorsManager component
 - Set price_multiplier per floor (e.g. 1.2 = 20% premium)
 - Assign tables to floors
 - Default "Main Floor" created at onboarding (multiplier=1.0)
+- Delete floor: prompts confirmation, then calls deleteFloor(floorId)
+  → If the delete fails (e.g. tables still assigned to the floor), shows an alert:
+    "Failed to delete floor. Make sure all tables are unassigned first."
+  → fetchFloors() is only called on success, so the list stays consistent on failure
 ```
 
 ### Team & Setup Group
@@ -565,12 +586,16 @@ FloorsManager component
 **Staff (`staff` tab)**
 ```
 StaffManager component
-- List all staff (waiters + kitchen)
+- List all staff (waiters + kitchen); each card shows name, role, active orders, and last-active time (derived from `last_action_at` — displayed as "just now / Xm ago / Xh ago / date")
 - Create staff: POST /api/staff/create
   → Creates Supabase Auth user with temp password
   → Creates users row (role, restaurant_id, auth_id)
+- Edit staff: PATCH /api/staff/update
+  → Updates name and/or email in the users table
+  → If email changes, also updates the Supabase Auth account via service role key (best-effort; profile update is not rolled back if auth update fails)
+  → Scoped to the restaurant via restaurantId + userId ownership check
 - Toggle is_active (soft disable)
-- Delete staff (removes users row + auth user)
+- Delete staff: `DELETE /api/staff/delete` — removes the `users` row then deletes the Supabase Auth account via the service role key; scoped to the restaurant to prevent cross-tenant deletes; manager accounts are blocked from deletion via this route
 ```
 
 **Table Setup (`tables` tab)**
@@ -581,6 +606,10 @@ TablesManager component
 - Assign floor
 - Generate QR code URL per table
 - QR URL format: /r/[restaurant_id]/t/[table_id]
+- Plan limit enforced via useSubscription(restaurantId):
+    atLimit = !isPro && tables.length >= limits.max_tables
+    → "Add Table" button disabled and UpgradeBanner shown when atLimit is true
+    → Free plan: max_tables=5; Pro/trialing: unlimited
 ```
 
 ### Restaurant Group
@@ -616,7 +645,8 @@ WebhooksManager component
 
 - Deleting a menu item that has existing `order_items` rows will fail silently (FK constraint `ON DELETE RESTRICT`). The UI should show an error but may not in all cases.
 - Analytics queries can be slow on large datasets — no pagination or query limits are enforced.
-- Staff deletion removes the `users` row but the Supabase Auth user may persist if the API call partially fails. This leaves an orphaned auth account that can still attempt login (will get "no profile" → redirect to onboarding).
+- Staff deletion goes through `DELETE /api/staff/delete` (service role key). The `users` row is deleted first; the Supabase Auth account is then deleted best-effort. If the auth deletion fails, a warning is logged server-side but the operation still returns success — the profile row is already gone so the orphaned auth account will land on `/onboarding` if it tries to log in.
+- Staff email edits go through `PATCH /api/staff/update` (service role key). The `users` table is updated first; the Supabase Auth email is then synced best-effort. If the auth update fails it is logged server-side but the API still returns success — the staff member's login email may temporarily differ from their profile email until manually corrected.
 - The QR code URL is stored as `qr_code_url` in the `tables` table but is just a plain URL string — there is no actual QR image generation in the DB. The frontend must generate the QR image from this URL.
 - Changing `order_routing_mode` takes effect immediately for new orders only. In-flight `pending_waiter` orders are not retroactively changed.
 
@@ -718,10 +748,10 @@ No automated payment processing — purely manual recording.
 Yearly billing saves ~20% vs monthly. Business and Enterprise plans require contacting sales. Downgrading from Pro to Starter is not self-serve — users must contact support.
 
 The `BillingPanel` component (`components/manager/BillingPanel.tsx`) renders the full billing page in the manager dashboard. Plan definitions (name, tagline, prices, features, CTA type) are fetched from the `plans` table via the `usePlans` hook (`/api/plans`) rather than being hardcoded in the component — icons are mapped client-side by plan `id` via `PLAN_ICONS`. It includes:
-- Plan selector cards with monthly/yearly toggle (switching cycle resets any applied coupon)
+- Plan selector cards with monthly/yearly toggle (switching cycle resets any applied coupon). The price label on each card reflects the selected cycle: yearly billing shows "/mo (billed yearly)" while monthly billing shows "/month".
 - Coupon input on the Pro card (for non-paid users — free, trialing, or expired); discount preview only shown when coupon actually reduces the price. Active paid Pro subscribers do not see the coupon input.
 - Billing history table (from `payment_transactions`) — loads up to 50 rows, shows 4 by default with a "View All / Show Less" toggle
-- Invoice download generates a plain-text `.txt` receipt client-side (no server round-trip)
+- Invoice download generates a formatted HTML `.html` receipt client-side (no server round-trip); includes plan, amount, status, and transaction ID in a styled monospace layout
 - Right sidebar: current plan summary, payment method, editable billing address, support link
 
 **Plan availability & CTA behaviour:**
@@ -735,7 +765,7 @@ The `BillingPanel` component (`components/manager/BillingPanel.tsx`) renders the
 
 The billing cycle (`monthly` / `yearly`) is passed to `startUpgrade()` so the correct PhonePe plan key (`pro_monthly` / `pro_yearly`) is used. An optional `planOverride` parameter can be passed to bypass the billing-cycle logic and use a specific plan key directly (e.g. for custom or legacy plans).
 
-**Billing address:** Editable inline via a text input in the sidebar. The value is local state only (not persisted to the DB yet).
+**Billing address:** Editable inline via a text input in the sidebar. On save, the value is persisted to `localStorage` under the key `billing_address_{restaurantId}` — it is not stored in the database.
 
 **Payment method button:**
 - Non-Pro users: clicking "Add Payment Method" triggers the Pro upgrade flow directly.
@@ -820,9 +850,13 @@ POST /api/phonepe/checkout:
        billing='monthly'  → PHONEPE_PLANS.pro_monthly (₹999/month)
        billing='yearly'   → PHONEPE_PLANS.pro_yearly  (₹799/month × 12)
   5. Call PhonePe SDK: standardCheckout.initiatePayment(request)
-  6. Upsert subscriptions row:
-     - plan='pro', status='pending'
-     - phonepe_transaction_id = merchantOrderId
+  6. Store pending transaction on subscriptions row (conditional):
+     - If existing subscription status is NOT 'trialing':
+         upsert subscriptions (plan='free', status='incomplete', phonepe_transaction_id, pending_coupon_id)
+     - If existing subscription status IS 'trialing' (user upgrading mid-trial):
+         update only phonepe_transaction_id and pending_coupon_id — preserves the trialing status so the
+         user's active trial is not clobbered before payment completes. The webhook/verify step will
+         upgrade the row to status='active' once payment succeeds.
   7. Insert payment_transactions row:
      - status='pending', amount_paise, coupon_code
      - coupon_duration_days (if coupon has a duration override — used by /verify and webhook to extend current_period_end)
@@ -861,7 +895,13 @@ PhonePe Webhook → POST /api/phonepe/webhook:
 
 ```
 useSubscription(restaurantId):
-  └─ Fetches subscriptions row
+  └─ Fetches subscriptions row on mount
+  └─ Subscribes to a Supabase Realtime channel — listens for UPDATE events on `subscriptions`
+     where `restaurant_id=eq.{restaurantId}`. The channel name is unique per mount:
+     `subscription:{restaurantId}:{timestamp}` (timestamp added to avoid "cannot add callbacks
+     after subscribe()" errors when the hook remounts with the same restaurantId).
+     When a webhook (Stripe/PhonePe) updates the row, the hook updates state immediately
+     without a page reload. Channel is removed on unmount.
   └─ get_plan_limits() RPC returns: { max_tables, max_menu_items }
   └─ Free: max_tables=5, max_menu_items=20
   └─ Pro: max_tables=null (unlimited), max_menu_items=null
@@ -877,6 +917,11 @@ Manager UI checks limits before allowing:
   - Adding a new menu item
   → Shows UpgradeBanner if at limit
 
+UpgradeBanner fetches the Pro plan price dynamically from `/api/plans` on mount
+(looks for the plan with `id === 'pro'` and reads `monthly_paise`). Falls back to
+₹999/month (99900 paise) if the fetch fails. This means the displayed price always
+reflects the current value in the `plans` table — no hardcoded price in the component.
+
 Manager dashboard header displays a plan label and renewal info derived from useSubscription:
   - isTrial=true     → label: "Free Trial",     renewal: "Trial ends <date>" (from trialEndsAt)
   - isPro=true       → label: "Pro Plan",        renewal: formatted current_period_end
@@ -891,6 +936,7 @@ Manager dashboard header displays a plan label and renewal info derived from use
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
 - Trial period means the subscription status is `trialing`, not `active`. `useSubscription` correctly treats `trialing` as Pro (`isPro = plan === 'pro' && (isActive || isTrial)`). Code that checks `status === 'active'` directly (bypassing the hook) will still incorrectly block trialing users.
 - `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
+- `useSubscription` opens a Realtime channel (name: `subscription:{restaurantId}:{timestamp}`) to reflect webhook-driven plan changes instantly. The timestamp suffix ensures a fresh channel name on every mount, avoiding Supabase's "cannot add callbacks after subscribe()" error when the component remounts. If Supabase Realtime is disabled or the `subscriptions` table is not in the publication, the UI will only update on the next full page load.
 - PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`. Credentials are read inside the function (not at module load time) so they are always fresh — do not hoist them to module scope.
 - `getPhonePeClient()` resets `StandardCheckoutClient._client = undefined` before calling `getInstance()` to force the SDK to reinitialise with the current env credentials on every call. The SDK's singleton check uses `=== undefined` (not `=== null`), so setting it to `null` would not trigger reinitialisation.
 - Set `PHONEPE_ENV=production` to switch PhonePe from the sandbox to the live API. Omitting the variable defaults to sandbox.
@@ -946,7 +992,7 @@ PATCH /api/admin/coupons/[id] → update coupon
 DELETE /api/admin/coupons/[id] → delete coupon
 ```
 
-All admin coupon routes require `SUPABASE_SERVICE_ROLE_KEY` (bypass RLS).
+All admin coupon routes require a valid `Authorization: Bearer <ADMIN_SECRET>` header server-side (validated via `lib/admin-auth.ts`). The browser never sends the secret directly — `CouponManager` calls `POST /api/admin/proxy` with the admin PIN, and the proxy attaches the secret before forwarding to the actual endpoint. Requests without a matching secret receive `401 Unauthorized`. The service role client is used internally to bypass RLS.
 
 #### Plans API (`/api/admin/plans`)
 
@@ -963,7 +1009,7 @@ All routes use the service role key (bypass RLS). The `GET` response includes al
 
 The **Plans** tab in the admin panel renders `PlanManager`, a lazy-loaded CRUD interface for the `plans` table.
 
-**Loading:** Plans are not fetched on mount — the admin must click **"Load Plans"** to trigger the initial `GET /api/admin/plans` fetch. This avoids unnecessary DB calls when the admin is on a different tab.
+**Loading:** Plans are not fetched on mount — the admin must click **"Load Plans"** to trigger the initial `GET /api/admin/plans` fetch. This avoids unnecessary DB calls when the admin is on a different tab. The request is routed through `POST /api/admin/proxy` with the admin PIN (consistent with all other admin API calls).
 
 **Plan table columns:** Sort handle (decorative), Plan name + ID slug + tagline, Monthly price, Yearly price, CTA type badge, Highlighted star, Active toggle, Edit/Delete actions.
 
@@ -1071,7 +1117,7 @@ POST /api/webhooks/[id]/retry:
 ### Pitfalls
 
 - Webhook secret is only shown once at creation. If lost, the only option is to rotate it.
-- SSRF protection blocks private IPs and localhost. Webhooks cannot be tested against local servers without a tunnel (ngrok, etc.).
+- SSRF protection is enforced at two layers: the URL input field rejects private/loopback addresses (`localhost`, `127.x`, `10.x`, `192.168.x`, `172.16–31.x`, `0.0.0.0`) and non-public hostnames client-side before submission; the server also blocks these at dispatch time. Webhooks cannot be tested against local servers without a tunnel (ngrok, etc.).
 - Payload size is capped at 64 KB. Large order payloads (many items) could be truncated.
 - The retry scheduler is not a background job — retries only happen when `/api/webhooks/[id]/retry` is called manually or by an external cron. There is no automatic retry execution built in.
 - `fireEvent()` is called from API routes synchronously. If webhook dispatch is slow (up to 8s timeout × 10 endpoints), it can delay the API response.
@@ -1095,6 +1141,7 @@ POST /api/webhooks/[id]/retry:
 | `geo_latitude` | numeric (nullable) | |
 | `geo_longitude` | numeric (nullable) | |
 | `geo_radius_meters` | int | Default 100 |
+| `auto_confirm_minutes` | int (nullable) | If set, orders are automatically confirmed after this many minutes. `null` disables auto-confirm. |
 | `owner_id` | uuid (nullable) → auth.users | |
 | `created_at` | timestamptz | |
 

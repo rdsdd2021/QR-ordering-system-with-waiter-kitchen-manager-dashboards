@@ -14,6 +14,7 @@ export type Restaurant = {
   geo_longitude?: number | null;
   geo_radius_meters?: number;
   logo_url?: string | null;
+  auto_confirm_minutes?: number | null;
 };
 
 export type Floor = {
@@ -372,3 +373,20 @@ export type Database = {
     Enums: Record<string, never>;
   };
 };
+
+// ── Bulk Menu Upload ──────────────────────────────────────────────────────────
+
+/** A draft row in the bulk menu upload table (CSV or inline grid) */
+export interface DraftRow {
+  name: string;
+  price: string;           // string for input binding; parsed to number on save
+  description: string;
+  imageUrl: string;        // optional image URL
+  categoryNames: string[]; // display names, resolved to IDs on save
+  tagNames: string[];      // display names, resolved to IDs on save
+  is_available: boolean;
+  // UI state
+  _id: string;             // client-side key
+  _errors: Record<string, string>;
+  _status: "idle" | "saving" | "saved" | "error";
+}

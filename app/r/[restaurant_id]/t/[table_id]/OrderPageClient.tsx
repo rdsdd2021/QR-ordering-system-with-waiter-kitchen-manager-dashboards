@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock } from "lucide-react";
+import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell } from "lucide-react";
 import { useCart } from "@/hooks/useCart";
 import { useRealtimeMenu } from "@/hooks/useRealtimeMenu";
 import { useGeofence } from "@/hooks/useGeofence";
@@ -9,6 +9,7 @@ import { useCustomerSession } from "@/hooks/useCustomerSession";
 import MenuItemCard from "@/components/MenuItemCard";
 import CartDrawer from "@/components/CartDrawer";
 import OrderStatusTracker from "@/components/OrderStatusTracker";
+import { getSupabaseClient } from "@/lib/supabase";
 import { checkTableHasUnpaidOrders } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { MenuItem, Restaurant, RestaurantTable, Floor } from "@/types/database";
@@ -31,7 +32,9 @@ export default function OrderPageClient({
   const [activeTab, setActiveTab] = useState<Tab>("menu");
   const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems);
 
-  const { cartItems, addToCart, updateQuantity, clearCart, totalPrice, totalItems } = useCart();
+  const { cartItems, addToCart, updateQuantity, clearCart, totalPrice, totalItems } = useCart(
+    floorInfo?.price_multiplier ?? 1.0
+  );
 
   const { customerInfo, saveCustomerInfo, activeOrders } = useCustomerSession(
     restaurant.id,
@@ -42,22 +45,30 @@ export default function OrderPageClient({
   // If this browser has no active session for this table but the table has
   // unpaid orders, it means another customer is still being served.
   const [tableOccupied, setTableOccupied] = useState<boolean | null>(null); // null = checking
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+
+  // Wait for customerInfo to be loaded from sessionStorage
+  useEffect(() => {
+    // Give useCustomerSession a moment to initialize
+    const timer = setTimeout(() => setSessionLoaded(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
-    // Give useCustomerSession a moment to load from sessionStorage first
-    const timer = setTimeout(async () => {
+    if (!sessionLoaded) return;
+
+    async function checkOccupancy() {
       const hasUnpaid = await checkTableHasUnpaidOrders(table.id);
       if (hasUnpaid) {
         // Check if this browser owns the session (customerInfo will be set if so)
-        const sessionKey = `customer_session_${table.id}`;
-        const ownSession = sessionStorage.getItem(sessionKey);
-        setTableOccupied(!ownSession);
+        setTableOccupied(!customerInfo);
       } else {
         setTableOccupied(false);
       }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [table.id]);
+    }
+
+    checkOccupancy();
+  }, [table.id, sessionLoaded, customerInfo]);
 
   const { status: geoStatus, message: geoMessage } = useGeofence({
     enabled: restaurant.geofencing_enabled ?? false,
@@ -119,6 +130,35 @@ export default function OrderPageClient({
   const inProgressCount = activeOrders.filter(
     (o) => !["served"].includes(o.status)
   ).length;
+
+  // ── Call Waiter ──────────────────────────────────────────────────────
+  const [waiterCalled, setWaiterCalled] = useState(false);
+  const [callingWaiter, setCallingWaiter] = useState(false);
+
+  async function handleCallWaiter() {
+    if (waiterCalled || callingWaiter) return;
+    setCallingWaiter(true);
+    try {
+      const client = getSupabaseClient();
+      await client.channel(`restaurant:${restaurant.id}`).send({
+        type: "broadcast",
+        event: "call_waiter",
+        payload: {
+          table_id: table.id,
+          table_number: table.table_number,
+          customer_name: customerInfo?.name ?? null,
+          sent_at: new Date().toISOString(),
+        },
+      });
+      setWaiterCalled(true);
+      // Reset after 60s so they can call again
+      setTimeout(() => setWaiterCalled(false), 60_000);
+    } catch {
+      // Non-critical
+    } finally {
+      setCallingWaiter(false);
+    }
+  }
 
   // ── Table occupied screen ────────────────────────────────────────────
   if (tableOccupied === null) {
@@ -302,6 +342,23 @@ export default function OrderPageClient({
                 )}
               </span>
               My Orders
+            </button>
+
+            <button
+              onClick={handleCallWaiter}
+              disabled={callingWaiter || waiterCalled}
+              className={cn(
+                "flex flex-1 flex-col items-center gap-1 py-3 text-xs font-medium transition-colors",
+                waiterCalled
+                  ? "text-green-600"
+                  : "text-muted-foreground hover:text-foreground disabled:opacity-50"
+              )}
+            >
+              {callingWaiter
+                ? <Loader2 className="h-5 w-5 animate-spin" />
+                : <Bell className={cn("h-5 w-5", waiterCalled && "animate-pulse")} />
+              }
+              {waiterCalled ? "Called!" : "Call Waiter"}
             </button>
           </div>
         </nav>

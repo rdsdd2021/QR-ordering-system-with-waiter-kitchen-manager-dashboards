@@ -63,7 +63,7 @@ function OnboardingForm() {
       body: JSON.stringify({
         restaurantId: newRestaurantId,
         returnUrl: `${window.location.origin}/manager/${newRestaurantId}`,
-        plan: "pro",
+        plan: "pro_monthly",
         couponCode: coupon?.code,
       }),
     });
@@ -347,7 +347,7 @@ function OnboardingForm() {
                 onClick={skipToFree}
                 className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 underline-offset-2 hover:underline"
               >
-                Skip for now, start free trial →
+                Skip for now, continue with free plan →
               </button>
             </div>
           )}

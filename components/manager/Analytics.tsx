@@ -396,7 +396,7 @@ export default function Analytics({ restaurantId }: Props) {
         // 3. Top items (all, filtered in JS by rangedIdSet)
         supabase.from("order_items")
           .select("quantity, price, order_id, menu_item:menu_items(id, name, image_url, restaurant_id)")
-          .limit(500),
+          .limit(2000),
         // 4. Daily breakdown
         supabase.from("orders")
           .select("created_at, total_amount, billed_at")
@@ -512,7 +512,7 @@ export default function Analytics({ restaurantId }: Props) {
       const hourlyData: HourlyBucket[] = Array.from({ length: 24 }, (_, hour) => ({
         hour,
         orders: hMap.get(hour) ?? 0,
-        revenue: (hMap.get(hour) ?? 0) * 185,
+        revenue: 0, // revenue not tracked at hourly granularity
       }));
       setHourly(hourlyData);
 
@@ -551,7 +551,7 @@ export default function Analytics({ restaurantId }: Props) {
     preparing: "#f97316", ready: "#22c55e", served: "#94a3b8",
   };
   const statusLabels: Record<string, string> = {
-    pending: "Pending", pending_waiter: "Awaiting Waiter",
+    pending: "New Order", pending_waiter: "Awaiting Waiter",
     confirmed: "Confirmed", preparing: "Preparing",
     ready: "Ready", served: "Served",
   };
@@ -600,8 +600,8 @@ export default function Analytics({ restaurantId }: Props) {
           sub="Per billed order" icon={Receipt}
           iconBg="bg-amber-100 text-amber-600" delta={aovDelta} />
         <KpiCard label="Avg. Turnaround"
-          value={fmtSecs(metrics?.avgTurnaroundSeconds ?? null) === "—" ? "22m 10s" : fmtSecs(metrics?.avgTurnaroundSeconds ?? null)}
-          sub={metrics?.orderCount ? `${metrics.orderCount} orders tracked` : "Estimated"}
+          value={fmtSecs(metrics?.avgTurnaroundSeconds ?? null)}
+          sub={metrics?.orderCount ? `${metrics.orderCount} orders tracked` : "No data yet"}
           icon={Clock} iconBg="bg-purple-100 text-purple-600" />
       </div>
 
@@ -768,28 +768,21 @@ export default function Analytics({ restaurantId }: Props) {
         <div className="rounded-lg border bg-card p-5 space-y-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Avg. Timing</p>
           {[
-            { label: "Kitchen Prep", value: fmtSecs(metrics?.avgPrepSeconds ?? null), fallback: "8m 30s", sub: "Confirmed → Ready", icon: ChefHat, color: "bg-orange-100 text-orange-600" },
-            { label: "Serve Time",   value: fmtSecs(metrics?.avgServeSeconds ?? null), fallback: "3m 15s", sub: "Ready → Served",    icon: Zap,    color: "bg-green-100 text-green-600" },
-            { label: "Turnaround",   value: fmtSecs(metrics?.avgTurnaroundSeconds ?? null), fallback: "22m 10s", sub: "Order → Served", icon: Clock, color: "bg-purple-100 text-purple-600" },
-          ].map(({ label, value, fallback, sub, icon: Icon, color }) => {
-            const display = value === "—" ? fallback : value;
-            const isEst = value === "—";
-            return (
-              <div key={label} className="flex items-center gap-3">
-                <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0", color)}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[11px] text-muted-foreground">{label}</p>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-sm font-bold">{display}</p>
-                    {isEst && <span className="text-[9px] text-muted-foreground bg-muted rounded px-1 py-0.5">est.</span>}
-                  </div>
-                </div>
-                <p className="text-[10px] text-muted-foreground text-right leading-tight">{sub}</p>
+            { label: "Kitchen Prep", value: fmtSecs(metrics?.avgPrepSeconds ?? null), sub: "Confirmed → Ready", icon: ChefHat, color: "bg-orange-100 text-orange-600" },
+            { label: "Serve Time",   value: fmtSecs(metrics?.avgServeSeconds ?? null), sub: "Ready → Served",    icon: Zap,    color: "bg-green-100 text-green-600" },
+            { label: "Turnaround",   value: fmtSecs(metrics?.avgTurnaroundSeconds ?? null), sub: "Order → Served", icon: Clock, color: "bg-purple-100 text-purple-600" },
+          ].map(({ label, value, sub, icon: Icon, color }) => (
+            <div key={label} className="flex items-center gap-3">
+              <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0", color)}>
+                <Icon className="h-4 w-4" />
               </div>
-            );
-          })}
+              <div className="flex-1">
+                <p className="text-[11px] text-muted-foreground">{label}</p>
+                <p className="text-sm font-bold">{value}</p>
+              </div>
+              <p className="text-[10px] text-muted-foreground text-right leading-tight">{sub}</p>
+            </div>
+          ))}
           <div className="pt-2 border-t border-border">
             <p className="text-[11px] text-muted-foreground text-center">
               {(metrics?.orderCount ?? 0) > 0
