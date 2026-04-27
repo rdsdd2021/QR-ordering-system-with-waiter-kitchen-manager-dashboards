@@ -10,6 +10,7 @@ export type Subscription = {
   status: string;
   current_period_end: string | null;
   phonepe_transaction_id: string | null;
+  trial_used: boolean;
 };
 
 export type PlanLimits = {
@@ -43,11 +44,14 @@ export function useSubscription(restaurantId: string | null) {
     async function load() {
       const { data } = await supabase
         .from("subscriptions")
-        .select("plan, status, current_period_end, phonepe_transaction_id")
+        .select("plan, status, current_period_end, phonepe_transaction_id, trial_used")
         .eq("restaurant_id", restaurantId)
         .maybeSingle();
 
-      setSubscription(data as Subscription ?? { plan: "free", status: "active", current_period_end: null, phonepe_transaction_id: null });
+      setSubscription(data as Subscription ?? {
+        plan: "free", status: "active", current_period_end: null,
+        phonepe_transaction_id: null, trial_used: false,
+      });
       setLoading(false);
     }
 
@@ -55,12 +59,16 @@ export function useSubscription(restaurantId: string | null) {
   }, [restaurantId]);
 
   const plan: Plan = subscription?.plan ?? "free";
-  const isActive = subscription?.status === "active" || subscription?.status === "trialing";
-  const isPro = plan === "pro" && isActive;
+  const isActive = subscription?.status === "active";
+  const isTrial  = subscription?.status === "trialing";
+  const isExpired = subscription?.status === "expired";
+  const isPro = (plan === "pro") && (isActive || isTrial);
+  const trialEndsAt = isTrial ? subscription?.current_period_end ?? null : null;
   const limits: PlanLimits = isPro ? PRO_LIMITS : FREE_LIMITS;
 
   async function startUpgrade(returnUrl: string, couponCode?: string, billingCycle: "monthly" | "yearly" = "monthly", planOverride?: string) {
     if (!restaurantId) return;
+    // planOverride can be a full key like "pro_monthly", "pro_yearly", or "pro_monthly" derived from billingCycle
     const planKey = planOverride ?? (billingCycle === "yearly" ? "pro_yearly" : "pro_monthly");
 
     const callbackUrl = `${window.location.origin}/api/phonepe/popup-callback`;
@@ -111,7 +119,7 @@ export function useSubscription(restaurantId: string | null) {
       // Re-fetch subscription — webhook may have fired
       const { data } = await supabase
         .from("subscriptions")
-        .select("plan, status, current_period_end, phonepe_transaction_id")
+        .select("plan, status, current_period_end, phonepe_transaction_id, trial_used")
         .eq("restaurant_id", restaurantId)
         .maybeSingle();
       if (data) setSubscription(data as Subscription);
@@ -129,7 +137,7 @@ export function useSubscription(restaurantId: string | null) {
           // Fetch fresh subscription state
           const { data } = await supabase
             .from("subscriptions")
-            .select("plan, status, current_period_end, phonepe_transaction_id")
+            .select("plan, status, current_period_end, phonepe_transaction_id, trial_used")
             .eq("restaurant_id", restaurantId)
             .maybeSingle();
           if (data) setSubscription(data as Subscription);
@@ -140,5 +148,5 @@ export function useSubscription(restaurantId: string | null) {
     }
   }
 
-  return { subscription, loading, plan, isPro, limits, startUpgrade };
+  return { subscription, loading, plan, isPro, isTrial, isExpired, trialEndsAt, limits, startUpgrade };
 }

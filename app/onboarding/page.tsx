@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Store, User, Mail, Lock, ArrowRight, CheckCircle2, QrCode, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import AuthRedirect from "@/components/AuthRedirect";
 
 type Step = "account" | "restaurant" | "plan" | "loading" | "done";
 
-const FREE_FEATURES = ["5 tables", "20 menu items", "QR ordering", "Kitchen & waiter dashboards", "Real-time updates"];
 const PRO_FEATURES  = ["Unlimited tables & menu items", "Advanced analytics", "Floor-based pricing", "Priority support", "Geo-fencing"];
 
 export default function OnboardingPage() {
@@ -38,13 +37,21 @@ function OnboardingForm() {
   const [newRestaurantId, setNewRestaurantId] = useState<string | null>(null);
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
   const [upgrading, setUpgrading] = useState(false);
+  const [proPricePaise, setProPricePaise] = useState(99900);
 
-  const PRO_PRICE_PAISE = 79900;
+  // Fetch pro plan price from DB on mount
+  useEffect(() => {
+    fetch("/api/plans").then(r => r.json()).then((plans: Array<{id: string; monthly_paise: number}>) => {
+      const pro = plans.find(p => p.id === "pro");
+      if (pro) setProPricePaise(pro.monthly_paise);
+    }).catch(() => {});
+  }, []);
+
   const discountedPaise = coupon
     ? coupon.type === "percentage"
-      ? PRO_PRICE_PAISE - Math.round((PRO_PRICE_PAISE * coupon.value) / 100)
-      : Math.max(0, PRO_PRICE_PAISE - Math.round(coupon.value * 100))
-    : PRO_PRICE_PAISE;
+      ? proPricePaise - Math.round((proPricePaise * coupon.value) / 100)
+      : Math.max(0, proPricePaise - Math.round(coupon.value * 100))
+    : proPricePaise;
   const finalPrice = `₹${(discountedPaise / 100).toFixed(0)}`;
 
   async function handleUpgrade() {
@@ -175,8 +182,8 @@ function OnboardingForm() {
             </p>
           </div>
           <div className="space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Starter plan includes</p>
-            {FREE_FEATURES.map(f => (
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Free trial includes</p>
+            {PRO_FEATURES.map(f => (
               <div key={f} className="flex items-center gap-2.5 text-sm">
                 <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
                 {f}
@@ -295,8 +302,8 @@ function OnboardingForm() {
           {step === "plan" && (
             <div className="space-y-6">
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">Choose your plan</h1>
-                <p className="mt-1 text-sm text-muted-foreground">You can always upgrade later from your dashboard</p>
+                <h1 className="text-2xl font-bold tracking-tight">Activate your free trial</h1>
+                <p className="mt-1 text-sm text-muted-foreground">7 days free, then ₹{(proPricePaise / 100).toFixed(0)}/month. Cancel anytime.</p>
               </div>
 
               {/* Pro card */}
@@ -308,8 +315,8 @@ function OnboardingForm() {
                     </p>
                     <div className="flex items-baseline gap-2 mt-0.5">
                       <span className="text-xl font-bold">{finalPrice}</span>
-                      {coupon && discountedPaise < PRO_PRICE_PAISE && (
-                        <span className="text-sm text-muted-foreground line-through">₹{(PRO_PRICE_PAISE / 100).toFixed(0)}</span>
+                      {coupon && discountedPaise < proPricePaise && (
+                        <span className="text-sm text-muted-foreground line-through">₹{(proPricePaise / 100).toFixed(0)}</span>
                       )}
                       <span className="text-sm text-muted-foreground">/month</span>
                     </div>
@@ -326,7 +333,7 @@ function OnboardingForm() {
                 <CouponInput
                   plan="pro"
                   restaurantId={newRestaurantId!}
-                  planPricePaise={PRO_PRICE_PAISE}
+                  planPricePaise={proPricePaise}
                   onApply={setCoupon}
                 />
                 <Button className="w-full" onClick={handleUpgrade} disabled={upgrading}>
@@ -335,12 +342,12 @@ function OnboardingForm() {
                 </Button>
               </div>
 
-              {/* Starter option */}
+              {/* Skip option */}
               <button
                 onClick={skipToFree}
                 className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 underline-offset-2 hover:underline"
               >
-                Skip and start with Starter →
+                Skip for now, start free trial →
               </button>
             </div>
           )}

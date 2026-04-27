@@ -28,7 +28,7 @@ const STATUS_MAP: Record<string, { cls: string; label: string }> = {
   "low-stock":   { cls: "status-low-stock",    label: "Low Stock"     },
   "out-of-stock":{ cls: "status-out-of-stock", label: "Out of Stock"  },
   pro:           { cls: "plan-badge-pro",      label: "Pro Plan"      },
-  free:          { cls: "plan-badge-free",     label: "Free Plan"     },
+  free:          { cls: "plan-badge-free",     label: "Expired"       },
   trialing:      { cls: "plan-badge-pro",      label: "Trial"         },
 };
 

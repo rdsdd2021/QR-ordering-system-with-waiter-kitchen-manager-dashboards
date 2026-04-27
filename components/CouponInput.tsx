@@ -10,6 +10,7 @@ export type CouponResult = {
   coupon_id: string;
   type: "percentage" | "flat";
   value: number;
+  duration_days: number | null;
   code: string;
 };
 
@@ -54,21 +55,25 @@ export default function CouponInput({ plan, restaurantId, planPricePaise, onAppl
       coupon_id: data.coupon_id,
       type: data.type,
       value: Number(data.value),
+      duration_days: data.duration_days ? Number(data.duration_days) : null,
       code: trimmed,
     };
 
     setApplied(result);
     setStatus("success");
 
-    // flat value is in rupees; planPricePaise is in paise
     const flatRupees = Number(data.value);
     const planRupees = planPricePaise / 100;
-    const discountLabel =
-      data.type === "percentage"
-        ? `${data.value}% off`
-        : `₹${Math.min(flatRupees, planRupees).toFixed(0)} off`;
-
-    setMessage(`${discountLabel} applied 🎉`);
+    const parts: string[] = [];
+    if (data.type === "percentage") {
+      parts.push(`${data.value}% off`);
+    } else {
+      parts.push(`₹${Math.min(flatRupees, planRupees).toFixed(0)} off`);
+    }
+    if (data.duration_days) {
+      parts.push(`+${data.duration_days} bonus days`);
+    }
+    setMessage(`${parts.join(" · ")} applied 🎉`);
     onApply(result);
   }
 

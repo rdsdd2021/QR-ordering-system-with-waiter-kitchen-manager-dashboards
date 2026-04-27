@@ -122,13 +122,15 @@ type Props = { restaurant: Restaurant };
 function ManagerClientContent({ restaurant }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("sessions");
   const { signOut, profile } = useAuth();
-  const { isPro, subscription } = useSubscription(restaurant.id);
+  const { isPro, isTrial, isExpired, trialEndsAt, subscription } = useSubscription(restaurant.id);
   const meta = PAGE_META[activeTab];
 
-  const planLabel = isPro ? "Pro Plan" : "Free Plan";
-  const planRenewal = subscription?.current_period_end
-    ? new Date(subscription.current_period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
-    : undefined;
+  const planLabel = isTrial ? "Free Trial" : isPro ? "Pro Plan" : isExpired ? "Trial Expired" : "Upgrade Required";
+  const planRenewal = isTrial && trialEndsAt
+    ? `Trial ends ${new Date(trialEndsAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+    : subscription?.current_period_end
+      ? new Date(subscription.current_period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      : undefined;
 
   async function handleLogoUpload(file: File) {
     const supabase = getSupabaseClient();

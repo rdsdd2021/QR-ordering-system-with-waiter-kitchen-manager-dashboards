@@ -53,14 +53,15 @@ export async function POST(req: NextRequest) {
 
   const restaurantId = sub.restaurant_id as string;
 
-  // Look up the transaction to determine billing cycle
+  // Look up the transaction to determine billing cycle and coupon duration
   const { data: txRow } = await supabase
     .from("payment_transactions")
-    .select("plan")
+    .select("plan, coupon_duration_days")
     .eq("merchant_order_id", merchantOrderId)
     .maybeSingle();
 
   const isYearly = (txRow?.plan as string | null)?.includes("yearly");
+  const couponDurationDays = (txRow?.coupon_duration_days as number | null) ?? 0;
 
   try {
     if (type === "CHECKOUT_ORDER_COMPLETED" || payload.state === "COMPLETED") {
@@ -69,6 +70,10 @@ export async function POST(req: NextRequest) {
         periodEnd.setFullYear(periodEnd.getFullYear() + 1);
       } else {
         periodEnd.setMonth(periodEnd.getMonth() + 1);
+      }
+      // Add any bonus days from coupon
+      if (couponDurationDays > 0) {
+        periodEnd.setDate(periodEnd.getDate() + couponDurationDays);
       }
 
       await supabase.from("subscriptions").upsert({
@@ -80,7 +85,6 @@ export async function POST(req: NextRequest) {
         pending_coupon_id:      null,
         updated_at:             new Date().toISOString(),
       }, { onConflict: "restaurant_id" });
-
       await supabase.from("payment_transactions")
         .update({ status: "completed", completed_at: new Date().toISOString() })
         .eq("merchant_order_id", merchantOrderId);

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import CouponManager from "@/components/admin/CouponManager";
+import PlanManager from "@/components/admin/PlanManager";
 
 type Restaurant = {
   id: string;
@@ -32,6 +33,7 @@ type Subscription = {
   plan: string;
   status: string;
   current_period_end: string | null;
+  trial_used: boolean;
   updated_at: string;
 };
 
@@ -51,7 +53,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   const [search, setSearch]     = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
-  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons">("restaurants");
+  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans">("restaurants");
   const [confirmTarget, setConfirmTarget] = useState<Restaurant | null>(null);
 
   const subMap = Object.fromEntries(subscriptions.map((s) => [s.restaurant_id, s]));
@@ -95,7 +97,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
   // ── Stats ─────────────────────────────────────────────────────────────
   const totalOrders = Object.values(orderCounts).reduce((a, b) => a + b, 0);
-  const proCount    = subscriptions.filter((s) => s.plan === "pro" && s.status === "active").length;
+  const proCount    = subscriptions.filter((s) => s.plan === "pro" && (s.status === "active" || s.status === "trialing")).length;
   const activeCount = localRestaurants.filter((r) => r.is_active).length;
 
   // ── Toggle restaurant active state ────────────────────────────────────
@@ -190,7 +192,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
         {/* Tabs */}
         <div className="flex gap-1 border-b">
-          {(["restaurants", "coupons"] as const).map((tab) => (
+          {(["restaurants", "coupons", "plans"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -243,20 +245,33 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
                       <td className="px-4 py-3">
                         <Badge className={cn(
                           "text-xs",
-                          sub?.plan === "pro" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                          sub?.plan === "pro" && sub?.status === "active"    ? "bg-primary text-primary-foreground" :
+                          sub?.plan === "pro" && sub?.status === "trialing"  ? "bg-blue-500 text-white" :
+                          sub?.status === "expired"                          ? "bg-orange-100 text-orange-700" :
+                          "bg-muted text-muted-foreground"
                         )}>
-                          {sub?.plan ?? "free"}
+                          {sub?.status === "trialing" ? "Trial" : sub?.status === "expired" ? "Expired" : (sub?.plan ?? "free")}
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={cn(
-                          "text-xs font-medium",
-                          sub?.status === "active"   ? "text-green-600" :
-                          sub?.status === "past_due" ? "text-red-600"   :
-                          "text-muted-foreground"
-                        )}>
-                          {sub?.status ?? "—"}
-                        </span>
+                        <div>
+                          <span className={cn(
+                            "text-xs font-medium",
+                            sub?.status === "active"    ? "text-green-600" :
+                            sub?.status === "trialing"  ? "text-blue-600"  :
+                            sub?.status === "expired"   ? "text-orange-500":
+                            sub?.status === "past_due"  ? "text-red-600"   :
+                            sub?.status === "incomplete"? "text-amber-600" :
+                            "text-muted-foreground"
+                          )}>
+                            {sub?.status ?? "—"}
+                          </span>
+                          {sub?.current_period_end && (
+                            <p className="text-[10px] text-muted-foreground">
+                              until {new Date(sub.current_period_end).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {orderCounts[r.id] ?? 0}
@@ -297,6 +312,10 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
         {activeTab === "coupons" && (
           <CouponManager />
+        )}
+
+        {activeTab === "plans" && (
+          <PlanManager />
         )}
 
       </main>

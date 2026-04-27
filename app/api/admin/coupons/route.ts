@@ -26,7 +26,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { code, type, value, max_uses, expires_at, applicable_plans, is_active } = body;
+    const { code, type, value, duration_days, max_uses, expires_at, applicable_plans, is_active } = body;
 
     if (!code || !type || value == null) {
       return NextResponse.json({ error: "code, type, value are required" }, { status: 400 });
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
         code: code.toUpperCase().trim(),
         type,
         value: Number(value),
+        duration_days: duration_days ? Number(duration_days) : null,
         max_uses: max_uses ? Number(max_uses) : null,
         expires_at: expires_at || null,
         applicable_plans: applicable_plans ?? ["pro"],

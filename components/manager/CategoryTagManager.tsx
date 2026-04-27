@@ -17,6 +17,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { ImageUpload } from "@/components/ui/ImageUpload";
 import {
   getFoodCategories, createFoodCategory, updateFoodCategory, deleteFoodCategory,
   getFoodTags, createFoodTag, updateFoodTag, deleteFoodTag,
@@ -155,8 +156,12 @@ function CategoryFormDialog({ open, onClose, onSave, restaurantId, editing, cate
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Image URL</Label>
-            <Input value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="https://..." />
+            <Label>Image</Label>
+            <ImageUpload
+              value={imageUrl}
+              onChange={setImageUrl}
+              folder="categories"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Colour</Label>
@@ -245,8 +250,12 @@ function TagFormDialog({ open, onClose, onSave, restaurantId, editing }: TagForm
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Image URL</Label>
-            <Input value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="https://..." />
+            <Label>Image</Label>
+            <ImageUpload
+              value={imageUrl}
+              onChange={setImageUrl}
+              folder="tags"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Colour</Label>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, Tag } from "lucide-react";
+import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, Tag, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ export type Coupon = {
   code: string;
   type: "percentage" | "flat";
   value: number;
+  duration_days: number | null;
   max_uses: number | null;
   used_count: number;
   expires_at: string | null;
@@ -23,12 +24,13 @@ export type Coupon = {
   created_at: string;
 };
 
-const ALL_PLANS = ["pro", "growth", "starter"];
+const ALL_PLANS = ["pro", "business"];
 
 const EMPTY_FORM = {
   code: "",
   type: "percentage" as "percentage" | "flat",
   value: "",
+  duration_days: "",
   max_uses: "",
   expires_at: "",
   applicable_plans: ["pro"] as string[],
@@ -67,6 +69,7 @@ export default function CouponManager() {
       code: c.code,
       type: c.type,
       value: String(c.value),
+      duration_days: c.duration_days != null ? String(c.duration_days) : "",
       max_uses: c.max_uses != null ? String(c.max_uses) : "",
       expires_at: c.expires_at ? c.expires_at.slice(0, 10) : "",
       applicable_plans: c.applicable_plans,
@@ -80,10 +83,13 @@ export default function CouponManager() {
     setError("");
     if (!form.code.trim()) { setError("Code is required"); return; }
     if (!form.value || isNaN(Number(form.value)) || Number(form.value) <= 0) {
-      setError("Value must be a positive number"); return;
+      setError("Discount value must be a positive number"); return;
     }
     if (form.type === "percentage" && Number(form.value) > 100) {
       setError("Percentage cannot exceed 100"); return;
+    }
+    if (form.duration_days && (isNaN(Number(form.duration_days)) || Number(form.duration_days) < 1)) {
+      setError("Duration must be a positive number of days"); return;
     }
     if (form.applicable_plans.length === 0) {
       setError("Select at least one plan"); return;
@@ -94,6 +100,7 @@ export default function CouponManager() {
       code: form.code.toUpperCase().trim(),
       type: form.type,
       value: Number(form.value),
+      duration_days: form.duration_days ? Number(form.duration_days) : null,
       max_uses: form.max_uses ? Number(form.max_uses) : null,
       expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
       applicable_plans: form.applicable_plans,
@@ -191,6 +198,7 @@ export default function CouponManager() {
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Code</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Discount</th>
+                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Bonus Days</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Plans</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Usage</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Expires</th>
@@ -210,6 +218,15 @@ export default function CouponManager() {
                         {c.type === "percentage" ? `${c.value}%` : `₹${c.value}`}
                       </span>
                       <span className="text-xs text-muted-foreground ml-1">{c.type}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {c.duration_days ? (
+                        <span className="flex items-center gap-1 text-xs text-blue-600 font-medium">
+                          <Clock className="h-3 w-3" />+{c.duration_days}d
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
@@ -284,6 +301,7 @@ export default function CouponManager() {
               />
             </div>
 
+            {/* Discount */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Discount Type</Label>
@@ -293,7 +311,7 @@ export default function CouponManager() {
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 >
                   <option value="percentage">Percentage (%)</option>
-                  <option value="flat">Flat (₹)</option>
+                  <option value="flat">Flat amount (₹)</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -309,6 +327,21 @@ export default function CouponManager() {
               </div>
             </div>
 
+            {/* Bonus duration */}
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                Bonus Days <span className="text-muted-foreground font-normal">(optional — extends subscription period)</span>
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                placeholder="e.g. 30 adds 30 extra days"
+                value={form.duration_days}
+                onChange={(e) => setForm((f) => ({ ...f, duration_days: e.target.value }))}
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Max Uses <span className="text-muted-foreground">(optional)</span></Label>
@@ -321,7 +354,7 @@ export default function CouponManager() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Expires <span className="text-muted-foreground">(optional)</span></Label>
+                <Label>Coupon Expires <span className="text-muted-foreground">(optional)</span></Label>
                 <Input
                   type="date"
                   value={form.expires_at}
@@ -339,7 +372,7 @@ export default function CouponManager() {
                     type="button"
                     onClick={() => togglePlan(plan)}
                     className={cn(
-                      "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
+                      "px-3 py-1 rounded-full text-xs font-medium border transition-colors capitalize",
                       form.applicable_plans.includes(plan)
                         ? "bg-primary text-primary-foreground border-primary"
                         : "bg-background text-muted-foreground border-border hover:border-foreground"

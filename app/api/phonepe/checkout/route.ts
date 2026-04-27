@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { StandardCheckoutPayRequest, MetaInfo } from "pg-sdk-node";
-import { getPhonePeClient, PHONEPE_PLANS } from "@/lib/phonepe";
+import { getPhonePeClient } from "@/lib/phonepe";
 import { randomUUID } from "crypto";
 
 function getServiceClient() {
@@ -13,27 +13,48 @@ function getServiceClient() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { restaurantId, returnUrl, plan = "pro", couponCode } = await req.json();
+    const { restaurantId, returnUrl, plan = "pro_monthly", couponCode } = await req.json();
 
     if (!restaurantId) {
       return NextResponse.json({ error: "restaurantId required" }, { status: 400 });
     }
 
-    const planConfig = PHONEPE_PLANS[plan as keyof typeof PHONEPE_PLANS];
-    if (!planConfig) {
-      return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
-    }
+    // Derive base plan id and billing cycle from plan key
+    // e.g. "pro_monthly" → basePlanId="pro", cycle="monthly"
+    //      "pro_yearly"  → basePlanId="pro", cycle="yearly"
+    //      "pro"         → basePlanId="pro", cycle="monthly"
+    const isYearly = plan.endsWith("_yearly");
+    const basePlanId = plan.replace(/_monthly$|_yearly$/, "");
 
     const supabase = getServiceClient();
+
+    // Fetch plan config from DB
+    const { data: planRow, error: planErr } = await supabase
+      .from("plans")
+      .select("id, name, monthly_paise, yearly_paise, cta")
+      .eq("id", basePlanId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (planErr || !planRow) {
+      return NextResponse.json({ error: "Invalid or inactive plan" }, { status: 400 });
+    }
+
+    if (planRow.cta !== "choose") {
+      return NextResponse.json({ error: "This plan is not available for self-serve purchase" }, { status: 400 });
+    }
+
+    const basePricePaise = isYearly ? planRow.yearly_paise : planRow.monthly_paise;
 
     // ── Validate coupon (server-side) ────────────────────────────────────
     let couponDbId: string | undefined;
     let discountPaise = 0;
+    let couponDurationDays: number | null = null;
 
     if (couponCode) {
       const { data: validation, error: valErr } = await supabase.rpc("validate_coupon", {
         p_code: couponCode,
-        p_plan: plan,
+        p_plan: basePlanId, // DB function also normalizes, but pass clean value
         p_restaurant_id: restaurantId,
       });
 
@@ -45,14 +66,16 @@ export async function POST(req: NextRequest) {
       }
 
       couponDbId = validation.coupon_id as string;
+      couponDurationDays = validation.duration_days ? Number(validation.duration_days) : null;
+
       if (validation.type === "percentage") {
-        discountPaise = Math.round((planConfig.amountPaise * Number(validation.value)) / 100);
+        discountPaise = Math.round((basePricePaise * Number(validation.value)) / 100);
       } else {
         discountPaise = Math.round(Number(validation.value) * 100);
       }
     }
 
-    const finalAmountPaise = Math.max(100, planConfig.amountPaise - discountPaise);
+    const finalAmountPaise = Math.max(100, basePricePaise - discountPaise);
 
     // ── Build PhonePe payment request ────────────────────────────────────
     const merchantOrderId = `SUB-${randomUUID().replace(/-/g, "").slice(0, 30)}`;
@@ -88,14 +111,14 @@ export async function POST(req: NextRequest) {
       updated_at:             new Date().toISOString(),
     }, { onConflict: "restaurant_id" });
 
-    // ── Record in payment_transactions ───────────────────────────────────
     await supabase.from("payment_transactions").insert({
-      restaurant_id:    restaurantId,
-      merchant_order_id: merchantOrderId,
+      restaurant_id:        restaurantId,
+      merchant_order_id:    merchantOrderId,
       plan,
-      amount_paise:     finalAmountPaise,
-      status:           "pending",
-      coupon_code:      couponCode ?? null,
+      amount_paise:         finalAmountPaise,
+      status:               "pending",
+      coupon_code:          couponCode ?? null,
+      coupon_duration_days: couponDurationDays,
     });
 
     return NextResponse.json({ url: checkoutUrl });

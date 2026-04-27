@@ -3,91 +3,29 @@
 import { useState, useEffect, useRef } from "react";
 import {
   Check, Star, Zap, Building2, Diamond,
-  Download, CreditCard, MapPin, HeadphonesIcon,
+  Download, CreditCard, HeadphonesIcon,
   Loader2, ChevronRight, Pencil, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useSubscription } from "@/hooks/useSubscription";
+import { usePlans, type Plan as PlanDef } from "@/hooks/usePlans";
 import CouponInput, { type CouponResult } from "@/components/CouponInput";
 import { supabase } from "@/lib/supabase";
 
-// ── Plan definitions ──────────────────────────────────────────────────────────
+// ── Icon map — keyed by plan id ───────────────────────────────────────────────
 
-type PlanId = "starter" | "pro" | "business" | "enterprise";
-
-type PlanDef = {
-  id: PlanId;
-  name: string;
-  tagline: string;
-  /** paise — 0 means custom/contact */
-  monthlyPaise: number;
-  yearlyPaise: number;
-  icon: React.ElementType;
-  iconColor: string;
-  iconBg: string;
-  features: string[];
-  unavailable?: string[];
-  /** which PhonePe plan key to use */
-  planKey?: "pro_monthly" | "pro_yearly";
-  cta: "choose" | "current" | "contact" | "downgrade_unsupported";
-  highlight?: boolean;
+const PLAN_ICONS: Record<string, { icon: React.ElementType; iconColor: string; iconBg: string }> = {
+  starter:    { icon: Zap,      iconColor: "text-blue-500",   iconBg: "bg-blue-50"      },
+  pro:        { icon: Star,     iconColor: "text-primary",    iconBg: "bg-primary/10"   },
+  business:   { icon: Building2,iconColor: "text-purple-500", iconBg: "bg-purple-50"    },
+  enterprise: { icon: Diamond,  iconColor: "text-amber-500",  iconBg: "bg-amber-50"     },
 };
 
-const PLANS: PlanDef[] = [
-  {
-    id: "starter",
-    name: "Starter",
-    tagline: "Perfect for getting started",
-    monthlyPaise: 49900,
-    yearlyPaise: 39900,
-    icon: Zap,
-    iconColor: "text-blue-500",
-    iconBg: "bg-blue-50",
-    features: ["Up to 5 Tables", "Basic Reports", "Menu Management", "1 Staff Account"],
-    unavailable: ["Priority Support"],
-    cta: "downgrade_unsupported", // can't downgrade via self-serve
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    tagline: "Best for growing restaurants",
-    monthlyPaise: 99900,
-    yearlyPaise: 79900,
-    icon: Star,
-    iconColor: "text-primary",
-    iconBg: "bg-primary/10",
-    features: ["Up to 20 Tables", "Advanced Reports", "Menu & Modifier Management", "5 Staff Accounts", "Priority Support"],
-    planKey: "pro_monthly", // overridden at runtime based on billing cycle
-    cta: "choose",
-    highlight: true,
-  },
-  {
-    id: "business",
-    name: "Business",
-    tagline: "For established businesses",
-    monthlyPaise: 199900,
-    yearlyPaise: 159900,
-    icon: Building2,
-    iconColor: "text-purple-500",
-    iconBg: "bg-purple-50",
-    features: ["Up to 50 Tables", "Advanced Reports", "Menu & Modifier Management", "15 Staff Accounts", "Priority Support", "Custom Roles"],
-    cta: "contact", // not yet available — route to sales
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    tagline: "For large scale operations",
-    monthlyPaise: 0,
-    yearlyPaise: 0,
-    icon: Diamond,
-    iconColor: "text-amber-500",
-    iconBg: "bg-amber-50",
-    features: ["Unlimited Tables", "Advanced Reports", "Menu & Modifier Management", "Unlimited Staff Accounts", "Priority Support", "Dedicated Account Manager", "API Access"],
-    cta: "contact",
-  },
-];
+function getPlanIcon(id: string) {
+  return PLAN_ICONS[id] ?? { icon: Star, iconColor: "text-primary", iconBg: "bg-primary/10" };
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -125,10 +63,11 @@ function planLabel(planKey: string) {
 type Props = { restaurantId: string; restaurantName?: string };
 
 export default function BillingPanel({ restaurantId, restaurantName }: Props) {
-  const { subscription, loading, isPro, startUpgrade } = useSubscription(restaurantId);
+  const { subscription, loading, isPro, isTrial, isExpired, startUpgrade } = useSubscription(restaurantId);
+  const { plans, loading: plansLoading } = usePlans();
   const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
-  const [upgrading, setUpgrading] = useState<PlanId | null>(null);
+  const [upgrading, setUpgrading] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TxRow[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [showAllTx, setShowAllTx] = useState(false);
@@ -156,17 +95,19 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
     if (editingAddress) addressRef.current?.focus();
   }, [editingAddress]);
 
-  const currentPlanId: PlanId = isPro ? "pro" : "starter";
-  const renewalDate = subscription?.current_period_end
+  // Trial/expired users see Pro as the upgrade target — no "current plan" to highlight
+  const currentPlanId = (isPro && !isTrial) ? "pro" : null;
+  const renewalDate = (isPro && !isTrial && subscription?.current_period_end)
     ? fmtDate(subscription.current_period_end)
     : null;
 
   // Displayed transactions — 4 rows unless "View All" clicked
   const visibleTx = showAllTx ? transactions : transactions.slice(0, 4);
 
-  // Pro price for the selected billing cycle
-  const proMonthlyPaise = PLANS[1].monthlyPaise;
-  const proYearlyPaise  = PLANS[1].yearlyPaise;
+  // Pro plan from DB
+  const proPlan = plans.find((p) => p.id === "pro");
+  const proMonthlyPaise = proPlan?.monthly_paise ?? 99900;
+  const proYearlyPaise  = proPlan?.yearly_paise  ?? 79900;
   const proPrice = billing === "monthly" ? proMonthlyPaise : proYearlyPaise;
 
   const discountedProPaise = coupon
@@ -176,39 +117,30 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
     : proPrice;
 
   async function handleChoosePlan(plan: PlanDef) {
-    // Only Pro is purchasable right now; Business/Enterprise go to contact
-    if (plan.cta === "contact" || plan.id === "business" || plan.id === "enterprise") {
-      window.open(
-        "mailto:support@qrorder.in?subject=Plan%20Enquiry%20-%20" + plan.name,
-        "_blank"
-      );
+    if (plan.cta === "contact") {
+      window.open("mailto:support@qrorder.in?subject=Plan%20Enquiry%20-%20" + plan.name, "_blank");
       return;
     }
     if (plan.id === currentPlanId) return;
     if (plan.cta === "downgrade_unsupported") {
-      // Downgrade not self-serve — open support
       window.open("mailto:support@qrorder.in?subject=Downgrade%20Request", "_blank");
       return;
     }
-    // Pro upgrade
     setUpgrading(plan.id);
-    await startUpgrade(window.location.href, coupon?.code, billing);
+    await startUpgrade(window.location.href, coupon?.code, billing, `${plan.id}_${billing}`);
     setUpgrading(null);
   }
 
   function planPrice(p: PlanDef) {
-    if (p.monthlyPaise === 0) return null;
-    return billing === "monthly" ? p.monthlyPaise : p.yearlyPaise;
+    const price = billing === "monthly" ? p.monthly_paise : p.yearly_paise;
+    return price === 0 ? null : price;
   }
 
   function ctaLabel(plan: PlanDef): string {
     if (plan.id === currentPlanId) return "Current Plan";
     if (plan.cta === "contact") return "Contact Sales";
     if (plan.cta === "downgrade_unsupported") return "Contact Support";
-    if (plan.id === "pro") {
-      const price = fmtRupees(discountedProPaise);
-      return `Upgrade — ${price}/mo`;
-    }
+    if (plan.id === "pro") return `Upgrade — ${fmtRupees(discountedProPaise)}/mo`;
     return "Choose Plan";
   }
 
@@ -216,7 +148,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
     window.open("mailto:support@qrorder.in?subject=Billing%20Support", "_blank");
   }
 
-  if (loading) {
+  if (loading || plansLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -265,7 +197,8 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
 
         {/* Plan cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {PLANS.map((plan) => {
+          {plans.map((plan) => {
+            const { icon: PlanIcon, iconColor, iconBg } = getPlanIcon(plan.id);
             const price = planPrice(plan);
             const isCurrent = plan.id === currentPlanId;
             const isLoadingThis = upgrading === plan.id;
@@ -276,7 +209,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 key={plan.id}
                 className={cn(
                   "relative rounded-xl border p-4 flex flex-col transition-all",
-                  plan.highlight && !isCurrent
+                  plan.is_highlighted && !isCurrent
                     ? "border-primary/40 bg-primary/[0.03]"
                     : "border-border bg-card",
                   isCurrent && "border-primary ring-1 ring-primary/20"
@@ -291,8 +224,8 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 )}
 
                 <div className="flex items-center gap-2.5 mb-3 mt-1">
-                  <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0", plan.iconBg)}>
-                    <plan.icon className={cn("h-4 w-4", plan.iconColor)} />
+                  <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
+                    <PlanIcon className={cn("h-4 w-4", iconColor)} />
                   </div>
                   <div>
                     <p className="font-semibold text-sm">{plan.name}</p>
@@ -362,7 +295,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                       <span>{f}</span>
                     </div>
                   ))}
-                  {plan.unavailable?.map((f) => (
+                  {plan.unavailable.map((f) => (
                     <div key={f} className="flex items-start gap-2 text-xs text-muted-foreground/50">
                       <div className="h-3.5 w-3.5 rounded-full border border-muted-foreground/25 shrink-0 mt-0.5" />
                       <span>{f}</span>
@@ -370,8 +303,8 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                   ))}
                 </div>
 
-                {/* Coupon — only on Pro card for non-pro users */}
-                {plan.id === "pro" && !isPro && (
+                {/* Coupon — only on Pro card for non-paid users (free, trial, expired) */}
+                {plan.id === "pro" && !(isPro && !isTrial) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <CouponInput
                       plan="pro"
@@ -508,24 +441,40 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 <Star className="h-4 w-4 text-primary" />
               </div>
               <div>
-                <p className="font-semibold text-sm">{isPro ? "Pro Plan" : "Starter Plan"}</p>
+                <p className="font-semibold text-sm">
+                  {isTrial ? "Free Trial" : (isPro && !isTrial) ? "Pro Plan" : isExpired ? "Trial Expired" : "No Active Plan"}
+                </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {isPro ? "Up to 20 Tables · Up to 5 Staff" : "Up to 5 Tables · 1 Staff"}
+                  {isTrial ? "7-day trial · all features included" : isPro ? "Full access · all features" : "Upgrade to access all features"}
                 </p>
               </div>
             </div>
             <div className="mb-3">
-              <span className="text-2xl font-bold">{isPro ? fmtRupees(proMonthlyPaise) : fmtRupees(49900)}</span>
-              <span className="text-xs text-muted-foreground">/month</span>
+              {isTrial ? (
+                <span className="text-2xl font-bold text-green-600">Free</span>
+              ) : isPro ? (
+                <>
+                  <span className="text-2xl font-bold">{fmtRupees(proMonthlyPaise)}</span>
+                  <span className="text-xs text-muted-foreground">/month</span>
+                </>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
             </div>
-            {renewalDate ? (
+            {isTrial && subscription?.current_period_end ? (
+              <p className="text-xs text-amber-600 font-medium mb-3">
+                Trial ends {fmtDate(subscription.current_period_end)}
+              </p>
+            ) : renewalDate ? (
               <p className="text-xs text-muted-foreground mb-3">
                 Plan renews on<br />
                 <span className="font-medium text-foreground">{renewalDate}</span>
               </p>
-            ) : !isPro ? (
-              <p className="text-xs text-muted-foreground mb-3">Free tier — no renewal</p>
-            ) : null}
+            ) : (
+              <p className="text-xs text-muted-foreground mb-3">
+                {isExpired ? "Trial expired — upgrade to continue" : "Upgrade to get full access"}
+              </p>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -557,9 +506,9 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
             )}
             <button
               onClick={() => {
-                // PhonePe doesn't support saved payment methods — redirect to upgrade flow
                 if (!isPro) {
-                  handleChoosePlan(PLANS[1]);
+                  const proPlan = plans.find(p => p.id === "pro");
+                  if (proPlan) handleChoosePlan(proPlan);
                 } else {
                   window.open("mailto:support@qrorder.in?subject=Update%20Payment%20Method", "_blank");
                 }

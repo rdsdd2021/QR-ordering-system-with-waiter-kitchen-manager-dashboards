@@ -274,6 +274,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | A2 | Toggle restaurant active | Must Have | Deactivate a restaurant (blocks customer ordering + staff access) |
 | A3 | Coupon CRUD | Must Have | Create, edit, toggle, delete discount coupons |
 | A4 | Platform stats | Should Have | Total restaurants, active count, pro subscribers, total orders |
+| A5 | Plan CRUD | Should Have | Create, edit, toggle active, delete pricing plans. Manage name, tagline, monthly/yearly prices (in paise), features list, CTA type, highlighted flag, and sort order. |
 
 ---
 

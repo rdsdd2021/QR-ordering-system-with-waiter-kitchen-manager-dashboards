@@ -10,8 +10,9 @@ function getServiceClient() {
 }
 
 /**
- * Called by the client after the popup closes.
+ * Called by the client after the PhonePe popup closes.
  * Directly checks PhonePe order status — no webhook dependency.
+ * Also handles coupon usage recording and duration_days.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -22,30 +23,43 @@ export async function POST(req: NextRequest) {
 
     const client = getPhonePeClient();
     const status = await client.getOrderStatus(merchantOrderId);
-
-    const supabase = getServiceClient();
     const state = (status as unknown as { state?: string }).state;
 
+    const supabase = getServiceClient();
+
     if (state === "COMPLETED") {
-      // Look up billing cycle from payment_transactions
+      // Fetch transaction details: billing cycle, coupon info
       const { data: txRow } = await supabase
         .from("payment_transactions")
-        .select("plan")
+        .select("plan, coupon_code, coupon_duration_days")
         .eq("merchant_order_id", merchantOrderId)
         .maybeSingle();
 
       const isYearly = (txRow?.plan as string | null)?.includes("yearly");
+      const couponDurationDays = (txRow?.coupon_duration_days as number | null) ?? 0;
+
       const periodEnd = new Date();
       if (isYearly) {
         periodEnd.setFullYear(periodEnd.getFullYear() + 1);
       } else {
         periodEnd.setMonth(periodEnd.getMonth() + 1);
       }
+      if (couponDurationDays > 0) {
+        periodEnd.setDate(periodEnd.getDate() + couponDurationDays);
+      }
+
+      // Fetch pending_coupon_id from subscription
+      const { data: subRow } = await supabase
+        .from("subscriptions")
+        .select("pending_coupon_id")
+        .eq("restaurant_id", restaurantId)
+        .maybeSingle();
 
       await supabase.from("subscriptions").upsert({
         restaurant_id:          restaurantId,
         plan:                   "pro",
         status:                 "active",
+        trial_used:             true,
         phonepe_transaction_id: merchantOrderId,
         current_period_end:     periodEnd.toISOString(),
         pending_coupon_id:      null,
@@ -55,6 +69,14 @@ export async function POST(req: NextRequest) {
       await supabase.from("payment_transactions")
         .update({ status: "completed", completed_at: new Date().toISOString() })
         .eq("merchant_order_id", merchantOrderId);
+
+      // Record coupon usage if one was applied
+      if (subRow?.pending_coupon_id) {
+        await supabase.rpc("record_coupon_usage", {
+          p_coupon_id:     subRow.pending_coupon_id,
+          p_restaurant_id: restaurantId,
+        });
+      }
 
       return NextResponse.json({ upgraded: true, state });
     }

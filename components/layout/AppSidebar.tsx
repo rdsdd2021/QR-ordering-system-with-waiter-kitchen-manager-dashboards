@@ -129,10 +129,12 @@ function NavItemButton({
 
 export function AppSidebar({
   restaurant, navGroups, activeTab, onNavigate, onClose,
-  planLabel = "Free Plan", planRenewal, profileName, profileRole,
+  planLabel = "Upgrade Required", planRenewal, profileName, profileRole,
   onManagePlan, onSignOut, onLogoUpload,
 }: AppSidebarProps) {
-  const isPro = planLabel.toLowerCase().includes("pro");
+  const isPro   = planLabel.toLowerCase().includes("pro");
+  const isTrial = planLabel.toLowerCase().includes("trial") && !planLabel.toLowerCase().includes("expired");
+  const isExpiredLabel = planLabel.toLowerCase().includes("expired") || planLabel.toLowerCase().includes("upgrade");
   const [showPlanCard, setShowPlanCard] = useState(true);
   const [showSupportCard, setShowSupportCard] = useState(true);
 
@@ -161,8 +163,8 @@ export function AppSidebar({
         </div>
         {/* Plan badge */}
         <div className="mt-2 px-2">
-          <span className={isPro ? "plan-badge-pro" : "plan-badge-free"}>
-            {isPro && "✦ "}{planLabel}
+          <span className={isPro || isTrial ? "plan-badge-pro" : "plan-badge-free"}>
+            {(isPro || isTrial) && "✦ "}{planLabel}
           </span>
         </div>
       </div>
@@ -193,32 +195,36 @@ export function AppSidebar({
         <div className="mx-3 mb-3 rounded-lg bg-primary/5 border border-primary/20 p-3 shrink-0">
           <div className="flex items-center gap-1.5 mb-1">
             <Crown className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-semibold text-primary flex-1">You&apos;re on Pro Plan</span>
+            <span className="text-xs font-semibold text-primary flex-1">{isTrial ? "Free Trial Active" : "You're on Pro Plan"}</span>
             <button onClick={() => setShowPlanCard(false)} className="text-primary/50 hover:text-primary transition-colors p-0.5 rounded">
               <X className="h-3 w-3" />
             </button>
           </div>
           {planRenewal && (
-            <p className="text-[11px] text-muted-foreground mb-2">Your plan renews on<br /><span className="font-medium text-foreground">{planRenewal}</span></p>
+            <p className="text-[11px] text-muted-foreground mb-2">{isTrial ? planRenewal : `Your plan renews on`}<br />{!isTrial && <span className="font-medium text-foreground">{planRenewal}</span>}</p>
           )}
           {onManagePlan && (
             <button
               onClick={onManagePlan}
               className="w-full text-xs font-semibold text-primary border border-primary/40 rounded-lg py-1.5 hover:bg-primary hover:text-white transition-colors"
             >
-              Manage Plan
+              {isTrial ? "Upgrade to Pro" : "Manage Plan"}
             </button>
           )}
         </div>
       ) : (
-        <div className="mx-3 mb-3 rounded-lg bg-muted/60 border border-border p-3 shrink-0">
+        <div className={`mx-3 mb-3 rounded-lg p-3 shrink-0 border ${isExpiredLabel ? "bg-destructive/5 border-destructive/20" : "bg-muted/60 border-border"}`}>
           <div className="flex items-center gap-1.5 mb-0.5">
-            <p className="text-xs font-semibold text-foreground flex-1">Upgrade to Pro</p>
+            <p className={`text-xs font-semibold flex-1 ${isExpiredLabel ? "text-destructive" : "text-foreground"}`}>
+              {isExpiredLabel ? "Trial Expired" : "Upgrade to Pro"}
+            </p>
             <button onClick={() => setShowPlanCard(false)} className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded">
               <X className="h-3 w-3" />
             </button>
           </div>
-          <p className="text-[11px] text-muted-foreground mb-2">Unlimited tables & menu items</p>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            {isExpiredLabel ? "Upgrade to restore access" : "Unlimited tables & menu items"}
+          </p>
           {onManagePlan && (
             <button
               onClick={onManagePlan}

@@ -5,6 +5,7 @@ import { Plus, Edit2, Trash2, Loader2, X, Image as ImageIcon, FolderOpen, Tag } 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageUpload } from "@/components/ui/ImageUpload";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -292,12 +293,12 @@ export default function MenuManager({ restaurantId }: Props) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="image">Image URL</Label>
-              <Input id="image" value={formImageUrl} onChange={e => setFormImageUrl(e.target.value)} placeholder="https://example.com/image.jpg" />
-              {formImageUrl && (
-                <img src={formImageUrl} alt="Preview" className="h-32 w-32 rounded object-cover border mt-2"
-                  onError={e => { e.currentTarget.style.display = "none"; }} />
-              )}
+              <Label>Image</Label>
+              <ImageUpload
+                value={formImageUrl}
+                onChange={setFormImageUrl}
+                folder="menu-items"
+              />
             </div>
 
             {/* Categories */}

@@ -535,7 +535,7 @@ MenuManager component
 - Edit item inline
 - Toggle availability (is_available)
 - Delete item (blocked if referenced by existing order_items — FK constraint)
-- Image upload to Supabase Storage
+- Image upload via <ImageUpload> component (see Shared UI Components below)
 - Real-time: menu changes broadcast to customer pages instantly
 - State updates: after add/edit, the local items list is NOT patched optimistically.
   The postgres_changes Realtime subscription reloads the list when the DB write lands.
@@ -590,6 +590,7 @@ TablesManager component
 RestaurantDetails component
 - Edit restaurant name
 - Edit slug (URL-friendly identifier)
+- Upload restaurant logo via <ImageUpload> component (bucket: restaurant-logos, path: {restaurant_id}/logo.{ext}); saved to restaurants.logo_url
 ```
 
 **Settings (`settings` tab)**
@@ -618,6 +619,27 @@ WebhooksManager component
 - Staff deletion removes the `users` row but the Supabase Auth user may persist if the API call partially fails. This leaves an orphaned auth account that can still attempt login (will get "no profile" → redirect to onboarding).
 - The QR code URL is stored as `qr_code_url` in the `tables` table but is just a plain URL string — there is no actual QR image generation in the DB. The frontend must generate the QR image from this URL.
 - Changing `order_routing_mode` takes effect immediately for new orders only. In-flight `pending_waiter` orders are not retroactively changed.
+
+### Shared UI Components
+
+**`<ImageUpload>` (`components/ui/ImageUpload.tsx`)**
+
+Reusable image picker used wherever an image URL needs to be captured (menu items, categories/tags, restaurant logo).
+
+| Prop | Type | Default | Notes |
+|------|------|---------|-------|
+| `value` | `string` | — | Current image URL; empty string = no image |
+| `onChange` | `(url: string) => void` | — | Called with public URL after upload, or `""` on remove |
+| `bucket` | `string` | `"menu-images"` | Supabase Storage bucket name |
+| `folder` | `string` | `"uploads"` | Path prefix inside the bucket |
+| `className` | `string` | — | Optional wrapper class |
+
+- Accepts drag-and-drop or click-to-browse.
+- Validates: image MIME type only, max 5 MB.
+- Uploads via `supabase.storage.from(bucket).upload(path, file, { upsert: true })`.
+- Path format: `{folder}/{timestamp}-{random}.{ext}` — unique per upload, no collisions.
+- Displays a 96×96 px preview with an ×-button to clear the URL.
+- Shows inline error text on validation or upload failure.
 
 ---
 
@@ -695,9 +717,9 @@ No automated payment processing — purely manual recording.
 
 Yearly billing saves ~20% vs monthly. Business and Enterprise plans require contacting sales. Downgrading from Pro to Starter is not self-serve — users must contact support.
 
-The `BillingPanel` component (`components/manager/BillingPanel.tsx`) renders the full billing page in the manager dashboard with:
+The `BillingPanel` component (`components/manager/BillingPanel.tsx`) renders the full billing page in the manager dashboard. Plan definitions (name, tagline, prices, features, CTA type) are fetched from the `plans` table via the `usePlans` hook (`/api/plans`) rather than being hardcoded in the component — icons are mapped client-side by plan `id` via `PLAN_ICONS`. It includes:
 - Plan selector cards with monthly/yearly toggle (switching cycle resets any applied coupon)
-- Coupon input on the Pro card (for non-Pro users); discount preview only shown when coupon actually reduces the price
+- Coupon input on the Pro card (for non-paid users — free, trialing, or expired); discount preview only shown when coupon actually reduces the price. Active paid Pro subscribers do not see the coupon input.
 - Billing history table (from `payment_transactions`) — loads up to 50 rows, shows 4 by default with a "View All / Show Less" toggle
 - Invoice download generates a plain-text `.txt` receipt client-side (no server round-trip)
 - Right sidebar: current plan summary, payment method, editable billing address, support link
@@ -789,6 +811,8 @@ BillingPanel → "Upgrade — ₹X/mo" (Pro card)
 
 POST /api/phonepe/checkout:
   1. Validate coupon (if provided) via validate_coupon() RPC
+     - plan key is normalised to base plan before validation:
+       "pro_monthly" / "pro_yearly" → "pro"  (strips _monthly / _yearly suffix)
   2. Apply discount → compute finalAmountPaise
   3. Generate merchantOrderId (uuid)
   4. Resolve plan key from billing cycle (or planOverride if provided):
@@ -801,6 +825,7 @@ POST /api/phonepe/checkout:
      - phonepe_transaction_id = merchantOrderId
   7. Insert payment_transactions row:
      - status='pending', amount_paise, coupon_code
+     - coupon_duration_days (if coupon has a duration override — used by /verify and webhook to extend current_period_end)
   8. Return checkout URL
 
 Client (useSubscription.startUpgrade):
@@ -814,6 +839,16 @@ Client (useSubscription.startUpgrade):
       → Popup calls /api/phonepe/verify with the orderId to confirm payment server-side
       → Posts { type, orderId, success } to window.opener, then closes itself
       → Parent receives the message, calls verify, and updates local state
+
+POST /api/phonepe/verify (popup flow — no webhook dependency):
+  → Calls PhonePe SDK getOrderStatus(merchantOrderId)
+  → On COMPLETED:
+       - Reads payment_transactions: plan, coupon_code, coupon_duration_days
+       - Computes current_period_end (monthly/yearly + coupon duration_days if set)
+       - Upserts subscriptions: plan='pro', status='active', trial_used=true, pending_coupon_id=null
+       - Updates payment_transactions.status = 'completed'
+       - Reads subscriptions.pending_coupon_id, then calls record_coupon_usage() RPC if set
+  → Returns { upgraded: true/false, state }
 
 PhonePe Webhook → POST /api/phonepe/webhook:
   → Verify callback via SDK
@@ -830,11 +865,23 @@ useSubscription(restaurantId):
   └─ get_plan_limits() RPC returns: { max_tables, max_menu_items }
   └─ Free: max_tables=5, max_menu_items=20
   └─ Pro: max_tables=null (unlimited), max_menu_items=null
+  └─ Returns: { isPro, isTrial, isActive, isExpired, trialEndsAt, subscription, limits, startUpgrade }
+    - isActive: true when subscription.status === 'active' (paid, not trialing)
+    - isTrial: true when subscription.status === 'trialing'
+    - isExpired: true when subscription.status === 'expired'
+    - isPro: true when plan === 'pro' AND (isActive OR isTrial) — trialing users get full Pro access
+    - trialEndsAt: subscription.current_period_end when trialing, otherwise null
 
 Manager UI checks limits before allowing:
   - Adding a new table
   - Adding a new menu item
   → Shows UpgradeBanner if at limit
+
+Manager dashboard header displays a plan label and renewal info derived from useSubscription:
+  - isTrial=true     → label: "Free Trial",     renewal: "Trial ends <date>" (from trialEndsAt)
+  - isPro=true       → label: "Pro Plan",        renewal: formatted current_period_end
+  - isExpired=true   → label: "Trial Expired",   renewal: none
+  - otherwise        → label: "Free Plan",        renewal: none
 ```
 
 ### Pitfalls
@@ -842,7 +889,7 @@ Manager UI checks limits before allowing:
 - Stripe webhook requires raw body — Next.js App Router must not parse the body before signature verification. The route uses `req.text()` correctly, but any middleware that parses JSON will break this.
 - `STRIPE_WEBHOOK_SECRET` must match the signing secret for the specific webhook endpoint in Stripe Dashboard. Local testing requires `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
-- Trial period means the subscription status is `trialing`, not `active`. The `get_restaurant_plan()` function treats `trialing` as Pro — but any code checking `status = 'active'` directly will incorrectly treat trialing users as free.
+- Trial period means the subscription status is `trialing`, not `active`. `useSubscription` correctly treats `trialing` as Pro (`isPro = plan === 'pro' && (isActive || isTrial)`). Code that checks `status === 'active'` directly (bypassing the hook) will still incorrectly block trialing users.
 - `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
 - PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`. Credentials are read inside the function (not at module load time) so they are always fresh — do not hoist them to module scope.
 - `getPhonePeClient()` resets `StandardCheckoutClient._client = undefined` before calling `getInstance()` to force the SDK to reinitialise with the current env credentials on every call. The SDK's singleton check uses `=== undefined` (not `=== null`), so setting it to `null` would not trigger reinitialisation.
@@ -867,6 +914,7 @@ Manager UI checks limits before allowing:
 | `expires_at` | timestamptz (nullable) | null = never expires |
 | `is_active` | boolean | Admin can toggle |
 | `applicable_plans` | text[] | e.g. `{pro}` |
+| `duration_days` | int (nullable) | If set, overrides the default billing period length when the coupon is applied (e.g. 7 for a 7-day trial). Passed through to `payment_transactions.coupon_duration_days` and used by both `/api/phonepe/verify` (popup flow) and the webhook to extend `current_period_end`. |
 
 ### Validation Rules (server-side, `validate_coupon()` RPC)
 
@@ -899,6 +947,51 @@ DELETE /api/admin/coupons/[id] → delete coupon
 ```
 
 All admin coupon routes require `SUPABASE_SERVICE_ROLE_KEY` (bypass RLS).
+
+#### Plans API (`/api/admin/plans`)
+
+```
+GET  /api/admin/plans       → list all plans (ordered by sort_order, including inactive)
+POST /api/admin/plans       → create a new plan (body inserted into plans table, returns 201)
+PATCH /api/admin/plans/[id] → update allowed fields on a plan
+DELETE /api/admin/plans/[id] → delete a plan
+```
+
+All routes use the service role key (bypass RLS). The `GET` response includes all plans regardless of `is_active`. The `POST` body must be a valid `plans` row object. `PATCH` only updates fields in the allowlist: `name`, `tagline`, `monthly_paise`, `yearly_paise`, `features`, `unavailable`, `is_active`, `is_highlighted`, `cta`, `sort_order`.
+
+#### Plan Manager UI (`components/admin/PlanManager`)
+
+The **Plans** tab in the admin panel renders `PlanManager`, a lazy-loaded CRUD interface for the `plans` table.
+
+**Loading:** Plans are not fetched on mount — the admin must click **"Load Plans"** to trigger the initial `GET /api/admin/plans` fetch. This avoids unnecessary DB calls when the admin is on a different tab.
+
+**Plan table columns:** Sort handle (decorative), Plan name + ID slug + tagline, Monthly price, Yearly price, CTA type badge, Highlighted star, Active toggle, Edit/Delete actions.
+
+**Create plan form fields:**
+
+| Field | Notes |
+|-------|-------|
+| Plan ID | Slug (e.g. `pro`). Auto-lowercased, spaces → underscores. Only shown on create, not edit. |
+| Name | Display name |
+| Sort Order | Integer; controls display order on pricing page |
+| Tagline | Short description shown under the plan name |
+| Monthly Price (₹) | Input in rupees; stored as paise (×100). `0` = Custom/Contact. |
+| Yearly Price (₹/mo) | Input in rupees per month; stored as paise. Billed annually. |
+| Features | Newline-separated list of included features |
+| Unavailable Features | Newline-separated list shown greyed out (not included in plan) |
+| CTA Type | `choose` (self-serve PhonePe checkout), `contact` (mailto sales), `downgrade_unsupported` (mailto support) |
+| Highlighted | Shows a "recommended" badge on the pricing page |
+| Active | Controls visibility on the public `/api/plans` endpoint |
+
+**Inline active toggle:** Clicking the toggle icon sends `PATCH /api/admin/plans/[id]` with `{ is_active: !current }` and patches the row in local state on success.
+
+**Delete:** Requires a `window.confirm()` prompt. Sends `DELETE /api/admin/plans/[id]`. Removes the row from local state on success. Will fail at the DB level if the plan is referenced by active subscriptions (FK constraint).
+
+**Pricing display:** `monthly_paise === 0` renders as `"Custom"` rather than `₹0`. Same for `yearly_paise`.
+
+The coupon table displays: Code, Discount, Bonus Days, Plans, Usage, Expires, Status, and Actions. The **Bonus Days** column shows the `duration_days` value (e.g. `+30d`) when set, or `—` when null.
+
+The create/edit form includes an optional **Bonus Days** field (`duration_days`). When set, this extends the subscription period by that many days upon coupon redemption (passed through `payment_transactions.coupon_duration_days` to the webhook). Applicable plans are drawn from `["starter", "pro", "business"]`.
 
 ### Pitfalls
 
@@ -1115,10 +1208,11 @@ POST /api/webhooks/[id]/retry:
 | `id` | uuid PK | |
 | `restaurant_id` | uuid (unique) → restaurants | One per restaurant |
 | `plan` | text | `free` \| `pro` |
-| `status` | text | `active` \| `trialing` \| `past_due` \| `canceled` \| `incomplete` |
+| `status` | text | `active` \| `trialing` \| `expired` \| `past_due` \| `canceled` \| `incomplete` |
 | `phonepe_transaction_id` | text (unique, nullable) | PhonePe transaction reference |
 | `phonepe_subscription_id` | text (unique, nullable) | PhonePe subscription reference (if applicable) |
 | `current_period_end` | timestamptz (nullable) | |
+| `trial_used` | boolean | Whether this restaurant has already consumed its free trial; prevents repeat trials |
 | `created_at` / `updated_at` | timestamptz | |
 
 ### `coupons` (1 row)
@@ -1474,7 +1568,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| E1 | `trialing` status not treated as `active` in some checks | Pro features may be blocked during trial | Code checking `status='active'` directly |
+| E1 | `trialing` status not treated as `active` in some checks | Pro features may be blocked during trial | **Fixed** — `useSubscription` now uses `isPro = plan==='pro' && (isActive \|\| isTrial)`. Direct `status='active'` checks elsewhere still need auditing. |
 | E2 | `past_due` not auto-downgraded to free | Pro features accessible despite failed payment | Only `canceled`/`deleted` triggers downgrade |
 | E3 | Stripe webhook body parsing | Any JSON-parsing middleware breaks signature verification | Must use `req.text()` |
 | E4 | Missing `restaurant_id` in Stripe metadata | Subscription not updated | Can happen with manual Stripe test events |

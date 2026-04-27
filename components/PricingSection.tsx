@@ -4,22 +4,7 @@ import { useState } from "react";
 import { CheckCircle2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import CouponInput, { type CouponResult } from "@/components/CouponInput";
-
-const PRO_FEATURES = [
-  "Unlimited tables",
-  "Unlimited menu items",
-  "QR ordering",
-  "Kitchen & waiter dashboards",
-  "Real-time order updates",
-  "Advanced analytics",
-  "Floor-based pricing",
-  "Priority support",
-  "Export reports",
-  "Custom branding",
-  "Geo-fencing",
-];
-
-const PRO_PRICE_PAISE = 79900;
+import { usePlans } from "@/hooks/usePlans";
 
 type Props = {
   restaurantId?: string;
@@ -28,7 +13,11 @@ type Props = {
 };
 
 export default function PricingSection({ restaurantId, onUpgrade, upgrading }: Props) {
+  const { plans } = usePlans();
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
+
+  const proPlan = plans.find(p => p.id === "pro");
+  const PRO_PRICE_PAISE = proPlan?.monthly_paise ?? 99900;
 
   const discountedPaise = coupon
     ? coupon.type === "percentage"
@@ -39,6 +28,7 @@ export default function PricingSection({ restaurantId, onUpgrade, upgrading }: P
   const originalPrice = `₹${(PRO_PRICE_PAISE / 100).toFixed(0)}`;
   const finalPrice    = `₹${(discountedPaise / 100).toFixed(0)}`;
   const showDiscount  = coupon && discountedPaise < PRO_PRICE_PAISE;
+  const proFeatures   = proPlan?.features ?? [];
 
   return (
     <section className="mx-auto max-w-5xl px-6 pb-24">
@@ -80,7 +70,7 @@ export default function PricingSection({ restaurantId, onUpgrade, upgrading }: P
           <div className="border-t border-primary/20 pt-5">
             <p className="text-xs font-semibold text-primary uppercase tracking-wider mb-4">Everything you need</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-              {PRO_FEATURES.map((f) => (
+              {proFeatures.map((f) => (
                 <div key={f} className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
                   <span>{f}</span>

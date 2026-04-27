@@ -20,7 +20,7 @@ async function getSuperAdminData() {
         .order("created_at", { ascending: false }),
       supabase
         .from("subscriptions")
-        .select("restaurant_id, plan, status, current_period_end, updated_at"),
+        .select("restaurant_id, plan, status, current_period_end, trial_used, updated_at"),
       supabase
         .from("orders")
         .select("restaurant_id"),
