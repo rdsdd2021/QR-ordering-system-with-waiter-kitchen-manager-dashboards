@@ -524,10 +524,13 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 **Pain points:**
 - No bulk toggle — if 5 items are sold out, he has to toggle each one individually
 - No "daily specials" feature — can't schedule availability by time
+- Adding many menu items one-by-one is slow
 
 **Opportunities:**
 - Add bulk select + toggle availability
 - Add a "mark as sold out today" quick action that resets at midnight
+- ~~Bulk-import menu items via CSV or inline grid~~ ✅ Implemented — CSV Upload tab added; bulk-edit all existing items at once via the "Bulk Edit" button in the Menu Items tab
+- ~~Edit item fields (name, price, description, image, categories, tags) without a modal~~ ✅ Implemented — clicking Edit on any row expands it into an inline editable row directly in the table
 
 ---
 

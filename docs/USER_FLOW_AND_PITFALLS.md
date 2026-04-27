@@ -547,15 +547,38 @@ Analytics component
 **Menu Items (`menu` tab)**
 ```
 MenuManager component
-- List all menu items (including unavailable)
+- List all menu items (including unavailable) in an expanded table with columns:
+  Item name + thumbnail | Price | Description | Image | Categories | Tags | Available | Actions
 - Add item: name, price, description, image_url, tags, is_available
-- Edit item inline
-- Toggle availability (is_available)
+- Edit item inline: clicking the edit (pencil) icon on a row expands it into an editable
+  row in-place — no modal. Fields: name, price, description, image upload, category
+  multi-select (pill toggles), tag multi-select (pill toggles). Save (✓) / Cancel (✗)
+  buttons in the Actions cell. Availability toggle remains live during inline edit.
+- Toggle availability (is_available) — toggle switch visible in both view and edit rows
 - Delete item (blocked if referenced by existing order_items — FK constraint)
 - Image upload via <ImageUpload> component (see Shared UI Components below)
 - Real-time: menu changes broadcast to customer pages instantly
 - State updates: after add/edit, the local items list is NOT patched optimistically.
   The postgres_changes Realtime subscription reloads the list when the DB write lands.
+```
+
+**Bulk Edit mode (button inside Menu Items tab)**
+```
+Triggered by the "Bulk Edit" button in the Menu Items tab header (only shown when items exist).
+- On enter: fetches categories and tags for every item in parallel via getMenuItemCategories /
+  getMenuItemTags, then sets bulkEdits Map and flips bulkMode=true. A blue info banner is shown.
+- All rows switch to the shared renderEditRow layout simultaneously (same inline fields as
+  single-row edit: name, price, description, image upload, category pill-toggles, tag
+  pill-toggles, availability toggle).
+- "Save All" button calls saveAllBulk(): iterates all items in parallel, calling updateMenuItem
+  + setMenuItemCategories + setMenuItemTags per row. On completion, bulkMode is cleared.
+- "Cancel" discards all unsaved changes and returns to read-only view.
+- While saving, all inputs are disabled and a spinner replaces the Save All label.
+- Pitfall: saveAllBulk fires all updates in parallel — if the menu is very large this can
+  produce many concurrent DB writes. No per-row error recovery; a failed row is silently
+  skipped (saving flag is reset but the row is not highlighted).
+- Single inline edit (Edit icon per row) is unavailable while bulk mode is active; entering
+  bulk mode clears any open single-row edits.
 ```
 
 **Categories & Tags (`categories` tab)**

@@ -228,7 +228,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M4 | Manual discount | Should Have | Apply a discount amount + reason at billing time |
 | M5 | Order log | Must Have | Full history of all orders with filters by status and date |
 | M6 | Analytics | Should Have | Revenue over time, top items, avg prep time, waiter performance |
-| M7 | Menu management | Must Have | Add/edit/delete menu items. Toggle availability. Upload images. |
+| M7 | Menu management | Must Have | Add/edit/delete menu items. Toggle availability. Upload images. Bulk-import items via CSV upload. Bulk-edit all existing items at once via the "Bulk Edit" button in the Menu Items tab. |
 | M8 | Categories & tags | Should Have | Organize menu items into hierarchical categories and tags |
 | M9 | Floor management | Should Have | Create floors with price multipliers. Assign tables to floors. |
 | M10 | Table setup | Must Have | Add/remove tables, set capacity, generate QR codes |
