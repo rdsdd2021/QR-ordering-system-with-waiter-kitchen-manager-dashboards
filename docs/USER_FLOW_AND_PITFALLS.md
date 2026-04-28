@@ -424,6 +424,8 @@ markServed(orderId):
 
 The dashboard has a sidebar nav (desktop) and bottom nav (mobile) with 4 groups. Nav groups are built dynamically via `buildNavGroups(pendingCount, onOrdersBadgeClick)` — the **Orders** item shows a live badge with the count of pending orders; the badge is hidden when there are none. When the badge is visible, clicking it invokes `onOrdersBadgeClick` (e.g. to jump directly to the Orders tab).
 
+**Tab navigation is URL-synced.** All tab changes (sidebar, mobile bottom nav, "Manage Plan" shortcut, and the Orders badge click) go through `handleTabChange(tab)`, which calls both `setActiveTab(tab)` and `router.replace(?tab=<tab>)`. This means the active tab is reflected in the URL query string (`?tab=sessions`, `?tab=menu`, etc.), enabling deep-linking and browser back/forward navigation. On initial load, the active tab is read from `searchParams.get("tab")`, defaulting to `"sessions"` if absent.
+
 **AppHeader** (`components/layout/AppHeader.tsx`) is shared across all role dashboards (manager, waiter, kitchen) and provides:
 
 - **Page title + description** — rendered in the left section of the header.
@@ -944,9 +946,10 @@ PhonePe Webhook → POST /api/phonepe/webhook:
 useSubscription(restaurantId):
   └─ Fetches subscriptions row on mount
   └─ Subscribes to a Supabase Realtime channel — listens for UPDATE events on `subscriptions`
-     where `restaurant_id=eq.{restaurantId}`. The channel name is unique per mount:
-     `subscription:{restaurantId}:{timestamp}` (timestamp added to avoid "cannot add callbacks
-     after subscribe()" errors when the hook remounts with the same restaurantId).
+     where `restaurant_id=eq.{restaurantId}`. The channel name is unique per effect run:
+     `subscription:{restaurantId}:{n}` where `n` is a module-level counter (`_channelCounter`)
+     incremented on each call. This avoids "cannot add callbacks after subscribe()" errors
+     even in React Strict Mode (which double-invokes effects in development).
      When a webhook (Stripe/PhonePe) updates the row, the hook updates state immediately
      without a page reload. Channel is removed on unmount.
   └─ get_plan_limits() RPC returns: { max_tables, max_menu_items }
@@ -983,7 +986,7 @@ Manager dashboard header displays a plan label and renewal info derived from use
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
 - Trial period means the subscription status is `trialing`, not `active`. `useSubscription` correctly treats `trialing` as Pro (`isPro = plan === 'pro' && (isActive || isTrial)`). Code that checks `status === 'active'` directly (bypassing the hook) will still incorrectly block trialing users.
 - `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
-- `useSubscription` opens a Realtime channel (name: `subscription:{restaurantId}:{timestamp}`) to reflect webhook-driven plan changes instantly. The timestamp suffix ensures a fresh channel name on every mount, avoiding Supabase's "cannot add callbacks after subscribe()" error when the component remounts. If Supabase Realtime is disabled or the `subscriptions` table is not in the publication, the UI will only update on the next full page load.
+- `useSubscription` opens a Realtime channel (name: `subscription:{restaurantId}:{n}`) to reflect webhook-driven plan changes instantly. `n` is a module-level counter (`_channelCounter`) incremented on each effect run, guaranteeing a unique name even in React Strict Mode where effects are double-invoked in development. If Supabase Realtime is disabled or the `subscriptions` table is not in the publication, the UI will only update on the next full page load.
 - PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`. Credentials are read inside the function (not at module load time) so they are always fresh — do not hoist them to module scope.
 - `getPhonePeClient()` resets `StandardCheckoutClient._client = undefined` before calling `getInstance()` to force the SDK to reinitialise with the current env credentials on every call. The SDK's singleton check uses `=== undefined` (not `=== null`), so setting it to `null` would not trigger reinitialisation.
 - Set `PHONEPE_ENV=production` to switch PhonePe from the sandbox to the live API. Omitting the variable defaults to sandbox.
@@ -1081,6 +1084,8 @@ The **Plans** tab in the admin panel renders `PlanManager`, a lazy-loaded CRUD i
 **Delete:** Requires a `window.confirm()` prompt. Sends `DELETE /api/admin/plans/[id]`. Removes the row from local state on success. Will fail at the DB level if the plan is referenced by active subscriptions (FK constraint).
 
 **Pricing display:** `monthly_paise === 0` renders as `"Custom"` rather than `₹0`. Same for `yearly_paise`.
+
+**Loading:** Coupons are fetched automatically on mount via `useEffect` — no manual trigger required. A "Loading coupons…" message is shown while the request is in flight. This differs from `PlanManager`, which requires an explicit button click to load.
 
 The coupon table displays: Code, Discount, Bonus Days, Plans, Usage, Expires, Status, and Actions. The **Bonus Days** column shows the `duration_days` value (e.g. `+30d`) when set, or `—` when null.
 

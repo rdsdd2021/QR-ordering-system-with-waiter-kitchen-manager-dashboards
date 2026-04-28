@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, Tag, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,6 +63,8 @@ export default function CouponManager({ pin }: { pin: string }) {
     setLoaded(true);
     setLoading(false);
   }
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openCreate() {
     setEditing(null);
@@ -166,11 +168,8 @@ export default function CouponManager({ pin }: { pin: string }) {
           <h2 className="font-semibold text-base flex items-center gap-2">
             <Tag className="h-4 w-4" /> Coupon Management
           </h2>
-          <Button size="sm" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Load Coupons"}
-          </Button>
         </div>
-        <p className="text-sm text-muted-foreground">Click "Load Coupons" to manage discount codes.</p>
+        <p className="text-sm text-muted-foreground">{loading ? "Loading coupons…" : "No coupons loaded."}</p>
       </div>
     );
   }

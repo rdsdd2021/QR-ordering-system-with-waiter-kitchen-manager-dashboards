@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   LayoutGrid, ClipboardList, UtensilsCrossed, Users, Settings,
   BarChart3, Layers, Table2, Store, Webhook, Tags, CreditCard,
@@ -124,8 +125,19 @@ function MobileBottomNav({ activeTab, onNavigate, navGroups }: { activeTab: Tab;
 type Props = { restaurant: Restaurant };
 
 function ManagerClientContent({ restaurant }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>("sessions");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<Tab>(
+    (searchParams.get("tab") as Tab) ?? "sessions"
+  );
   const [billReadyFilter, setBillReadyFilter] = useState(false);
+
+  function handleTabChange(tab: Tab) {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }
   const { signOut, profile } = useAuth();
   const { isPro, isTrial, isExpired, trialEndsAt, subscription } = useSubscription(restaurant.id);
   const meta = PAGE_META[activeTab];
@@ -152,7 +164,7 @@ function ManagerClientContent({ restaurant }: Props) {
   }, [restaurant.id]);
 
   const navGroups = buildNavGroups(pendingCount, () => {
-    setActiveTab("sessions");
+    handleTabChange("sessions");
     setBillReadyFilter(true);
   });
 
@@ -185,7 +197,7 @@ function ManagerClientContent({ restaurant }: Props) {
       restaurant={restaurant}
       navGroups={navGroups}
       activeTab={activeTab}
-      onNavigate={(tab) => setActiveTab(tab as Tab)}
+      onNavigate={(tab) => handleTabChange(tab as Tab)}
       pageTitle={meta.title}
       pageDescription={meta.description}
       planLabel={planLabel}
@@ -194,10 +206,10 @@ function ManagerClientContent({ restaurant }: Props) {
       profileRole="Manager"
       notificationCount={pendingCount}
       onSignOut={signOut}
-      onManagePlan={() => setActiveTab("billing")}
+      onManagePlan={() => handleTabChange("billing")}
       onLogoUpload={handleLogoUpload}
       maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : activeTab === "billing" ? "2xl" : "xl"}
-      mobileNav={<MobileBottomNav activeTab={activeTab} onNavigate={setActiveTab} navGroups={navGroups} />}
+      mobileNav={<MobileBottomNav activeTab={activeTab} onNavigate={handleTabChange} navGroups={navGroups} />}
     >
       {/* Expired paywall — only Billing and Restaurant Details remain accessible */}
       {isExpired && activeTab !== "billing" && activeTab !== "details" ? (
@@ -211,7 +223,7 @@ function ManagerClientContent({ restaurant }: Props) {
               Upgrade to Pro to continue using your dashboard. Your data is safe and will be restored immediately after payment.
             </p>
           </div>
-          <Button onClick={() => setActiveTab("billing")} size="lg" className="gap-2">
+          <Button onClick={() => handleTabChange("billing")} size="lg" className="gap-2">
             <Zap className="h-4 w-4" />
             View Plans
           </Button>

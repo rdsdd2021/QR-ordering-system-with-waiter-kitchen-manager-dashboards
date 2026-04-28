@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+
+// Module-level counter ensures unique channel names even in React Strict Mode
+let _channelCounter = 0;
 
 export type Plan = "free" | "pro";
 
@@ -58,23 +61,26 @@ export function useSubscription(restaurantId: string | null) {
     load();
 
     // Realtime listener — updates when payment completes via webhook
-    // Use a unique channel name per mount to avoid "cannot add callbacks after subscribe()" errors
-    const channelName = `subscription:${restaurantId}:${Date.now()}`;
-    const channel = supabase
-      .channel(channelName)
-      .on("postgres_changes" as any, {
-        event: "UPDATE",
-        schema: "public",
-        table: "subscriptions",
-        filter: `restaurant_id=eq.${restaurantId}`,
-      }, (msg: any) => {
-        if (msg.new) {
-          setSubscription(msg.new as Subscription);
-        }
-      })
-      .subscribe();
+    // Module-level counter guarantees a unique channel name even in React Strict Mode
+    const channelName = `subscription:${restaurantId}:${++_channelCounter}`;
+    let active = true;
+    const channel = supabase.channel(channelName);
+    channel.on("postgres_changes" as any, {
+      event: "UPDATE",
+      schema: "public",
+      table: "subscriptions",
+      filter: `restaurant_id=eq.${restaurantId}`,
+    }, (msg: any) => {
+      if (active && msg.new) {
+        setSubscription(msg.new as Subscription);
+      }
+    });
+    channel.subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, [restaurantId]);
 
   const plan: Plan = subscription?.plan ?? "free";

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Store, Users, ShoppingCart, Zap, CheckCircle2, Search, ToggleLeft, ToggleRight, KeyRound, Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -47,14 +48,25 @@ type Props = {
 const ADMIN_PIN = process.env.NEXT_PUBLIC_ADMIN_PIN ?? "admin123";
 
 export default function AdminClient({ restaurants, subscriptions, orderCounts, hasServiceRole }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [pin, setPin]           = useState("");
   const [authed, setAuthed]     = useState(false);
   const [pinError, setPinError] = useState(false);
   const [search, setSearch]     = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
-  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans">("restaurants");
+  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans">(
+    (searchParams.get("tab") as "restaurants" | "coupons" | "plans") ?? "restaurants"
+  );
   const [confirmTarget, setConfirmTarget] = useState<Restaurant | null>(null);
+
+  function handleTabChange(tab: "restaurants" | "coupons" | "plans") {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }
   // Change password dialog
   const [pwTarget, setPwTarget] = useState<Restaurant | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -287,7 +299,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
           {(["restaurants", "coupons", "plans"] as const).map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => handleTabChange(tab)}
               className={cn(
                 "px-4 py-2 text-sm font-medium capitalize border-b-2 -mb-px transition-colors",
                 activeTab === tab
@@ -313,8 +325,8 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
           </div>
 
           {/* Restaurant table */}
-          <div className="rounded-lg border overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="rounded-lg border overflow-x-auto">
+            <table className="min-w-full text-sm">
               <thead className="bg-muted/50 border-b">
                 <tr>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Restaurant</th>
