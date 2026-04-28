@@ -35,11 +35,30 @@ function AnimatedBadge({
   variant, 
   animate = true,
   children,
+  onDrag,
+  onDragEnd,
+  onDragEnter,
+  onDragExit,
+  onDragLeave,
+  onDragOver,
+  onDragStart,
+  onDrop,
   ...props 
 }: AnimatedBadgeProps) {
   if (!animate) {
     return (
-      <span className={cn(badgeVariants({ variant }), className)} {...props}>
+      <span
+        className={cn(badgeVariants({ variant }), className)}
+        onDrag={onDrag}
+        onDragEnd={onDragEnd}
+        onDragEnter={onDragEnter}
+        onDragExit={onDragExit}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDragStart={onDragStart}
+        onDrop={onDrop}
+        {...props}
+      >
         {children}
       </span>
     );
