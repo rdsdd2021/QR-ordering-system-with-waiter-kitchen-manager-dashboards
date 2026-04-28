@@ -347,10 +347,15 @@ advanceStatus():
 On load:
   useWaiterOrders(restaurant_id, currentWaiterId)
   └─ Fetches all relevant orders for this waiter
+  └─ Returns isConnected flag for real-time connection status
 
 Real-time:
   Subscribes to channel: waiter:{restaurant_id}
   Event: order_changed
+  
+  Connection indicator:
+    - isConnected = true → Shows "Live" with Wifi icon (green)
+    - isConnected = false → Shows "Offline" with WifiOff icon (red)
 
   On UPDATE event:
     - If order exists in local state:
@@ -1683,7 +1688,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| H1 | ~~No auto-reconnect on channel drop~~ | ~~Staff miss orders until manual refresh~~ | **Fixed** — `useKitchenOrders` retries on `CHANNEL_ERROR` (3 s) and `CLOSED` (1 s); re-fetches orders on `SUBSCRIBED` to recover missed events |
+| H1 | ~~No auto-reconnect on channel drop~~ | ~~Staff miss orders until manual refresh~~ | **Fixed** — `useKitchenOrders` retries on `CHANNEL_ERROR` (3 s) and `CLOSED` (1 s); re-fetches orders on `SUBSCRIBED` to recover missed events. Offline state is debounced (2 s) so transient `CHANNEL_ERROR`/`CLOSED` events during normal reconnect cycles no longer flash an error banner. |
 | H2 | `on_order_item_insert` fires on first item only | Broadcast may have incomplete items if batch fails mid-way | Partial order data in real-time payload |
 | H3 | `REPLICA IDENTITY FULL` required | postgres_changes fallback broken without it | Must be set per table in Supabase |
 

@@ -27,7 +27,7 @@ const COLUMNS = [
 
 function KitchenClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
-  const { orders, loading, error, advanceStatus, newOrderIds, refetch } =
+  const { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch } =
     useKitchenOrders(restaurant.id);
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -58,31 +58,30 @@ function KitchenClientContent({ restaurant }: Props) {
 
           <div className="flex items-center gap-2">
             {/* Real-time connection indicator */}
-            {error ? (
+            {!isConnected ? (
               <span className="flex items-center gap-1 text-xs text-destructive">
                 <WifiOff className="h-3.5 w-3.5" />
                 Offline
               </span>
             ) : (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Wifi className="h-3.5 w-3.5 text-green-500" />
+              <span className="flex items-center gap-1 text-xs text-green-600">
+                <Wifi className="h-3.5 w-3.5" />
                 Live
               </span>
             )}
 
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
               onClick={refetch}
-              className="h-8 gap-1.5"
+              className="h-8 w-8"
+              title="Refresh"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
             </Button>
 
-            <Button variant="outline" size="sm" onClick={signOut} className="h-8">
-              <LogOut className="mr-2 h-3.5 w-3.5" />
-              Sign Out
+            <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8" title="Sign Out">
+              <LogOut className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>

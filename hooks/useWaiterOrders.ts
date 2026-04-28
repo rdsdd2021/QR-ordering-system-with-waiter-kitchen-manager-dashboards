@@ -14,8 +14,10 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
   const [orders, setOrders] = useState<WaiterOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(true);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
   const [reconnectKey, setReconnectKey] = useState(0);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks order IDs we've already fetched to avoid duplicate fetches
   const fetchingRef = useRef<Set<string>>(new Set());
 
@@ -211,14 +213,19 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
       )
       .subscribe((status: string) => {
         if (status === "CHANNEL_ERROR") {
-          setError("Real-time connection lost. Retrying…");
+          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
           setTimeout(() => setReconnectKey((k) => k + 1), 3000);
         } else if (status === "SUBSCRIBED") {
+          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+          setIsConnected(true);
           setError(null);
           // Refresh data on (re)connect to catch any missed events
           fetchOrders();
         } else if (status === "CLOSED") {
-          setError("Connection closed. Reconnecting…");
+          // CLOSED fires during normal reconnect cycles — wait before showing offline
+          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
           setTimeout(() => setReconnectKey((k) => k + 1), 1000);
         }
       });
@@ -226,6 +233,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
     channelRef.current = channel;
 
     return () => {
+      if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
@@ -234,7 +242,8 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
   return { 
     orders, 
     loading, 
-    error, 
+    error,
+    isConnected,
     takeOrder, 
     acceptOrder: acceptOrderAction,
     markServed, 

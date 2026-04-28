@@ -34,12 +34,14 @@ export function useKitchenOrders(restaurantId: string) {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(true);
   // Track IDs of orders that just arrived so we can highlight them
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const [reconnectKey, setReconnectKey] = useState(0);
   const channelRef = useRef<ReturnType<
     ReturnType<typeof getSupabaseClient>["channel"]
   > | null>(null);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Initial fetch ──────────────────────────────────────────────────
   const fetchOrders = useCallback(async () => {
@@ -179,19 +181,26 @@ export function useKitchenOrders(restaurantId: string) {
 
     channel.subscribe((status) => {
       if (status === "CHANNEL_ERROR") {
-        setError("Real-time connection lost. Retrying…");
+        // Only mark offline after a sustained failure, not a transient blip
+        if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
         setTimeout(() => setReconnectKey((k) => k + 1), 3000);
       } else if (status === "SUBSCRIBED") {
+        if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+        setIsConnected(true);
         setError(null);
         // Refresh data on (re)connect to catch any missed events
         fetchOrders();
       } else if (status === "CLOSED") {
-        setError("Connection closed. Reconnecting…");
+        // CLOSED fires during normal reconnect cycles — wait before showing offline
+        if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
         setTimeout(() => setReconnectKey((k) => k + 1), 1000);
       }
     });
 
     return () => {
+      if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
@@ -199,7 +208,7 @@ export function useKitchenOrders(restaurantId: string) {
     };
   }, [restaurantId, reconnectKey]);
 
-  return { orders, loading, error, advanceStatus, newOrderIds, refetch: fetchOrders };
+  return { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch: fetchOrders };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
