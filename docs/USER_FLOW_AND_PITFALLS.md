@@ -319,6 +319,7 @@ Each OrderCard shows action button based on current status:
   confirmed  → "Preparing" → status: preparing
   preparing  → "Ready"     → status: ready
   ready      → (no action — waiter marks served)
+  cancelled  → (no action — terminal state, grey card style)
 
 advanceStatus():
   1. Optimistic update (instant UI)
@@ -332,6 +333,7 @@ advanceStatus():
 - **Waiter-first mode:** Orders arrive as `pending_waiter` — kitchen does NOT see them until waiter accepts. When the waiter accepts, the status transitions to `confirmed` and the UPDATE handler detects the order is not yet on the board, triggering a full re-fetch so the kitchen sees it with a 4s highlight.
 - **New order highlight:** New orders get a pulsing border for 4 seconds via `newOrderIds` set.
 - **Urgency coloring:** Active orders (not `ready`/`served`/`pending_waiter`) change border color based on age — amber border + tint at ≥12 minutes, red border + tint at ≥20 minutes. Cards re-render every 60 seconds to keep urgency state current. The urgency class takes precedence over the status-based border color.
+- **Cancelled card style:** `cancelled` has a dedicated grey card style in `statusConfig` (no action button) in both `OrderCard` (kitchen) and `WaiterOrderCard` (waiter). Cancelled orders are normally removed from the board by the real-time UPDATE handler, but if one appears (e.g. race condition before removal), it renders gracefully rather than falling back to undefined.
 
 ### Pitfalls
 

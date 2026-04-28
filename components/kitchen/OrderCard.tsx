@@ -55,6 +55,11 @@ const STATUS_CONFIG: Record<OrderStatus, {
     dot: "bg-muted-foreground/40", border: "border-border", stripe: "bg-muted-foreground/30",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
+  cancelled: {
+    label: "Cancelled",
+    dot: "bg-gray-400", border: "border-gray-200", stripe: "bg-gray-400",
+    nextStatus: null, actionLabel: null, actionClass: "",
+  },
 };
 
 function elapsed(iso: string) {

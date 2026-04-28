@@ -24,6 +24,7 @@ const STATUS_CONFIG: Record<OrderStatus, {
   preparing:      { label: "Preparing",         dot: "bg-orange-400 animate-pulse", border: "border-orange-200", description: "Being prepared in kitchen" },
   ready:          { label: "Ready",             dot: "bg-green-500",              border: "border-green-200",  description: "Ready for pickup and serving" },
   served:         { label: "Served",            dot: "bg-muted-foreground/40",    border: "border-border",     description: "Delivered to customer" },
+  cancelled:      { label: "Cancelled",         dot: "bg-gray-400",               border: "border-gray-200",   description: "Order was cancelled" },
 };
 
 function elapsed(iso: string) {
