@@ -32,21 +32,17 @@ export default function AuthRedirect({ children, allowNoRestaurant = false }: Pr
         .maybeSingle();
 
       // No restaurant yet — let through if caller allows it (onboarding)
-      if (!data?.restaurant_id) { setState("guest"); return; }
-
-      // Has a restaurant + allowNoRestaurant means redirect away
-      if (!allowNoRestaurant) {
-        setState("redirecting");
-        const dest =
-          data.role === "manager" ? `/manager/${data.restaurant_id}` :
-          data.role === "waiter"  ? `/waiter/${data.restaurant_id}`  :
-          data.role === "kitchen" ? `/kitchen/${data.restaurant_id}` :
-          "/onboarding";
-        router.replace(dest);
-        return;
+      if (!data?.restaurant_id) { 
+        if (allowNoRestaurant) {
+          setState("guest");
+        } else {
+          setState("redirecting");
+          router.replace("/onboarding");
+        }
+        return; 
       }
 
-      // allowNoRestaurant=true but user already has a restaurant — also redirect
+      // Has a restaurant — redirect to dashboard
       setState("redirecting");
       const dest =
         data.role === "manager" ? `/manager/${data.restaurant_id}` :
@@ -55,7 +51,7 @@ export default function AuthRedirect({ children, allowNoRestaurant = false }: Pr
         "/onboarding";
       router.replace(dest);
     });
-  }, []);
+  }, [allowNoRestaurant, router]);
 
   // Render nothing while checking or redirecting — no flash
   if (state !== "guest") return null;

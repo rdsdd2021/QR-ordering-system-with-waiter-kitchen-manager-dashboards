@@ -132,9 +132,25 @@ Step 3: Plan
    - no profile → /onboarding
 ```
 
+**`AuthRedirect` component** wraps pages that should not be accessible when logged in (e.g. `/login`, `/onboarding`). It resolves the session and applies the following logic:
+
+```
+session exists?
+  No  → render page (guest)
+  Yes → has restaurant_id?
+          No  → allowNoRestaurant=true  → render page (let through for onboarding)
+                allowNoRestaurant=false → redirect to /onboarding
+          Yes → redirect to role dashboard:
+                  manager  → /manager/[restaurant_id]
+                  waiter   → /waiter/[restaurant_id]
+                  kitchen  → /kitchen/[restaurant_id]
+                  other    → /onboarding
+```
+
 ### Variations
 
 - **New auth user with no users row:** `profile` is null → redirected to `/onboarding`. This happens if staff creation partially failed.
+- **Logged-in user with no restaurant on `/onboarding`:** `allowNoRestaurant=true` is set on the onboarding page, so the user is allowed through to complete setup. On any other protected page (`allowNoRestaurant=false`), they are redirected to `/onboarding`.
 - **Inactive user (`is_active = false`):** No special redirect — they can still log in. The dashboard will load but RLS will block data access for most queries. This is a known gap (see Pitfalls).
 - **Super admin:** `is_super_admin = true` users are not redirected to `/admin` automatically — they must navigate there manually and enter the PIN.
 
@@ -1523,7 +1539,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 ### Pitfalls
 
 - Real-time channels are public (no auth token required). Any client that knows the channel name can subscribe. This is intentional for the kitchen/customer MVP but means order data is not private.
-- If the Supabase Realtime connection drops, the UI shows "Offline" indicator but does not auto-reconnect — user must manually refresh.
+- If the Supabase Realtime connection drops, `useKitchenOrders` auto-reconnects: on `CHANNEL_ERROR` it retries after 3 s; on `CLOSED` it retries after 1 s. On successful `SUBSCRIBED`, it immediately re-fetches all orders to catch any events missed during the outage.
 - The `on_order_item_insert` trigger fires on the FIRST `order_items` INSERT for an order. If the batch insert fails after the first item, the broadcast fires with incomplete item data.
 - `REPLICA IDENTITY FULL` must be set on `orders`, `menu_items`, `order_items` for postgres_changes to include old row data. If not set, UPDATE events won't include the previous values.
 - Channel names are not authenticated — a customer at table A could subscribe to `customer:{restaurant_id}:{table_B}` and see another table's order updates.
@@ -1667,7 +1683,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| H1 | No auto-reconnect on channel drop | Staff miss orders until manual refresh | Must add reconnect logic |
+| H1 | ~~No auto-reconnect on channel drop~~ | ~~Staff miss orders until manual refresh~~ | **Fixed** — `useKitchenOrders` retries on `CHANNEL_ERROR` (3 s) and `CLOSED` (1 s); re-fetches orders on `SUBSCRIBED` to recover missed events |
 | H2 | `on_order_item_insert` fires on first item only | Broadcast may have incomplete items if batch fails mid-way | Partial order data in real-time payload |
 | H3 | `REPLICA IDENTITY FULL` required | postgres_changes fallback broken without it | Must be set per table in Supabase |
 

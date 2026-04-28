@@ -36,6 +36,7 @@ export function useKitchenOrders(restaurantId: string) {
   const [error, setError] = useState<string | null>(null);
   // Track IDs of orders that just arrived so we can highlight them
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
+  const [reconnectKey, setReconnectKey] = useState(0);
   const channelRef = useRef<ReturnType<
     ReturnType<typeof getSupabaseClient>["channel"]
   > | null>(null);
@@ -81,9 +82,12 @@ export function useKitchenOrders(restaurantId: string) {
   useEffect(() => {
     const supabase = getSupabaseClient();
 
-    if ((channelRef.current as { state?: string } | null)?.state === "subscribed") return;
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
 
-    const channel = supabase.channel(`kitchen:${restaurantId}`);
+    const channel = supabase.channel(`kitchen:${restaurantId}:${reconnectKey}`);
     channelRef.current = channel;
 
     // Statuses the kitchen board displays
@@ -176,8 +180,14 @@ export function useKitchenOrders(restaurantId: string) {
     channel.subscribe((status) => {
       if (status === "CHANNEL_ERROR") {
         setError("Real-time connection lost. Retrying…");
+        setTimeout(() => setReconnectKey((k) => k + 1), 3000);
       } else if (status === "SUBSCRIBED") {
         setError(null);
+        // Refresh data on (re)connect to catch any missed events
+        fetchOrders();
+      } else if (status === "CLOSED") {
+        setError("Connection closed. Reconnecting…");
+        setTimeout(() => setReconnectKey((k) => k + 1), 1000);
       }
     });
 
@@ -187,7 +197,7 @@ export function useKitchenOrders(restaurantId: string) {
         channelRef.current = null;
       }
     };
-  }, [restaurantId]);
+  }, [restaurantId, reconnectKey]);
 
   return { orders, loading, error, advanceStatus, newOrderIds, refetch: fetchOrders };
 }

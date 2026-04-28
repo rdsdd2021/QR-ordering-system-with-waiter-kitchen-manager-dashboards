@@ -15,6 +15,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
+  const [reconnectKey, setReconnectKey] = useState(0);
   // Tracks order IDs we've already fetched to avoid duplicate fetches
   const fetchingRef = useRef<Set<string>>(new Set());
 
@@ -142,7 +143,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
     }
 
     const channel = supabase
-      .channel(`waiter:${restaurantId}`)
+      .channel(`waiter:${restaurantId}:${reconnectKey}`)
       // Broadcast from DB trigger (fires after order_items are inserted)
       .on("broadcast", { event: "order_changed" }, (msg: any) => {
         const p = msg.payload;
@@ -211,8 +212,14 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
       .subscribe((status: string) => {
         if (status === "CHANNEL_ERROR") {
           setError("Real-time connection lost. Retrying…");
+          setTimeout(() => setReconnectKey((k) => k + 1), 3000);
         } else if (status === "SUBSCRIBED") {
           setError(null);
+          // Refresh data on (re)connect to catch any missed events
+          fetchOrders();
+        } else if (status === "CLOSED") {
+          setError("Connection closed. Reconnecting…");
+          setTimeout(() => setReconnectKey((k) => k + 1), 1000);
         }
       });
 
@@ -222,7 +229,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [restaurantId, waiterId, fetchAndUpsertOrder]);
+  }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey]);
 
   return { 
     orders, 

@@ -490,7 +490,7 @@ These are explicitly not being built in the current version. They are documented
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|------|-----------|--------|-----------|
-| R1 | Real-time channel drops during peak hours | Medium | High | Manual refresh button on all dashboards. Reconnect logic to be added. |
+| R1 | Real-time channel drops during peak hours | Medium | High | `useKitchenOrders` auto-reconnects (3 s on error, 1 s on close) and re-fetches on reconnect. Manual refresh button retained as fallback. |
 | R2 | Customer refuses to enter phone number | Medium | Medium | Phone is required for billing safety scoping. Consider making it optional with a trade-off. |
 | R3 | Kitchen staff find the interface too complex | Low | High | Kitchen UI is intentionally minimal — large text, one-tap actions only. |
 | R4 | Stripe payment failure during onboarding | Low | Medium | Free plan available as fallback. Stripe errors shown clearly. |
