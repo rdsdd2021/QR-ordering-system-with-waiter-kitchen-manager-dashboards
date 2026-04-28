@@ -262,6 +262,7 @@ Tab: "Orders"
   - useRealtimeOrderStatus() subscribes to channel: customer:{restaurant_id}:{table_id}
   - OrderStatusTracker shows visual progress bar:
     pending → confirmed → preparing → ready → served
+    (cancelled is a terminal state shown separately — order exits the progress bar)
   - Session clears from sessionStorage when all orders have billed_at set
 ```
 

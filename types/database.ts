@@ -73,7 +73,7 @@ export type User = {
 };
 
 /** All possible order statuses in the extended workflow */
-export type OrderStatus = "pending" | "pending_waiter" | "confirmed" | "preparing" | "ready" | "served";
+export type OrderStatus = "pending" | "pending_waiter" | "confirmed" | "preparing" | "ready" | "served" | "cancelled";
 
 export type Order = {
   id: string;
@@ -187,6 +187,7 @@ export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   preparing: ["ready"],
   ready: ["served"],
   served: [],
+  cancelled: [],
 };
 
 /** Check if a status transition is valid */

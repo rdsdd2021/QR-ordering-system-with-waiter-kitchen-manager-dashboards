@@ -180,7 +180,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | C2 | Browse menu | Must Have | View all available items with name, price, description, image, and tags (Veg/Non-veg/Spicy etc.) |
 | C3 | Add to cart | Must Have | Add items, adjust quantity, remove items. Cart persists within the session. |
 | C4 | Place order | Must Have | Customer enters name + phone (first order only). Subsequent orders in the same session skip the form. |
-| C5 | Real-time order tracking | Must Have | Customer sees live status: Placed → Confirmed → Preparing → Ready → Served |
+| C5 | Real-time order tracking | Must Have | Customer sees live status: Placed → Confirmed → Preparing → Ready → Served (or Cancelled if the order is cancelled) |
 | C6 | Multiple orders per session | Should Have | Customer can place additional orders at the same table without re-entering info |
 | C7 | Order history by phone | Should Have | Customer can look up past orders at `/history` using their phone number. The page POSTs to `POST /api/customer/history` with `{ phone }` in the request body (avoids exposing phone numbers in URL query params). |
 | C8 | Geo-fencing | Should Have | Optionally restrict ordering to customers physically inside the restaurant |
