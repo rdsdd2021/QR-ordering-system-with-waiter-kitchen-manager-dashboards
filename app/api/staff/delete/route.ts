@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fireEvent } from "@/lib/webhooks";
 
 function getServiceClient() {
   return createClient(
@@ -64,6 +65,12 @@ export async function DELETE(req: NextRequest) {
         console.warn("[staff/delete] auth delete failed:", authDeleteError.message);
       }
     }
+
+    // Fire webhook (non-blocking)
+    fireEvent(restaurantId, "staff.deactivated", {
+      user_id: userId,
+      role: userRow.role,
+    }).catch(err => console.error("[staff/delete] webhook error:", err));
 
     return NextResponse.json({ success: true });
   } catch (err) {

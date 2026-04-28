@@ -642,7 +642,7 @@ StaffManager component
   → If email changes, also updates the Supabase Auth account via service role key (best-effort; profile update is not rolled back if auth update fails)
   → Scoped to the restaurant via restaurantId + userId ownership check
 - Toggle is_active (soft disable)
-- Delete staff: `DELETE /api/staff/delete` — removes the `users` row then deletes the Supabase Auth account via the service role key; scoped to the restaurant to prevent cross-tenant deletes; manager accounts are blocked from deletion via this route
+- Delete staff: `DELETE /api/staff/delete` — removes the `users` row then deletes the Supabase Auth account via the service role key; scoped to the restaurant to prevent cross-tenant deletes; manager accounts are blocked from deletion via this route; fires `staff.deactivated` webhook event (non-blocking) with `{ user_id, role }` payload
 ```
 
 **Table Setup (`tables` tab)**
@@ -1138,6 +1138,76 @@ fireEvent(restaurantId, eventType, data):
      g. After 10 consecutive endpoint failures → auto-disable endpoint
 ```
 
+### Internal Trigger Endpoint
+
+```
+POST /api/webhooks/trigger
+  Auth: Bearer token (user session) — manager, waiter, or kitchen staff only
+  Body: { restaurantId: string; event: WebhookEventType; data: Record<string, unknown> }
+
+  1. Validates session token via Supabase anon client
+  2. Looks up caller's restaurant_id from users table (service role)
+  3. Rejects if bodyRestaurantId doesn't match the caller's restaurant_id (403)
+  4. Validates event type against WEBHOOK_EVENTS enum
+  5. Calls fireEvent() asynchronously — does NOT block the response
+  6. Returns { queued: true } immediately
+
+Called by lib/api.ts after mutations (order placed, menu changes, etc.)
+```
+
+### Direct Webhook Firing (Order Status Changes)
+
+Order status transitions fire webhooks directly from `updateOrderStatus()` in `lib/api.ts` — bypassing the `/api/webhooks/trigger` HTTP route. After a successful DB update, the function looks up the order's `restaurant_id` and calls `triggerWebhook()` asynchronously (non-blocking).
+
+Mapped status → event:
+
+| Status | Event |
+|--------|-------|
+| `confirmed` | `order.confirmed` |
+| `preparing` | `order.preparing` |
+| `ready` | `order.ready` |
+| `served` | `order.served` |
+| `cancelled` | `order.cancelled` |
+
+Payload for most status events: `{ order_id, table_id, status, previous_status }`
+
+**`order.confirmed` extended payload** — additionally includes customer context fields fetched from the `orders` row:
+
+| Field | Value |
+|-------|-------|
+| `order_id` | The confirmed order UUID |
+| `table_id` | The table UUID |
+| `waiter_id` | Staff member who confirmed the order |
+| `status` | `"confirmed"` |
+| `customer_name` | Customer name if collected at order placement, otherwise `null` |
+| `customer_phone` | Customer phone if collected at order placement, otherwise `null` |
+| `party_size` | Party size if collected at order placement, otherwise `null` |
+
+Note: `order.placed` and `order.billed` are not fired from this path — they are triggered separately at order creation and billing time.
+
+### Direct Webhook Firing (Billing)
+
+`order.billed` and `payment.method_recorded` are fired from `billOrder()` in `lib/api.ts` after the `generate_bill` RPC succeeds and served-but-unbilled items are confirmed. Both calls are non-blocking (`triggerWebhook()` is not awaited).
+
+**`order.billed`** — always fired when a bill is generated:
+
+| Field | Value |
+|-------|-------|
+| `order_id` | The billed order UUID |
+| `table_id` | The table UUID |
+| `gross_amount` | `total_amount` from the RPC result (float) |
+| `net_amount` | `net_amount` from the RPC result, falls back to `gross_amount` if absent |
+| `payment_method` | `options.paymentMethod` if provided, otherwise `null` |
+| `discount_amount` | `options.discountAmount` if provided, otherwise `0` |
+
+**`payment.method_recorded`** — fired only when `options.paymentMethod` is set:
+
+| Field | Value |
+|-------|-------|
+| `order_id` | The billed order UUID |
+| `payment_method` | The recorded payment method string |
+| `amount` | Same as `net_amount` above |
+
 ### Retry Flow
 
 ```
@@ -1167,7 +1237,7 @@ POST /api/webhooks/[id]/retry:
 - SSRF protection is enforced at two layers: the URL input field rejects private/loopback addresses (`localhost`, `127.x`, `10.x`, `192.168.x`, `172.16–31.x`, `0.0.0.0`) and non-public hostnames client-side before submission; the server also blocks these at dispatch time. Webhooks cannot be tested against local servers without a tunnel (ngrok, etc.).
 - Payload size is capped at 64 KB. Large order payloads (many items) could be truncated.
 - The retry scheduler is not a background job — retries only happen when `/api/webhooks/[id]/retry` is called manually or by an external cron. There is no automatic retry execution built in.
-- `fireEvent()` is called from API routes synchronously. If webhook dispatch is slow (up to 8s timeout × 10 endpoints), it can delay the API response.
+- `fireEvent()` is called asynchronously from `POST /api/webhooks/trigger` — the response returns immediately with `{ queued: true }` and dispatch happens in the background. Errors are logged server-side but not surfaced to the caller.
 
 ---
 

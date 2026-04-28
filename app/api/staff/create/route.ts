@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fireEvent } from "@/lib/webhooks";
 
 function getServiceClient() {
   return createClient(
@@ -65,6 +66,13 @@ export async function POST(req: NextRequest) {
       console.error("[staff/create] insert error:", insertError);
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
+
+    // Fire webhook (non-blocking)
+    fireEvent(restaurantId, "staff.created", {
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      role,
+    }).catch(err => console.error("[staff/create] webhook error:", err));
 
     return NextResponse.json({ success: true });
   } catch (err) {

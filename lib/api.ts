@@ -21,6 +21,38 @@ import type {
   TagSuggestion,
 } from "@/types/database";
 import { isValidStatusTransition } from "@/types/database";
+import type { WebhookEventType } from "@/types/webhooks";
+
+// ── Webhook trigger helper ────────────────────────────────────────────────────
+
+/**
+ * Fire a webhook event from the client side.
+ * Calls the server-side /api/webhooks/trigger endpoint which handles auth
+ * and dispatches to all subscribed endpoints for the restaurant.
+ * Non-blocking — errors are swallowed so they never break the caller.
+ */
+async function triggerWebhook(
+  restaurantId: string,
+  event: WebhookEventType,
+  data: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: session } = await supabase.auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) return;
+
+    await fetch("/api/webhooks/trigger", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ restaurantId, event, data }),
+    });
+  } catch {
+    // Non-fatal — webhook failures must never break the main flow
+  }
+}
 
 /**
  * Fetch a restaurant by its ID.
@@ -231,6 +263,17 @@ export async function placeOrder(params: {
     return null;
   }
 
+  // Fire webhook (non-blocking)
+  triggerWebhook(restaurantId, "order.placed", {
+    order_id: orderId,
+    table_id: tableId,
+    status: initialStatus,
+    customer_name: customerName?.trim() || null,
+    customer_phone: customerPhone?.trim() || null,
+    party_size: partySize || null,
+    items: orderItems.map(i => ({ menu_item_id: i.menu_item_id, quantity: i.quantity, price: i.price })),
+  });
+
   return orderId;
 }
 
@@ -357,6 +400,37 @@ export async function updateOrderStatus(
     console.error("Error updating order status:", error.message);
     return false;
   }
+
+  // Map order status → webhook event
+  const statusEventMap: Partial<Record<OrderStatus, WebhookEventType>> = {
+    confirmed:    "order.confirmed",
+    preparing:    "order.preparing",
+    ready:        "order.ready",
+    served:       "order.served",
+    cancelled:    "order.cancelled",
+  };
+  const webhookEvent = statusEventMap[newStatus];
+  if (webhookEvent) {
+    supabase
+      .from("orders")
+      .select("restaurant_id, table_id, customer_name, customer_phone, party_size")
+      .eq("id", orderId)
+      .maybeSingle()
+      .then(({ data: orderRow }) => {
+        if (orderRow?.restaurant_id) {
+          triggerWebhook(orderRow.restaurant_id, webhookEvent, {
+            order_id: orderId,
+            table_id: orderRow.table_id,
+            status: newStatus,
+            previous_status: currentStatus,
+            customer_name: orderRow.customer_name ?? null,
+            customer_phone: orderRow.customer_phone ?? null,
+            party_size: orderRow.party_size ?? null,
+          });
+        }
+      });
+  }
+
   return true;
 }
 
@@ -495,6 +569,28 @@ export async function acceptOrder(
       return false;
     }
 
+    if (data === true) {
+      // Fire order.confirmed webhook
+      supabase
+        .from("orders")
+        .select("restaurant_id, table_id, customer_name, customer_phone, party_size")
+        .eq("id", orderId)
+        .maybeSingle()
+        .then(({ data: orderRow }) => {
+          if (orderRow?.restaurant_id) {
+            triggerWebhook(orderRow.restaurant_id, "order.confirmed", {
+              order_id: orderId,
+              table_id: orderRow.table_id,
+              waiter_id: waiterId,
+              status: "confirmed",
+              customer_name: orderRow.customer_name ?? null,
+              customer_phone: orderRow.customer_phone ?? null,
+              party_size: orderRow.party_size ?? null,
+            });
+          }
+        });
+    }
+
     return data === true;
   } catch (error) {
     console.error("Error in acceptOrder:", error);
@@ -575,7 +671,17 @@ export async function createMenuItem(params: {
     console.error("Error creating menu item:", error.message);
     return null;
   }
-  return data as MenuItem;
+
+  const item = data as MenuItem;
+  // Fire webhook (non-blocking)
+  triggerWebhook(params.restaurantId, "menu.item_created", {
+    item_id: item.id,
+    name: item.name,
+    price: item.price,
+    is_available: item.is_available,
+  });
+
+  return item;
 }
 
 /**
@@ -590,7 +696,8 @@ export async function updateMenuItem(
     description?: string | null;
     image_url?: string | null;
     tags?: string[] | null;
-  }
+  },
+  restaurantId?: string
 ): Promise<boolean> {
   const { error } = await supabase
     .from("menu_items")
@@ -601,13 +708,23 @@ export async function updateMenuItem(
     console.error("Error updating menu item:", error.message);
     return false;
   }
+
+  // Fire webhook (non-blocking)
+  const rid = restaurantId;
+  if (rid) {
+    triggerWebhook(rid, "menu.item_updated", {
+      item_id: itemId,
+      updates,
+    });
+  }
+
   return true;
 }
 
 /**
  * Delete a menu item.
  */
-export async function deleteMenuItem(itemId: string): Promise<boolean> {
+export async function deleteMenuItem(itemId: string, restaurantId?: string): Promise<boolean> {
   const { error } = await supabase
     .from("menu_items")
     .delete()
@@ -617,6 +734,12 @@ export async function deleteMenuItem(itemId: string): Promise<boolean> {
     console.error("Error deleting menu item:", error.message);
     return false;
   }
+
+  // Fire webhook (non-blocking)
+  if (restaurantId) {
+    triggerWebhook(restaurantId, "menu.item_deleted", { item_id: itemId });
+  }
+
   return true;
 }
 
@@ -732,6 +855,38 @@ export async function generateBill(
 
       if ((servedUnbilled ?? []).length === 0) {
         await supabase.rpc("close_table_session", { p_table_id: tableId });
+      }
+
+      // Fetch restaurant_id + customer details for webhook
+      const { data: fullOrder } = await supabase
+        .from("orders")
+        .select("restaurant_id, customer_name, customer_phone, party_size")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (fullOrder?.restaurant_id) {
+        const gross = parseFloat(result.total_amount);
+        const net   = parseFloat(result.net_amount ?? result.total_amount);
+        triggerWebhook(fullOrder.restaurant_id, "order.billed", {
+          order_id: orderId,
+          table_id: tableId,
+          gross_amount: gross,
+          net_amount: net,
+          payment_method: options?.paymentMethod ?? null,
+          discount_amount: options?.discountAmount ?? 0,
+          customer_name: fullOrder.customer_name ?? null,
+          customer_phone: fullOrder.customer_phone ?? null,
+          party_size: fullOrder.party_size ?? null,
+        });
+        if (options?.paymentMethod) {
+          triggerWebhook(fullOrder.restaurant_id, "payment.method_recorded", {
+            order_id: orderId,
+            payment_method: options.paymentMethod,
+            amount: net,
+            customer_name: fullOrder.customer_name ?? null,
+            customer_phone: fullOrder.customer_phone ?? null,
+          });
+        }
       }
     }
 
