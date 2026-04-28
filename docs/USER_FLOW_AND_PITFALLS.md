@@ -56,6 +56,8 @@ Super Admin (PIN-gated)
 
 **Tech stack:** Next.js 16, React 19, TypeScript, Tailwind CSS, Supabase (Postgres + Auth + Realtime), Stripe.
 
+**Auth architecture:** `AuthProvider` (from `contexts/AuthContext`) wraps the entire app in `app/layout.tsx`. It initialises a Supabase auth session listener on mount and exposes `useAuth()` to all client components. The context provides: `user`, `profile`, `loading`, `error`, `signIn`, `signUp`, `signOut`, `redirectToDashboard`, and boolean helpers `isAuthenticated`, `isManager`, `isWaiter`, `isKitchen`.
+
 ---
 
 ## 2. User Roles
@@ -123,8 +125,9 @@ Step 3: Plan
 
 ```
 1. Enter email + password
-2. supabase.auth.signInWithPassword()
-3. useAuth() loads profile from users table (WHERE auth_id = auth.uid())
+2. supabase.auth.signInWithPassword()  ← called via AuthContext.signIn()
+3. AuthContext.loadUserProfile() fetches profile from users table (WHERE auth_id = auth.uid())
+   └─ AuthProvider (mounted in app/layout.tsx) keeps this in sync via onAuthStateChange listener
 4. redirectToDashboard() switches on profile.role:
    - manager  → /manager/[restaurant_id]
    - waiter   → /waiter/[restaurant_id]

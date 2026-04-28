@@ -15,56 +15,35 @@ type Props = {
   restaurant: Restaurant;
 };
 
-function WaiterClientContent({ restaurant }: Props) {
-  const { signOut, profile } = useAuth();
+// Inner component — only mounts once we have a confirmed waiterId,
+// so useWaiterOrders never fires with an empty string and never re-fetches.
+function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
+  restaurant: Restaurant;
+  waiterId: string;
+  onSignOut: () => void;
+  profileName: string | undefined;
+}) {
   const isWaiterMode = restaurant.order_routing_mode === "waiter_first";
 
-  // Order sections — labels adapt to routing mode
   const SECTIONS = [
     {
       key: "my_orders",
       label: "My Orders",
       emptyText: "No orders assigned to you",
-      filter: (orders: any[], waiterId: string) =>
-        orders.filter(o => o.waiter_id === waiterId),
+      filter: (orders: any[], wId: string) =>
+        orders.filter(o => o.waiter_id === wId),
     },
     {
       key: "available",
-      // In waiter_first mode: pending_waiter needs acceptance + ready needs serving
-      // In direct_to_kitchen mode: only ready orders need waiter action
       label: isWaiterMode ? "Needs Attention" : "Ready to Serve",
       emptyText: isWaiterMode ? "Nothing needs attention right now" : "No orders ready to serve",
-      filter: (orders: any[], _waiterId: string) =>
+      filter: (orders: any[]) =>
         orders.filter(o => !o.waiter_id && (o.status === "pending_waiter" || o.status === "ready")),
     },
   ];
-  
-  // Get current waiter ID from authenticated user profile
-  const currentWaiterId = profile?.id;
-  
-  const { 
-    orders, 
-    loading, 
-    error, 
-    isConnected,
-    takeOrder,
-    acceptOrder,
-    markServed, 
-    refetch 
-  } = useWaiterOrders(restaurant.id, currentWaiterId || "");
 
-  // Show loading if auth is still loading or no profile
-  if (!profile || !currentWaiterId) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="flex flex-col gap-3 p-4 w-full max-w-sm">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-32 w-full rounded-lg" />
-          <Skeleton className="h-32 w-full rounded-lg" />
-        </div>
-      </div>
-    );
-  }
+  const { orders, loading, error, isConnected, takeOrder, acceptOrder, markServed, refetch } =
+    useWaiterOrders(restaurant.id, waiterId);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -78,7 +57,7 @@ function WaiterClientContent({ restaurant }: Props) {
             <div>
               <h1 className="font-semibold text-sm text-foreground">{restaurant.name}</h1>
               <p className="text-xs text-muted-foreground">
-                Waiter Dashboard • {profile?.name}
+                Waiter Dashboard • {profileName}
               </p>
             </div>
           </div>
@@ -107,7 +86,7 @@ function WaiterClientContent({ restaurant }: Props) {
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
 
-            <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8" title="Sign Out">
+            <Button variant="ghost" size="icon" onClick={onSignOut} className="h-8 w-8" title="Sign Out">
               <LogOut className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -130,7 +109,7 @@ function WaiterClientContent({ restaurant }: Props) {
       {!loading && (
         <div className="flex-1 p-4 space-y-6">
           {SECTIONS.map(({ key, label, emptyText, filter }) => {
-            const sectionOrders = filter(orders, currentWaiterId);
+            const sectionOrders = filter(orders, waiterId);
             
             return (
               <section key={key}>
@@ -157,7 +136,7 @@ function WaiterClientContent({ restaurant }: Props) {
                       <WaiterOrderCard
                         key={order.id}
                         order={order}
-                        currentWaiterId={currentWaiterId}
+                        currentWaiterId={waiterId}
                         onTakeOrder={takeOrder}
                         onAcceptOrder={acceptOrder}
                         onMarkServed={markServed}
@@ -171,6 +150,32 @@ function WaiterClientContent({ restaurant }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function WaiterClientContent({ restaurant }: Props) {
+  const { signOut, profile } = useAuth();
+
+  // Wait for profile to load before mounting the dashboard
+  if (!profile?.id) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex flex-col gap-3 p-4 w-full max-w-sm">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <WaiterDashboard
+      restaurant={restaurant}
+      waiterId={profile.id}
+      onSignOut={signOut}
+      profileName={profile.name}
+    />
   );
 }
 
