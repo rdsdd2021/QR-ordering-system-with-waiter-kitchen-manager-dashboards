@@ -24,10 +24,15 @@ const badgeVariants = cva(
   }
 );
 
-export interface AnimatedBadgeProps
-  extends React.HTMLAttributes<HTMLSpanElement>,
-    VariantProps<typeof badgeVariants> {
+export interface AnimatedBadgeProps extends VariantProps<typeof badgeVariants> {
   animate?: boolean;
+  className?: string;
+  children?: React.ReactNode;
+  style?: React.CSSProperties;
+  id?: string;
+  role?: React.AriaRole;
+  "aria-label"?: string;
+  onClick?: React.MouseEventHandler<HTMLSpanElement>;
 }
 
 function AnimatedBadge({ 
@@ -35,30 +40,11 @@ function AnimatedBadge({
   variant, 
   animate = true,
   children,
-  onDrag,
-  onDragEnd,
-  onDragEnter,
-  onDragExit,
-  onDragLeave,
-  onDragOver,
-  onDragStart,
-  onDrop,
   ...props 
 }: AnimatedBadgeProps) {
   if (!animate) {
     return (
-      <span
-        className={cn(badgeVariants({ variant }), className)}
-        onDrag={onDrag}
-        onDragEnd={onDragEnd}
-        onDragEnter={onDragEnter}
-        onDragExit={onDragExit}
-        onDragLeave={onDragLeave}
-        onDragOver={onDragOver}
-        onDragStart={onDragStart}
-        onDrop={onDrop}
-        {...props}
-      >
+      <span className={cn(badgeVariants({ variant }), className)} {...props}>
         {children}
       </span>
     );
