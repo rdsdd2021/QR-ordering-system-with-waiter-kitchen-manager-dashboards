@@ -1,13 +1,13 @@
 import * as React from "react";
-import { motion } from "motion/react";
+import { motion, HTMLMotionProps } from "motion/react";
 import { cn } from "@/lib/utils";
 
-export interface AnimatedInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface AnimatedInputProps extends Omit<HTMLMotionProps<"input">, "ref"> {
   error?: boolean;
 }
 
 const AnimatedInput = React.forwardRef<HTMLInputElement, AnimatedInputProps>(
-  ({ className, type, error, ...props }, ref) => {
+  ({ className, type, error, onFocus, onBlur, ...props }, ref) => {
     const [isFocused, setIsFocused] = React.useState(false);
 
     return (
@@ -18,11 +18,11 @@ const AnimatedInput = React.forwardRef<HTMLInputElement, AnimatedInputProps>(
           data-slot="input"
           onFocus={(e) => {
             setIsFocused(true);
-            props.onFocus?.(e);
+            (onFocus as React.FocusEventHandler<HTMLInputElement>)?.(e as unknown as React.FocusEvent<HTMLInputElement>);
           }}
           onBlur={(e) => {
             setIsFocused(false);
-            props.onBlur?.(e);
+            (onBlur as React.FocusEventHandler<HTMLInputElement>)?.(e as unknown as React.FocusEvent<HTMLInputElement>);
           }}
           animate={{
             scale: isFocused ? 1.01 : 1,
