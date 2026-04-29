@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, Wifi, WifiOff, LogOut, CheckCheck } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, LogOut, CheckCheck, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import OrderCard from "@/components/kitchen/OrderCard";
 import { useKitchenOrders } from "@/hooks/useKitchenOrders";
+import { useNotificationSounds } from "@/hooks/useNotificationSounds";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
 import { useState } from "react";
@@ -27,8 +28,9 @@ const COLUMNS = [
 
 function KitchenClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
+  const { notify, muted, toggleMute } = useNotificationSounds();
   const { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch } =
-    useKitchenOrders(restaurant.id);
+    useKitchenOrders(restaurant.id, notify);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   async function markAllReady() {
@@ -78,6 +80,19 @@ function KitchenClientContent({ restaurant }: Props) {
               title="Refresh"
             >
               <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleMute}
+              className="h-8 w-8"
+              title={muted ? "Unmute notifications" : "Mute notifications"}
+            >
+              {muted
+                ? <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
+                : <Volume2 className="h-3.5 w-3.5" />
+              }
             </Button>
 
             <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8" title="Sign Out">

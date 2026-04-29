@@ -456,11 +456,11 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **System** | `on_order_item_insert` trigger → broadcast → `fetchAndUpsertOrder()` re-fetches full order → `newOrderIds` set → CSS animation; also fires for `pending_waiter → confirmed` transitions |
 
 **Pain points:**
-- No sound alert — in a noisy kitchen, visual-only is easy to miss
+- ~~No sound alert — in a noisy kitchen, visual-only is easy to miss~~ ✅ Implemented — audio chime fires on new order arrival via `useNotificationSounds`; mute/unmute toggle in the header persists to `localStorage`
 - If multiple orders arrive simultaneously, the highlight is on all of them — hard to distinguish new from old
 
 **Opportunities:**
-- Add an optional audio chime for new orders (browser Audio API)
+- ~~Add an optional audio chime for new orders (browser Audio API)~~ ✅ Implemented
 - Show a "NEW" badge that persists until Arjun taps "Confirm"
 
 ---
@@ -875,7 +875,7 @@ T+25:01 Orders tab goes blank         —                            —        
 |------|-----------|-----------|
 | **Sneha** | Placing the second order with no form | Waiting for the bill with no notification |
 | **Priya** | Seeing "Ready" without running to the kitchen | Racing another waiter to claim an order |
-| **Arjun** | Clean queue, one-tap status updates | No audio alert for new orders |
+| **Arjun** | Clean queue, one-tap status updates | No audio alert for new orders ✅ Fixed |
 | **Ravi** | Real-time floor visibility from his phone | Can't bill until waiter marks served |
 
 ---
@@ -913,7 +913,7 @@ Login    See queue    New order arrives    Confirm    Preparing    Ready    Queu
   😐  →    😊     →       😊           →    😊    →     😊     →   😊   →      😊
 ```
 
-**Biggest drop:** No audio alert — visual-only in a noisy kitchen.  
+**Biggest drop:** ~~No audio alert — visual-only in a noisy kitchen~~ ✅ Audio alerts now implemented with mute toggle.  
 **Biggest win:** Clean, simple interface with no unnecessary complexity.
 
 ---
@@ -948,7 +948,7 @@ Homepage   Sign up   Restaurant setup   Plan choice   Dashboard   First order
 |----------|-------------|---------|
 | 🔴 High | Auto-switch to Orders tab after placing order | Customer |
 | 🔴 High | "Request Bill" button in customer app | Customer |
-| 🔴 High | Audio alert for new orders in kitchen | Kitchen |
+| ✅ Done | Audio alert for new orders in kitchen (with mute toggle) | Kitchen |
 | 🔴 High | Onboarding checklist / setup guide for new managers | Manager / Owner |
 | 🔴 High | Order cancellation flow for managers | Manager |
 | 🟡 Medium | Persist cart to sessionStorage (survive refresh) | Customer |

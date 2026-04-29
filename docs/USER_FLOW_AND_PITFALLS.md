@@ -314,6 +314,16 @@ Real-time:
                (also deduplicated via fetchingRef)
 ```
 
+### Header Controls
+
+The kitchen header (sticky, top of screen) provides:
+
+- **Restaurant name + staff name** — identity confirmation at a glance.
+- **Live / Offline indicator** — green "Live" (Wifi icon) when the real-time channel is connected; red "Offline" (WifiOff icon) when disconnected.
+- **Refresh button** — triggers a full re-fetch of all kitchen orders. Use when the real-time channel drops.
+- **Mute / Unmute button** — toggles notification sounds (Volume2 / VolumeX icon). Mute state is persisted to `localStorage` under `notification_sounds_muted` and survives page reloads. See [Notification Sounds & Vibration](#notification-sounds--vibration) for sound details.
+- **Sign Out button** — ends the session.
+
 ### Order Actions
 
 ```
@@ -1654,6 +1664,26 @@ useKitchenOrders also subscribes to postgres_changes as fallback:
   supabase.channel(...)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
 ```
+
+### Notification Sounds & Vibration
+
+`useNotificationSounds` (`hooks/useNotificationSounds.ts`) provides synthesised audio alerts and vibration patterns for real-time events. No audio files are required — tones are generated via the Web Audio API and work offline.
+
+| Event | Sound | Vibration pattern |
+|-------|-------|-------------------|
+| `newOrder` | Double high-pitched square-wave beep (880 Hz) | `[200, 100, 200]` |
+| `orderReady` | Ascending two-tone chime (C5 → G5) | `[300, 100, 300, 100, 300]` |
+| `orderUpdate` | Single soft sine blip (660 Hz) | `[100]` |
+| `waiterCall` | Triple short triangle-wave beeps (740 Hz) | `[100, 80, 100, 80, 100]` |
+
+**Integration:** `useKitchenOrders` and `useWaiterOrders` accept an optional `notify?: (event: NotificationEvent) => void` callback. The kitchen and waiter dashboard components call `useNotificationSounds()` and pass `notify` down to the hooks, which invoke it on relevant real-time events (e.g. new order arrival, order ready).
+
+**Mute state** is persisted to `localStorage` under the key `notification_sounds_muted` and survives page reloads. The hook returns `{ notify, muted, toggleMute }`.
+
+**Browser notes:**
+- `AudioContext` is created lazily on first use to satisfy browser autoplay policies (requires a prior user gesture).
+- Vibration uses `navigator.vibrate()` — silently ignored on iOS and desktop browsers.
+- `AudioContext` is closed on component unmount to release resources.
 
 ### Real-time for Menu (Customer Page)
 

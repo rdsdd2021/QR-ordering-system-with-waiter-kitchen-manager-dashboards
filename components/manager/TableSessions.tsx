@@ -13,6 +13,7 @@ import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { getTableAvailability, getFloors, getMenuItems, placeOrder } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import BillDialog from "@/components/manager/BillDialog";
+import { useNotificationSounds } from "@/hooks/useNotificationSounds";
 import type { MenuItem } from "@/types/database";
 
 type Props = {
@@ -467,6 +468,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
   // Call waiter notifications: tableId → { table_number, customer_name, at }
   const [waiterCalls, setWaiterCalls] = useState<Record<string, { table_number: number; customer_name: string | null; at: number }>>({});
   const [showBillReadyOnly, setShowBillReadyOnly] = useState(initBillReadyFilter);
+  const { notify } = useNotificationSounds();
 
   // Sync external billReadyFilter prop
   useEffect(() => {
@@ -527,6 +529,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
       .on("broadcast" as any, { event: "call_waiter" }, (msg: any) => {
         const p = msg.payload ?? {};
         if (!p.table_id) return;
+        notify("waiterCall");
         setWaiterCalls((prev) => ({
           ...prev,
           [p.table_id]: { table_number: p.table_number, customer_name: p.customer_name ?? null, at: Date.now() },

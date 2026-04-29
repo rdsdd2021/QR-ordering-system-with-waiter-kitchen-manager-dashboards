@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, Wifi, WifiOff, LogOut } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, LogOut, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import WaiterOrderCard from "@/components/waiter/WaiterOrderCard";
 import { useWaiterOrders } from "@/hooks/useWaiterOrders";
+import { useNotificationSounds } from "@/hooks/useNotificationSounds";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
 
@@ -23,6 +24,7 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
   onSignOut: () => void;
   profileName: string | undefined;
 }) {
+  const { notify, muted, toggleMute } = useNotificationSounds();
   const isWaiterMode = restaurant.order_routing_mode === "waiter_first";
 
   const SECTIONS = [
@@ -43,7 +45,7 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
   ];
 
   const { orders, loading, error, isConnected, takeOrder, acceptOrder, markServed, refetch } =
-    useWaiterOrders(restaurant.id, waiterId);
+    useWaiterOrders(restaurant.id, waiterId, notify);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -84,6 +86,19 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
               title="Refresh"
             >
               <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleMute}
+              className="h-8 w-8"
+              title={muted ? "Unmute notifications" : "Mute notifications"}
+            >
+              {muted
+                ? <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
+                : <Volume2 className="h-3.5 w-3.5" />
+              }
             </Button>
 
             <Button variant="ghost" size="icon" onClick={onSignOut} className="h-8 w-8" title="Sign Out">

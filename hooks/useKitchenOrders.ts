@@ -29,8 +29,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
 import { getKitchenOrders, updateOrderStatus } from "@/lib/api";
 import type { KitchenOrder, OrderStatus } from "@/types/database";
+import type { NotificationEvent } from "@/hooks/useNotificationSounds";
 
-export function useKitchenOrders(restaurantId: string) {
+type NotifyFn = (event: NotificationEvent) => void;
+
+export function useKitchenOrders(restaurantId: string, notify?: NotifyFn) {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +130,7 @@ export function useKitchenOrders(restaurantId: string) {
         });
         if (markNew) {
           setNewOrderIds((prev) => new Set(prev).add(orderId));
+          notify?.("newOrder");
           setTimeout(() => {
             setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
           }, 4000);
@@ -155,6 +159,7 @@ export function useKitchenOrders(restaurantId: string) {
               if (!KITCHEN_STATUSES.includes(newStatus)) {
                 return prev.filter((o) => o.id !== msg.id);
               }
+              notify?.("orderUpdate");
               return prev.map((o) => o.id === msg.id ? { ...o, status: newStatus } : o);
             } else if (KITCHEN_STATUSES.includes(newStatus)) {
               // Order wasn't on board yet (e.g. pending_waiter → confirmed)
@@ -188,6 +193,7 @@ export function useKitchenOrders(restaurantId: string) {
               if (!KITCHEN_STATUSES.includes(newStatus)) {
                 return prev.filter((o) => o.id !== u.id);
               }
+              notify?.("orderUpdate");
               return prev.map((o) => o.id === u.id ? { ...o, status: newStatus } : o);
             } else if (KITCHEN_STATUSES.includes(newStatus)) {
               fetchAndUpsertOrder(u.id, true);
@@ -225,7 +231,7 @@ export function useKitchenOrders(restaurantId: string) {
         channelRef.current = null;
       }
     };
-  }, [restaurantId, reconnectKey, refreshOrdersSilently]);
+  }, [restaurantId, reconnectKey, refreshOrdersSilently, notify]);
 
   return { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch: fetchOrders };
 }

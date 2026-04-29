@@ -9,8 +9,11 @@ import {
   acceptOrder
 } from "@/lib/api";
 import type { WaiterOrder } from "@/types/database";
+import type { NotificationEvent } from "@/hooks/useNotificationSounds";
 
-export function useWaiterOrders(restaurantId: string, waiterId: string) {
+type NotifyFn = (event: NotificationEvent) => void;
+
+export function useWaiterOrders(restaurantId: string, waiterId: string, notify?: NotifyFn) {
   const [orders, setOrders] = useState<WaiterOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,10 +164,12 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
         if (p.event === "INSERT") {
           // Fetch the full order with items
           fetchAndUpsertOrder(p.id);
+          notify?.("newOrder");
         } else if (p.event === "UPDATE") {
           const assignedToMe = p.waiter_id === waiterId;
           const assignedToOther = p.waiter_id && p.waiter_id !== waiterId;
           const isServed = p.status === "served";
+          const isReady = p.status === "ready";
 
           setOrders((prev) => {
             const exists = prev.some((o) => o.id === p.id);
@@ -174,12 +179,15 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
               if (isServed || assignedToOther) {
                 return prev.filter((o) => o.id !== p.id);
               }
+              if (isReady) notify?.("orderReady");
+              else notify?.("orderUpdate");
               return prev.map((o) =>
                 o.id === p.id ? { ...o, status: p.status, waiter_id: p.waiter_id } : o
               );
             } else if (assignedToMe) {
               // Order just got assigned to me — fetch full data and add it
               fetchAndUpsertOrder(p.id);
+              notify?.("newOrder");
             }
             return prev;
           });
@@ -195,10 +203,12 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
 
           if (msg.eventType === "INSERT") {
             fetchAndUpsertOrder(row.id);
+            notify?.("newOrder");
           } else if (msg.eventType === "UPDATE") {
             const assignedToMe = row.waiter_id === waiterId;
             const assignedToOther = row.waiter_id && row.waiter_id !== waiterId;
             const isServed = row.status === "served";
+            const isReady = row.status === "ready";
 
             setOrders((prev) => {
               const exists = prev.some((o) => o.id === row.id);
@@ -207,11 +217,14 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
                 if (isServed || assignedToOther) {
                   return prev.filter((o) => o.id !== row.id);
                 }
+                if (isReady) notify?.("orderReady");
+                else notify?.("orderUpdate");
                 return prev.map((o) =>
                   o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
                 );
               } else if (assignedToMe) {
                 fetchAndUpsertOrder(row.id);
+                notify?.("newOrder");
               }
               return prev;
             });
@@ -244,7 +257,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey, refreshOrdersSilently]);
+  }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey, refreshOrdersSilently, notify]);
 
   return { 
     orders, 
