@@ -15,18 +15,18 @@ type Props = {
 };
 
 const TAG_STYLES: Record<string, string> = {
-  veg:        "text-emerald-700 bg-emerald-100 border border-emerald-200",
-  vegetarian: "text-emerald-700 bg-emerald-100 border border-emerald-200",
-  non_veg:    "text-rose-600 bg-rose-100 border border-rose-200",
-  "non-veg":  "text-rose-600 bg-rose-100 border border-rose-200",
-  nonveg:     "text-rose-600 bg-rose-100 border border-rose-200",
-  spicy:      "text-orange-600 bg-orange-100 border border-orange-200",
-  bestseller: "text-amber-700 bg-amber-100 border border-amber-200",
-  popular:    "text-amber-700 bg-amber-100 border border-amber-200",
-  healthy:    "text-teal-700 bg-teal-100 border border-teal-200",
-  dessert:    "text-pink-600 bg-pink-100 border border-pink-200",
-  beverage:   "text-blue-600 bg-blue-100 border border-blue-200",
-  new:        "text-violet-600 bg-violet-100 border border-violet-200",
+  veg:        "text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800",
+  vegetarian: "text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800",
+  non_veg:    "text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800",
+  "non-veg":  "text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800",
+  nonveg:     "text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800",
+  spicy:      "text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-800",
+  bestseller: "text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800",
+  popular:    "text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800",
+  healthy:    "text-teal-700 dark:text-teal-400 bg-teal-100 dark:bg-teal-950/50 border border-teal-200 dark:border-teal-800",
+  dessert:    "text-pink-600 dark:text-pink-400 bg-pink-100 dark:bg-pink-950/50 border border-pink-200 dark:border-pink-800",
+  beverage:   "text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800",
+  new:        "text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800",
 };
 
 function tagStyle(tag: string) {

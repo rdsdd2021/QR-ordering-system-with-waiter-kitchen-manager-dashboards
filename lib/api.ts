@@ -3,6 +3,30 @@
  * Keeping data-fetching logic separate from UI components.
  */
 import { supabase } from "./supabase";
+
+// ── Restaurant config cache ───────────────────────────────────────────────────
+// Restaurant config (routing mode, geofencing, etc.) rarely changes.
+// Cache it in-memory for 5 minutes to avoid a DB round-trip on every order.
+
+type CachedRestaurant = { data: import("@/types/database").Restaurant; expiresAt: number };
+const _restaurantCache = new Map<string, CachedRestaurant>();
+const RESTAURANT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedRestaurant(id: string): import("@/types/database").Restaurant | null {
+  const entry = _restaurantCache.get(id);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { _restaurantCache.delete(id); return null; }
+  return entry.data;
+}
+
+function setCachedRestaurant(id: string, data: import("@/types/database").Restaurant) {
+  _restaurantCache.set(id, { data, expiresAt: Date.now() + RESTAURANT_CACHE_TTL_MS });
+}
+
+/** Call this whenever restaurant settings are updated so the cache stays fresh. */
+export function invalidateRestaurantCache(restaurantId: string) {
+  _restaurantCache.delete(restaurantId);
+}
 import type { 
   MenuItem, 
   Restaurant, 
@@ -56,11 +80,15 @@ async function triggerWebhook(
 
 /**
  * Fetch a restaurant by its ID.
- * Returns null if not found.
+ * Results are cached in-memory for 5 minutes — call invalidateRestaurantCache()
+ * after any settings update to keep the cache consistent.
  */
 export async function getRestaurant(
   restaurantId: string
 ): Promise<Restaurant | null> {
+  const cached = getCachedRestaurant(restaurantId);
+  if (cached) return cached;
+
   const { data, error } = await supabase
     .from("restaurants")
     .select("id, name, slug, logo_url, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters, auto_confirm_minutes")
@@ -71,6 +99,7 @@ export async function getRestaurant(
     console.error("Error fetching restaurant:", error.message, error.code);
     return null;
   }
+  if (data) setCachedRestaurant(restaurantId, data as Restaurant);
   return data as Restaurant | null;
 }
 
@@ -183,19 +212,21 @@ export async function placeOrder(params: {
 }): Promise<string | 'UNPAID_ORDERS_EXIST' | null> {
   const { restaurantId, tableId, items, customerName, customerPhone, partySize } = params;
 
-  // Step 1: BILLING SAFETY - Block if another customer has unpaid orders at this table.
-  // Same customer placing a second order is fine — we scope the check by phone number.
-  const hasConflict = await supabase.rpc("check_table_has_unpaid_orders", {
-    p_table_id: tableId,
-    p_customer_phone: customerPhone?.trim() || null,
-  });
+  // Step 1 + 2 in parallel: check for unpaid orders AND fetch restaurant config simultaneously.
+  // Previously these were sequential — now they run concurrently, saving one full round-trip.
+  const [hasConflict, restaurant] = await Promise.all([
+    supabase.rpc("check_table_has_unpaid_orders", {
+      p_table_id: tableId,
+      p_customer_phone: customerPhone?.trim() || null,
+    }),
+    getRestaurant(restaurantId),
+  ]);
+
   if (hasConflict.data === true) {
     console.log(`[Billing Safety] Blocked new order for table ${tableId} - existing unpaid orders found`);
     return 'UNPAID_ORDERS_EXIST';
   }
 
-  // Step 2: Get restaurant routing mode to determine initial status
-  const restaurant = await getRestaurant(restaurantId);
   if (!restaurant) {
     console.error("Restaurant not found:", restaurantId);
     return null;
@@ -1195,6 +1226,8 @@ export async function updateRestaurantRoutingMode(
     console.error("Error updating routing mode:", error.message);
     return false;
   }
+  // Invalidate cache so next order picks up the new routing mode immediately
+  invalidateRestaurantCache(restaurantId);
   return true;
 }
 
@@ -1231,6 +1264,8 @@ export async function updateRestaurantDetails(
     console.error("Error updating restaurant details:", error.message);
     return { success: false, error: error.message };
   }
+  // Invalidate cache so the updated name/slug is reflected immediately
+  invalidateRestaurantCache(restaurantId);
   return { success: true };
 }
 

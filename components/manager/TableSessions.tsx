@@ -4,9 +4,9 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   RefreshCw, Loader2, User, Users, Clock,
-  LayoutGrid, List, X, Receipt, Plus, Printer,
+  LayoutGrid, X, Receipt, Plus, Printer,
   ChevronDown, ChevronUp, Bell,
-  MoreHorizontal, Filter, Minus, Search, ShoppingCart,
+  MoreHorizontal, Minus, Search, ShoppingCart,
   CheckCircle2, AlertCircle, Banknote,
 } from "lucide-react";
 import { supabase, getSupabaseClient } from "@/lib/supabase";
@@ -91,10 +91,10 @@ const STATE_LABEL: Record<TileState, string> = {
 
 const STATE_BADGE: Record<TileState, string> = {
   free:        "bg-transparent text-muted-foreground border border-border",
-  active:      "bg-blue-50 text-blue-600 border border-blue-200",
-  "bill-ready":"bg-green-50 text-green-600 border border-green-200",
-  awaiting:    "bg-amber-50 text-amber-600 border border-amber-200",
-  billed:      "bg-gray-50 text-gray-400 border border-gray-200",
+  active:      "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800",
+  "bill-ready":"bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800",
+  awaiting:    "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800",
+  billed:      "bg-gray-50 dark:bg-gray-900/40 text-gray-400 border border-gray-200 dark:border-gray-700",
 };
 
 const STATE_DOT: Record<TileState, string> = {
@@ -107,19 +107,19 @@ const STATE_DOT: Record<TileState, string> = {
 
 const STATE_CARD: Record<TileState, string> = {
   free:        "bg-card border-border",
-  active:      "bg-card border-blue-200",
-  "bill-ready":"bg-card border-green-300",
-  awaiting:    "bg-card border-amber-200",
+  active:      "bg-card border-blue-400/40",
+  "bill-ready":"bg-card border-green-400/40",
+  awaiting:    "bg-card border-amber-400/40",
   billed:      "bg-card border-border opacity-60",
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  pending:        "bg-amber-100 text-amber-700",
-  pending_waiter: "bg-purple-100 text-purple-700",
-  confirmed:      "bg-blue-100 text-blue-700",
-  preparing:      "bg-orange-100 text-orange-700",
-  ready:          "bg-green-100 text-green-700",
-  served:         "bg-gray-100 text-gray-500",
+  pending:        "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400",
+  pending_waiter: "bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-400",
+  confirmed:      "bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400",
+  preparing:      "bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400",
+  ready:          "bg-green-100 dark:bg-green-950/50 text-green-700 dark:text-green-400",
+  served:         "bg-gray-100 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -448,7 +448,6 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
   const [pastSessions,   setPastSessions]   = useState<TableSession[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
-  const [viewMode,       setViewMode]       = useState<"grid" | "list">("grid");
   const [activeFloor,    setActiveFloor]    = useState<string>("all");
   const [selectedTile,   setSelectedTile]   = useState<TableTile | null>(null);
   const [billDialogSession, setBillDialogSession] = useState<TableSession | null>(null);
@@ -576,9 +575,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
 
   const pageSize    = cols * rowsPerPage;
   const totalPages  = Math.max(1, Math.ceil(visibleTiles.length / pageSize));
-  const pagedTiles  = viewMode === "grid"
-    ? visibleTiles.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-    : visibleTiles;
+  const pagedTiles  = visibleTiles.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Stats
   const activeTables   = activeSessions.length;
@@ -657,20 +654,20 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
             {Object.entries(waiterCalls).map(([tableId, call]) => (
               <div
                 key={tableId}
-                className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5"
+                className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-2.5"
               >
                 <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-amber-600 animate-pulse shrink-0" />
-                  <p className="text-sm font-semibold text-amber-800">
+                  <Bell className="h-4 w-4 text-amber-600 dark:text-amber-400 animate-pulse shrink-0" />
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
                     Table {String(call.table_number).padStart(2, "0")} is calling for a waiter
                     {call.customer_name && (
-                      <span className="font-normal text-amber-700"> · {call.customer_name}</span>
+                      <span className="font-normal text-amber-700 dark:text-amber-400"> · {call.customer_name}</span>
                     )}
                   </p>
                 </div>
                 <button
                   onClick={() => setWaiterCalls((prev) => { const n = { ...prev }; delete n[tableId]; return n; })}
-                  className="text-amber-500 hover:text-amber-700 transition-colors shrink-0"
+                  className="text-amber-500 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors shrink-0"
                   title="Dismiss"
                 >
                   <X className="h-4 w-4" />
@@ -754,34 +751,10 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
             >
               <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
             </button>
-            {/* View toggle */}
-            <div className="flex items-center rounded-lg border border-border overflow-hidden">
-              <button
-                onClick={() => setViewMode("grid")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors",
-                  viewMode === "grid" ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted"
-                )}
-              >
-                <LayoutGrid className="h-3.5 w-3.5" /> Grid
-              </button>
-              <button
-                onClick={() => setViewMode("list")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-l border-border transition-colors",
-                  viewMode === "list" ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted"
-                )}
-              >
-                <List className="h-3.5 w-3.5" /> List
-              </button>
-            </div>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors" disabled title="Filters coming soon">
-              <Filter className="h-3.5 w-3.5" /> Filters
-            </button>
+            {/* View toggle — removed (grid only) */}
 
             {/* Columns selector — desktop only */}
-            {viewMode === "grid" && (
-              <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
+            <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
                 <span className="text-xs text-muted-foreground whitespace-nowrap">Cols</span>
                 <div className="flex items-center gap-0.5">
                   {[2, 3, 4, 5, 6].map(n => (
@@ -796,11 +769,9 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
                   ))}
                 </div>
               </div>
-            )}
 
             {/* Rows selector — desktop only */}
-            {viewMode === "grid" && (
-              <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
+            <div className="hidden md:flex items-center gap-1.5 border border-border rounded-lg px-2.5 py-1.5">
                 <span className="text-xs text-muted-foreground whitespace-nowrap">Rows</span>
                 <div className="flex items-center gap-0.5">
                   {[1, 2, 3, 4, 5].map(n => (
@@ -815,13 +786,11 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
                   ))}
                 </div>
               </div>
-            )}
           </div>
         </div>
 
         {/* ── Grid ───────────────────────────────────────────── */}
-        {viewMode === "grid" && (
-          <GridLayout cols={cols}>
+        <GridLayout cols={cols}>
             {pagedTiles.map((tile) => (
               <TableCard
                 key={tile.table_id}
@@ -836,24 +805,6 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
               />
             ))}
           </GridLayout>
-        )}
-
-        {/* ── List ───────────────────────────────────────────── */}
-        {viewMode === "list" && (
-          <div className="space-y-2">
-            {visibleTiles.map((tile) => (
-              <TableListRow
-                key={tile.table_id}
-                tile={tile}
-                selected={selectedTile?.table_id === tile.table_id}
-                onClick={() => setSelectedTile(
-                  selectedTile?.table_id === tile.table_id ? null : tile
-                )}
-                onBill={(s) => setBillDialogSession(s)}
-              />
-            ))}
-          </div>
-        )}
 
         {/* ── Pagination ─────────────────────────────────────── */}
         <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-border">
@@ -883,9 +834,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
               className="px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-40 transition-colors"
             >›</button>
           </div>
-          {viewMode === "grid" && (
-            <span className="hidden sm:block text-muted-foreground">{cols} cols × {rowsPerPage} rows</span>
-          )}
+          <span className="hidden sm:block text-muted-foreground">{cols} cols × {rowsPerPage} rows</span>
         </div>
       </div>
 
@@ -1063,8 +1012,8 @@ function TableCard({ tile, selected, onClick, onBill, onReminder, reminderSent }
                 className={cn(
                   "text-[11px] font-semibold border rounded-lg px-2 py-0.5 transition-colors flex items-center gap-1",
                   justReminded
-                    ? "text-green-600 border-green-300 bg-green-50 cursor-default"
-                    : "text-amber-600 border-amber-300 hover:bg-amber-50"
+                    ? "text-green-600 dark:text-green-400 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/40 cursor-default"
+                    : "text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40"
                 )}
               >
                 <Bell className={cn("h-2.5 w-2.5", justReminded && "animate-pulse")} />

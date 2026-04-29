@@ -18,13 +18,13 @@ type Props = {
 const STATUS_CONFIG: Record<OrderStatus, {
   label: string; dot: string; border: string; description: string;
 }> = {
-  pending:        { label: "New Order",         dot: "bg-amber-400",              border: "border-amber-200",  description: "Waiting for kitchen" },
-  pending_waiter: { label: "Needs acceptance",  dot: "bg-purple-400 animate-pulse", border: "border-purple-200", description: "Waiting for waiter to accept" },
-  confirmed:      { label: "Confirmed",         dot: "bg-blue-400",               border: "border-blue-200",   description: "Kitchen is preparing" },
-  preparing:      { label: "Preparing",         dot: "bg-orange-400 animate-pulse", border: "border-orange-200", description: "Being prepared in kitchen" },
-  ready:          { label: "Ready",             dot: "bg-green-500",              border: "border-green-200",  description: "Ready for pickup and serving" },
+  pending:        { label: "New Order",         dot: "bg-amber-400",              border: "border-amber-400/40",  description: "Waiting for kitchen" },
+  pending_waiter: { label: "Needs acceptance",  dot: "bg-purple-400 animate-pulse", border: "border-purple-400/40", description: "Waiting for waiter to accept" },
+  confirmed:      { label: "Confirmed",         dot: "bg-blue-400",               border: "border-blue-400/40",   description: "Kitchen is preparing" },
+  preparing:      { label: "Preparing",         dot: "bg-orange-400 animate-pulse", border: "border-orange-400/40", description: "Being prepared in kitchen" },
+  ready:          { label: "Ready",             dot: "bg-green-500",              border: "border-green-400/40",  description: "Ready for pickup and serving" },
   served:         { label: "Served",            dot: "bg-muted-foreground/40",    border: "border-border",     description: "Delivered to customer" },
-  cancelled:      { label: "Cancelled",         dot: "bg-gray-400",               border: "border-gray-200",   description: "Order was cancelled" },
+  cancelled:      { label: "Cancelled",         dot: "bg-gray-400",               border: "border-gray-400/40",   description: "Order was cancelled" },
 };
 
 function elapsed(iso: string) {

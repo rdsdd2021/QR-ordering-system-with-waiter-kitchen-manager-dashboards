@@ -376,6 +376,20 @@ vercel --prod
 
 Add all env vars in Vercel Dashboard → Project → Settings → Environment Variables. Mark `SUPABASE_SERVICE_ROLE_KEY` and `STRIPE_SECRET_KEY` as server-only.
 
+### Next.js configuration (`next.config.ts`)
+
+Key settings applied:
+
+| Setting | Value | Effect |
+|---------|-------|--------|
+| `images.formats` | `["image/avif", "image/webp"]` | Serves modern image formats — reduces image payload ~50% |
+| `images.remotePatterns` | `images.unsplash.com`, `*.supabase.co`, `*.supabase.in` | Allows Next.js `<Image>` to optimise images from Unsplash (placeholders) and Supabase Storage (menu item uploads / restaurant logos) |
+| `experimental.optimizePackageImports` | `lucide-react`, `@radix-ui/react-icons` | Tree-shakes icon packages — only bundles icons that are actually imported |
+| `poweredByHeader` | `false` | Removes the `X-Powered-By: Next.js` response header |
+| `allowedDevOrigins` | `192.168.31.33` | Allows local-network device access to the dev server for mobile testing |
+
+If you add new image sources (e.g. a CDN or a different Supabase project), add them to `remotePatterns` in `next.config.ts`.
+
 ### Supabase project setup
 1. Create project at [supabase.com](https://supabase.com)
 2. Run migration files in `supabase/` via SQL Editor (in order)

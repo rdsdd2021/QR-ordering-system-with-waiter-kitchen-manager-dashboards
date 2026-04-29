@@ -465,9 +465,8 @@ Props:
   onBillReadyFilterClear? — optional callback; called immediately after the filter is applied so the
                             parent can reset its own state (prevents re-triggering on re-renders)
 
-- Shows all tables in grid or list view, filterable by floor
-- Grid view has configurable layout: Cols selector (2–6 columns) and Rows selector (1–5 rows per page)
-  - Both selectors are shown only in grid view mode
+- Shows all tables in grid view, filterable by floor
+- Grid layout is configurable: Cols selector (2–6 columns) and Rows selector (1–5 rows per page)
   - Changing either resets to page 1
   - On mobile (< md breakpoint) the grid is always 2 columns regardless of the Cols selector; the selector only takes effect on md+ screens
 - Each table tile has one of five states:
@@ -574,18 +573,19 @@ Analytics component
 - Date range selector: today / last 7 days / last 30 days
 - KPI cards: total revenue, total orders, avg order value — each with % delta vs. prior period
 - SVG area chart for revenue or orders over the selected period — real data points shown as filled circles; estimated/projected segments rendered as a dashed line with reduced opacity
-- Top 6 menu items by quantity sold (with revenue) — filtered by restaurant and date range client-side: fetches up to 500 `order_items` rows, then cross-references against the set of `order.id`s that fall within the selected range
-- Hourly traffic SVG bar chart (real `created_at` data scoped to selected range, peak hour highlighted in orange; bar colour intensity scales with relative order volume; header shows total orders + peak hour summary; legend shows Peak/High/Low traffic indicators)
+- Top 6 menu items by quantity sold (with revenue) — aggregated server-side by the get_analytics_summary RPC
+- Hourly traffic SVG bar chart (real data scoped to selected range, peak hour highlighted in orange; bar colour intensity scales with relative order volume; header shows total orders + peak hour summary; legend shows Peak/High/Low traffic indicators)
 - Waiter performance cards: orders handled, revenue generated, and avg revenue per order — scoped to selected date range; empty state shown as a dashed placeholder when no waiter data exists for the period
 - Payment method split: cash / UPI / card (donut chart + breakdown) — scoped to selected date range
-- Order status distribution (donut chart) — scoped to selected date range (filters by `created_at >= rangeStart`)
+- Order status distribution (donut chart) — scoped to selected date range
 - Average prep / serve / turnaround times from getPerformanceMetrics()
-- Hourly traffic uses real `created_at` data only; hours with no orders render as zero (no baseline blending); empty state renders a dashed bordered placeholder with "No order data in this period"
+- Hourly traffic uses real data only; hours with no orders render as zero (no baseline blending); empty state renders a dashed bordered placeholder with "No order data in this period"
+- Range tab switches are debounced by 300 ms to prevent duplicate in-flight requests
 ```
 
-> **Pitfall:** If `get_sales_summary` RPC does not exist the component silently falls back to a raw `orders` query — revenue aggregation may differ slightly between the two paths.
+> **Architecture:** All analytics aggregation is performed server-side via a single `get_analytics_summary(p_restaurant_id, p_range_start, p_range_end, p_prev_start, p_prev_end)` Postgres RPC. This replaces the previous approach of 9 parallel client-side Supabase queries. The RPC returns a single JSON object with keys: `curr_sales`, `prev_sales`, `top_items`, `daily_data`, `waiter_stats`, `payment_split`, `status_counts`, `hourly_traffic`. If the RPC returns an error the load function logs it and returns early — no partial state is applied.
 
-> **Note:** Top items are filtered client-side by cross-referencing a set of `order.id`s scoped to the selected date range (fetched in the same parallel batch). The top-items list is only populated when at least one order exists in the selected range — if `rangedIdSet` is empty (no orders in range), the list renders empty rather than showing unscoped items. Waiter stats and payment split are scoped at the query level via `billed_at` range filters. Order status counts are scoped by `created_at >= rangeStart`. The hourly traffic chart shows only real `created_at` data — hours with no orders render as zero bars. This means sparse date ranges (e.g. "Today" with few orders) will show mostly empty bars rather than a filled curve. The `order_items` fetch is capped at 500 rows, so very high-volume periods may under-count top items.
+> **Note:** All scoping (date range, restaurant) is enforced inside the RPC. Hourly traffic hours with no orders render as zero bars. The `get_analytics_summary` RPC must exist in the database; if it is missing the component will log an RPC error and show no data (no silent fallback to raw queries).
 
 ### Menu Group
 
@@ -718,11 +718,11 @@ WebhooksManager component
 ### Pitfalls
 
 - Deleting a menu item that has existing `order_items` rows will fail silently (FK constraint `ON DELETE RESTRICT`). The UI should show an error but may not in all cases.
-- Analytics queries can be slow on large datasets — no pagination or query limits are enforced.
+- Analytics data is fetched via a single `get_analytics_summary` Postgres RPC. Performance on large datasets depends on the RPC's internal query plan and indexes — if the RPC is missing or errors, the component logs the error and shows no data.
 - Staff deletion goes through `DELETE /api/staff/delete` (service role key). The `users` row is deleted first; the Supabase Auth account is then deleted best-effort. If the auth deletion fails, a warning is logged server-side but the operation still returns success — the profile row is already gone so the orphaned auth account will land on `/onboarding` if it tries to log in.
 - Staff email edits go through `PATCH /api/staff/update` (service role key). The `users` table is updated first; the Supabase Auth email is then synced best-effort. If the auth update fails it is logged server-side but the API still returns success — the staff member's login email may temporarily differ from their profile email until manually corrected.
 - The QR code URL is stored as `qr_code_url` in the `tables` table but is just a plain URL string — there is no actual QR image generation in the DB. The frontend must generate the QR image from this URL.
-- Changing `order_routing_mode` takes effect immediately for new orders only. In-flight `pending_waiter` orders are not retroactively changed.
+- Changing `order_routing_mode` takes effect immediately for new orders only — the restaurant cache is invalidated on save so the next order picks up the new mode without waiting for the 5-minute TTL to expire. In-flight `pending_waiter` orders are not retroactively changed.
 
 ### Shared UI Components
 

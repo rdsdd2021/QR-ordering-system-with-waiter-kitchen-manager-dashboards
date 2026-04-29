@@ -120,13 +120,13 @@ function orderId(id: string) {
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS_BADGE: Record<string, string> = {
-  pending:        "bg-amber-50 text-amber-600 border border-amber-200",
-  pending_waiter: "bg-purple-50 text-purple-600 border border-purple-200",
-  confirmed:      "bg-blue-50 text-blue-600 border border-blue-200",
-  preparing:      "bg-orange-50 text-orange-600 border border-orange-200",
-  ready:          "bg-green-50 text-green-600 border border-green-200",
-  served:         "bg-blue-50 text-blue-600 border border-blue-200",
-  cancelled:      "bg-red-50 text-red-500 border border-red-200",
+  pending:        "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800",
+  pending_waiter: "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800",
+  confirmed:      "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800",
+  preparing:      "bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800",
+  ready:          "bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800",
+  served:         "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800",
+  cancelled:      "bg-red-50 dark:bg-red-950/40 text-red-500 dark:text-red-400 border border-red-200 dark:border-red-800",
 };
 const STATUS_DOT: Record<string, string> = {
   pending:        "bg-amber-500",

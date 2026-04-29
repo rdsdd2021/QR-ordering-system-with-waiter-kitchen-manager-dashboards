@@ -523,9 +523,9 @@ export default function AuditLogAdmin({ pin, restaurants = [] }: AuditLogAdminPr
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center space-y-2">
-          <p className="text-sm text-red-700 font-medium">Failed to load audit log</p>
-          <p className="text-xs text-red-600">{error}</p>
+        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-6 text-center space-y-2">
+          <p className="text-sm text-red-700 dark:text-red-400 font-medium">Failed to load audit log</p>
+          <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
           <Button size="sm" variant="outline" onClick={loadFirst} className="mt-2">
             Retry
           </Button>

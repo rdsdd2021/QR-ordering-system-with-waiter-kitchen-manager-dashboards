@@ -454,14 +454,14 @@ export default function MenuManager({ restaurantId }: Props) {
           </div>
 
           {atLimit && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2">
               <Lock className="h-4 w-4 shrink-0" />
               Free plan is limited to {limits.max_menu_items} menu items. Upgrade to Pro for unlimited items.
             </div>
           )}
 
           {bulkMode && (
-            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
+            <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-2.5 text-sm text-blue-800 dark:text-blue-300">
               Bulk edit mode — edit any field across all rows, then hit "Save All" to commit.
             </div>
           )}

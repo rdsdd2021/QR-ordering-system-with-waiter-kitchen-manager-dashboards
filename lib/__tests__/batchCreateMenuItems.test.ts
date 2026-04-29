@@ -1,24 +1,26 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { batchCreateMenuItems } from "../batchCreateMenuItems";
 import type { DraftRow, FoodCategory, FoodTag } from "@/types/database";
 
 // Mock the api module
-jest.mock("@/lib/api", () => ({
-  createMenuItem: jest.fn(),
-  setMenuItemCategories: jest.fn().mockResolvedValue(true),
-  setMenuItemTags: jest.fn().mockResolvedValue(true),
+vi.mock("@/lib/api", () => ({
+  createMenuItem: vi.fn(),
+  setMenuItemCategories: vi.fn().mockResolvedValue(true),
+  setMenuItemTags: vi.fn().mockResolvedValue(true),
 }));
 
 import { createMenuItem, setMenuItemCategories, setMenuItemTags } from "@/lib/api";
 
-const mockCreateMenuItem = createMenuItem as jest.MockedFunction<typeof createMenuItem>;
-const mockSetCategories = setMenuItemCategories as jest.MockedFunction<typeof setMenuItemCategories>;
-const mockSetTags = setMenuItemTags as jest.MockedFunction<typeof setMenuItemTags>;
+const mockCreateMenuItem = createMenuItem as any;
+const mockSetCategories = setMenuItemCategories as any;
+const mockSetTags = setMenuItemTags as any;
 
 function makeDraftRow(overrides: Partial<DraftRow> = {}): DraftRow {
   return {
     name: "Test Item",
     price: "100",
     description: "",
+    imageUrl: "",
     categoryNames: [],
     tagNames: [],
     is_available: true,
@@ -33,7 +35,7 @@ const cats: FoodCategory[] = [];
 const tags: FoodTag[] = [];
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   mockSetCategories.mockResolvedValue(true);
   mockSetTags.mockResolvedValue(true);
 });
@@ -93,7 +95,7 @@ describe("batchCreateMenuItems", () => {
   it("calls onProgress callback after each row", async () => {
     mockCreateMenuItem.mockResolvedValue({ id: "item1", restaurant_id: "r1", name: "Item", price: 100, is_available: true });
 
-    const onProgress = jest.fn();
+    const onProgress = vi.fn();
     const rows = [makeDraftRow(), makeDraftRow()];
     await batchCreateMenuItems({ restaurantId: "r1", rows, categories: cats, tags, onProgress });
 
@@ -111,3 +113,4 @@ describe("batchCreateMenuItems", () => {
     expect(result.errors[0].message).toBe("Network error");
   });
 });
+

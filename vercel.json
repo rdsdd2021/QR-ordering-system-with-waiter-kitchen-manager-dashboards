@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/webhook-retries",
-      "schedule": "* * * * *"
+      "schedule": "0 1 * * *"
     },
     {
       "path": "/api/cron/audit-log-purge",

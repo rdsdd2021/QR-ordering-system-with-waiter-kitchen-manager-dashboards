@@ -24,30 +24,30 @@ const STATUS_CONFIG: Record<OrderStatus, {
 }> = {
   pending_waiter: {
     label: "Waiting for waiter",
-    dot: "bg-purple-400", border: "border-purple-200", stripe: "bg-purple-400",
+    dot: "bg-purple-400", border: "border-purple-400/40", stripe: "bg-purple-400",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
   pending: {
     label: "New order",
-    dot: "bg-amber-400 animate-pulse", border: "border-amber-200", stripe: "bg-amber-400",
+    dot: "bg-amber-400 animate-pulse", border: "border-amber-400/40", stripe: "bg-amber-400",
     nextStatus: "confirmed", actionLabel: "Accept order",
     actionClass: "bg-amber-500 hover:bg-amber-600 text-white",
   },
   confirmed: {
     label: "Confirmed",
-    dot: "bg-blue-400", border: "border-blue-200", stripe: "bg-blue-400",
+    dot: "bg-blue-400", border: "border-blue-400/40", stripe: "bg-blue-400",
     nextStatus: "preparing", actionLabel: "Start preparing",
     actionClass: "bg-blue-500 hover:bg-blue-600 text-white",
   },
   preparing: {
     label: "Preparing",
-    dot: "bg-orange-400 animate-pulse", border: "border-orange-200", stripe: "bg-orange-400",
+    dot: "bg-orange-400 animate-pulse", border: "border-orange-400/40", stripe: "bg-orange-400",
     nextStatus: "ready", actionLabel: "Mark ready",
     actionClass: "bg-emerald-500 hover:bg-emerald-600 text-white",
   },
   ready: {
     label: "Ready for pickup",
-    dot: "bg-green-500", border: "border-green-200", stripe: "bg-emerald-500",
+    dot: "bg-green-500", border: "border-green-400/40", stripe: "bg-emerald-500",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
   served: {
@@ -57,7 +57,7 @@ const STATUS_CONFIG: Record<OrderStatus, {
   },
   cancelled: {
     label: "Cancelled",
-    dot: "bg-gray-400", border: "border-gray-200", stripe: "bg-gray-400",
+    dot: "bg-gray-400", border: "border-border", stripe: "bg-muted-foreground/30",
     nextStatus: null, actionLabel: null, actionClass: "",
   },
 };
@@ -72,8 +72,8 @@ function elapsed(iso: string) {
 function urgencyClass(iso: string, status: string): string {
   if (status === "ready" || status === "served" || status === "pending_waiter") return "";
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins >= 20) return "border-red-400 bg-red-50/30";
-  if (mins >= 12) return "border-amber-400 bg-amber-50/30";
+  if (mins >= 20) return "border-red-500/60 bg-red-500/10";
+  if (mins >= 12) return "border-amber-500/60 bg-amber-500/10";
   return "";
 }
 

@@ -63,7 +63,7 @@ export default function PricingSection({ restaurantId, onUpgrade, upgrading }: P
               </div>
               <p className="text-sm text-muted-foreground mt-1.5">For growing restaurants</p>
             </div>
-            <div className="bg-green-500/10 text-green-700 text-xs font-semibold px-3 py-1.5 rounded-full border border-green-500/20 shrink-0 mt-1">
+            <div className="bg-green-500/10 dark:bg-green-500/20 text-green-700 dark:text-green-400 text-xs font-semibold px-3 py-1.5 rounded-full border border-green-500/20 dark:border-green-500/30 shrink-0 mt-1">
               7-day free trial
             </div>
           </div>

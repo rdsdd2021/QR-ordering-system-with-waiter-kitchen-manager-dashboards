@@ -377,7 +377,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
       </div>
 
       {atLimit && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 mb-6">
+        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2 mb-6">
           <Lock className="h-4 w-4 shrink-0" />
           Free plan is limited to {limits.max_tables} tables. Upgrade to Pro for unlimited tables.
         </div>

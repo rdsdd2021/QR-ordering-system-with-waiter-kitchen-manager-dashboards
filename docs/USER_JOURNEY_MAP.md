@@ -548,7 +548,6 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
   - "Today's Revenue" counts only sessions billed (or started) on the current calendar day, with a sub-label showing the session count (e.g. "From 3 sessions today")
   - Clicking the "Bill Ready" stat card activates a `showBillReadyOnly` filter in `TableSessions`, instantly narrowing the tile grid to tables in `bill-ready` state. The filter is passed via the `billReadyFilter` prop; `onBillReadyFilterClear` resets the parent's state after the filter is applied to avoid re-triggering on re-renders.
 - Floor tabs filter tiles by floor; "All Floors" shows everything
-- Grid / List view toggle
 - Table tile states: `free` · `active` · `bill-ready` · `awaiting` · `billed`
 - Selecting a tile opens a detail panel on the right
 - `BillDialog` triggered from tile or detail panel
@@ -558,13 +557,11 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 - No floor plan view — tables are listed, not laid out spatially
 - Can't see which waiter is assigned to which table at a glance
 - If a table session isn't opened (waiter forgot), the table shows as "free" even if occupied
-- Filters button is present but not yet functional
 
 **Opportunities:**
 - Add a visual floor map (drag-and-drop table layout) — future feature
 - Show waiter name prominently on each occupied table card
 - Add a "Mark as occupied" manual override for the manager
-- Wire up the Filters button (by status, waiter, floor)
 
 ---
 

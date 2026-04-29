@@ -31,13 +31,13 @@ function fmtDate(iso: string | null) {
 
 function StatusBadge({ status }: { status: WebhookDelivery["status"] }) {
   const map: Record<string, { label: string; cls: string }> = {
-    success:  { label: "Success",  cls: "bg-green-100 text-green-800" },
-    failed:   { label: "Failed",   cls: "bg-red-100 text-red-800" },
-    dead:     { label: "Dead",     cls: "bg-gray-200 text-gray-600" },
-    retrying: { label: "Retrying", cls: "bg-amber-100 text-amber-800" },
-    pending:  { label: "Pending",  cls: "bg-blue-100 text-blue-800" },
+    success:  { label: "Success",  cls: "bg-green-100 dark:bg-green-950/50 text-green-800 dark:text-green-400" },
+    failed:   { label: "Failed",   cls: "bg-red-100 dark:bg-red-950/50 text-red-800 dark:text-red-400" },
+    dead:     { label: "Dead",     cls: "bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400" },
+    retrying: { label: "Retrying", cls: "bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-400" },
+    pending:  { label: "Pending",  cls: "bg-blue-100 dark:bg-blue-950/50 text-blue-800 dark:text-blue-400" },
   };
-  const s = map[status] ?? { label: status, cls: "bg-gray-100 text-gray-700" };
+  const s = map[status] ?? { label: status, cls: "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400" };
   return <span className={cn("px-2 py-0.5 rounded text-xs font-medium", s.cls)}>{s.label}</span>;
 }
 

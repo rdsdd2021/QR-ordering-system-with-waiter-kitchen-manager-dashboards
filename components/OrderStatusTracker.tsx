@@ -6,10 +6,11 @@ import type { ActiveOrder } from "@/hooks/useCustomerSession";
 const STATUS_CONFIG: Record<string, {
   label: string; color: string; dot: string; bg: string; description: string;
 }> = {
-  pending:        { label: "Received",        color: "text-amber-700",  dot: "bg-amber-400 animate-pulse", bg: "bg-amber-50/60 border-amber-100",   description: "Your order has been received" },  pending_waiter: { label: "Awaiting waiter", color: "text-purple-700", dot: "bg-purple-400 animate-pulse", bg: "bg-purple-50/60 border-purple-100", description: "A waiter will confirm shortly" },
-  confirmed:      { label: "Confirmed",       color: "text-blue-700",   dot: "bg-blue-500",                bg: "bg-blue-50/60 border-blue-100",     description: "Confirmed — kitchen is next" },
-  preparing:      { label: "Preparing",       color: "text-orange-700", dot: "bg-orange-500 animate-pulse", bg: "bg-orange-50/60 border-orange-100", description: "Kitchen is preparing your order 🍳" },
-  ready:          { label: "Ready!",          color: "text-green-700",  dot: "bg-green-500",               bg: "bg-green-50/60 border-green-100",   description: "Your order is ready — waiter is on the way 🚀" },
+  pending:        { label: "Received",        color: "text-amber-700 dark:text-amber-400",  dot: "bg-amber-400 animate-pulse", bg: "bg-amber-50/60 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800",   description: "Your order has been received" },
+  pending_waiter: { label: "Awaiting waiter", color: "text-purple-700 dark:text-purple-400", dot: "bg-purple-400 animate-pulse", bg: "bg-purple-50/60 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800", description: "A waiter will confirm shortly" },
+  confirmed:      { label: "Confirmed",       color: "text-blue-700 dark:text-blue-400",   dot: "bg-blue-500",                bg: "bg-blue-50/60 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800",     description: "Confirmed — kitchen is next" },
+  preparing:      { label: "Preparing",       color: "text-orange-700 dark:text-orange-400", dot: "bg-orange-500 animate-pulse", bg: "bg-orange-50/60 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800", description: "Kitchen is preparing your order 🍳" },
+  ready:          { label: "Ready!",          color: "text-green-700 dark:text-green-400",  dot: "bg-green-500",               bg: "bg-green-50/60 dark:bg-green-950/30 border-green-200 dark:border-green-800",   description: "Your order is ready — waiter is on the way 🚀" },
   served:         { label: "Served",          color: "text-muted-foreground", dot: "bg-muted-foreground/40", bg: "",                                description: "Enjoy your meal! 😊" },
 };
 

@@ -372,22 +372,22 @@ export default function AuditLogPanel({ restaurantId }: AuditLogPanelProps) {
       {/* Summary banner */}
       {(criticalCount !== null || warningCount !== null) && (
         <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border bg-red-50 border-red-200 px-4 py-3 flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+          <div className="rounded-xl border bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
             <div>
-              <p className="text-xl font-bold tabular-nums text-red-700">
+              <p className="text-xl font-bold tabular-nums text-red-700 dark:text-red-400">
                 {criticalCount ?? "—"}
               </p>
-              <p className="text-xs text-red-600">Critical events (last 24h)</p>
+              <p className="text-xs text-red-600 dark:text-red-400">Critical events (last 24h)</p>
             </div>
           </div>
-          <div className="rounded-xl border bg-amber-50 border-amber-200 px-4 py-3 flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+          <div className="rounded-xl border bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 px-4 py-3 flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
             <div>
-              <p className="text-xl font-bold tabular-nums text-amber-700">
+              <p className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
                 {warningCount ?? "—"}
               </p>
-              <p className="text-xs text-amber-600">Warning events (last 24h)</p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">Warning events (last 24h)</p>
             </div>
           </div>
         </div>

@@ -141,7 +141,7 @@ export default function CSVUploadTab({ restaurantId, categories, tags, remaining
 
       {/* Plan limit warning */}
       {overLimit && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
           You can only add {remainingSlots} more item{remainingSlots !== 1 ? "s" : ""} on your current plan.
           Remove rows or upgrade to Pro.
         </div>
@@ -152,8 +152,8 @@ export default function CSVUploadTab({ restaurantId, categories, tags, remaining
         <div className={cn(
           "rounded-lg border px-4 py-3 text-sm",
           summary.failed === 0
-            ? "border-green-200 bg-green-50 text-green-800"
-            : "border-amber-200 bg-amber-50 text-amber-800"
+            ? "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/40 text-green-800 dark:text-green-300"
+            : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"
         )}>
           <p className="font-medium flex items-center gap-1.5">
             <CheckCircle2 className="h-4 w-4" />

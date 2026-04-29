@@ -232,7 +232,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
             </div>
             {pwResult && (
               <p className={cn("text-sm px-3 py-2 rounded-lg border", pwResult.ok
-                ? "text-green-700 bg-green-50 border-green-200"
+                ? "text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800"
                 : "text-destructive bg-destructive/5 border-destructive/20"
               )}>
                 {pwResult.msg}
@@ -268,7 +268,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
       <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
 
         {!hasServiceRole && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
             ⚠️ <strong>SUPABASE_SERVICE_ROLE_KEY</strong> is not set. Inactive restaurants may not appear.
             Add it to <code className="font-mono text-xs">.env.local</code> for full admin access.
           </div>

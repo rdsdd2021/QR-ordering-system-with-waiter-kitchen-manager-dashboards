@@ -370,6 +370,11 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | Real-time order update latency | < 1 second after DB change |
 | Dashboard initial load | < 3 seconds |
 
+**Active optimisations (next.config.ts):**
+- Next.js Image Optimisation serves AVIF/WebP formats automatically — reduces image payload ~50% vs JPEG/PNG
+- `optimizePackageImports` for `lucide-react` and `@radix-ui/react-icons` — tree-shakes icon bundles to only what's imported
+- `poweredByHeader: false` — removes the `X-Powered-By` response header (minor security + payload win)
+
 ### Reliability
 
 - System must handle concurrent orders from multiple tables simultaneously without data loss

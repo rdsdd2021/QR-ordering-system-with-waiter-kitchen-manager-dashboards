@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { getPerformanceMetrics } from "@/lib/api";
 import {
@@ -26,7 +26,7 @@ type HourlyBucket = { hour: number; orders: number; revenue: number };
 
 type Range = "today" | "7d" | "30d";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers (defined outside component — never recreated on render) ───────────
 
 function fmtSecs(s: number | null) {
   if (s === null) return "—";
@@ -347,6 +347,10 @@ export default function Analytics({ restaurantId }: Props) {
   const [statusCounts, setStatusCounts] = useState<OrderStatusCount[]>([]);
   const [hourly, setHourly]             = useState<HourlyBucket[]>([]);
 
+  // Debounce ref — prevents firing a new load while one is already in-flight
+  // when the user rapidly switches range tabs.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Scroll the parent overflow container to top when Analytics mounts
   useEffect(() => {
     const main = document.querySelector("main");
@@ -366,155 +370,52 @@ export default function Analytics({ restaurantId }: Props) {
       const prevEnd = new Date(rangeStart);
       prevEnd.setDate(prevEnd.getDate() - 1);
 
-      const metricsData = await getPerformanceMetrics(restaurantId);
-
-      const [
-        salesRaw,
-        { data: prevData },
-        { data: itemsData },
-        { data: dailyRaw },
-        { data: waiterRaw },
-        { data: paymentRaw },
-        { data: statusRaw },
-        { data: rangedOrderIds },
-        { data: hourlyRaw },
-      ] = await Promise.all([
-        // 1. Current period sales
-        supabase.from("orders")
-          .select("id, total_amount")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .gte("billed_at", rangeStartStr)
-          .lte("billed_at", today + "T23:59:59"),
-        // 2. Previous period
-        supabase.from("orders")
-          .select("id, total_amount")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .gte("billed_at", prevStart.toISOString().split("T")[0])
-          .lte("billed_at", prevEnd.toISOString().split("T")[0] + "T23:59:59"),
-        // 3. Top items (all, filtered in JS by rangedIdSet)
-        supabase.from("order_items")
-          .select("quantity, price, order_id, menu_item:menu_items(id, name, image_url, restaurant_id)")
-          .limit(2000),
-        // 4. Daily breakdown
-        supabase.from("orders")
-          .select("created_at, total_amount, billed_at")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .gte("billed_at", rangeStartStr),
-        // 5. Waiter stats — scoped to range
-        supabase.from("orders")
-          .select("total_amount, waiter:users(name)")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .not("waiter_id", "is", null)
-          .gte("billed_at", rangeStartStr),
-        // 6. Payment split — scoped to range
-        supabase.from("orders")
-          .select("payment_method, total_amount")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .gte("billed_at", rangeStartStr),
-        // 7. Status counts — scoped to range
-        supabase.from("orders")
-          .select("status")
-          .eq("restaurant_id", restaurantId)
-          .gte("created_at", rangeStartStr),
-        // 8. Order IDs in range — for top items filtering
-        supabase.from("orders")
-          .select("id")
-          .eq("restaurant_id", restaurantId)
-          .not("billed_at", "is", null)
-          .gte("billed_at", rangeStartStr)
-          .lte("billed_at", today + "T23:59:59"),
-        // 9. Hourly breakdown — scoped to range with upper bound
-        supabase.from("orders")
-          .select("created_at")
-          .eq("restaurant_id", restaurantId)
-          .gte("created_at", rangeStartStr)
-          .lte("created_at", today + "T23:59:59"),
+      // Single RPC call replaces 9 separate queries — all aggregation happens in Postgres
+      const [summaryResult, metricsData] = await Promise.all([
+        supabase.rpc("get_analytics_summary", {
+          p_restaurant_id: restaurantId,
+          p_range_start:   rangeStartStr,
+          p_range_end:     today,
+          p_prev_start:    prevStart.toISOString().split("T")[0],
+          p_prev_end:      prevEnd.toISOString().split("T")[0],
+        }),
+        getPerformanceMetrics(restaurantId),
       ]);
 
-      // Aggregate current sales
-      const currOrders = Array.isArray(salesRaw.data) ? salesRaw.data : [];
-      const currRevenue = currOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
-      setSales({ total_orders: currOrders.length, total_sales: currRevenue });
-
-      // Aggregate previous sales
-      const prevOrders = Array.isArray(prevData) ? prevData : [];
-      const prevRevenue = prevOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
-      setPrevSales({ total_orders: prevOrders.length, total_sales: prevRevenue });
-
-      // Top items — aggregate from order_items, filter by restaurant + range
-      const rangedIdSet = new Set((rangedOrderIds ?? []).map((o: any) => o.id));
-      const itemMap = new Map<string, TopItem>();
-      // Only populate items if there are orders in range
-      if (rangedIdSet.size > 0) {
-        for (const oi of (itemsData ?? []) as any[]) {
-          const mi = oi.menu_item;
-          if (!mi || mi.restaurant_id !== restaurantId) continue;
-          if (!rangedIdSet.has(oi.order_id)) continue;
-          const key = mi.id;
-          if (!itemMap.has(key)) {
-            itemMap.set(key, { item_name: mi.name, image_url: mi.image_url, total_quantity: 0, total_revenue: 0 });
-          }
-          const entry = itemMap.get(key)!;
-          entry.total_quantity += oi.quantity;
-          entry.total_revenue  += oi.quantity * Number(oi.price);
-        }
+      if (summaryResult.error) {
+        console.error("[Analytics] RPC error:", summaryResult.error);
+        return;
       }
-      setTopItems([...itemMap.values()].sort((a, b) => b.total_quantity - a.total_quantity).slice(0, 6));
 
+      const s = summaryResult.data as {
+        curr_sales:    { total_orders: number; total_sales: number };
+        prev_sales:    { total_orders: number; total_sales: number };
+        top_items:     Array<{ item_name: string; image_url: string | null; total_quantity: number; total_revenue: number }> | null;
+        daily_data:    Array<{ day: string; orders: number; revenue: number }> | null;
+        waiter_stats:  Array<{ waiter_name: string; orders_handled: number; revenue_generated: number }> | null;
+        payment_split: Array<{ payment_method: string | null; count: number; revenue: number }> | null;
+        status_counts: Array<{ status: string; count: number }> | null;
+        hourly_traffic:Array<{ hour: number; orders: number }> | null;
+      };
+
+      setSales(s.curr_sales ?? { total_orders: 0, total_sales: 0 });
+      setPrevSales(s.prev_sales ?? { total_orders: 0, total_sales: 0 });
+      setTopItems(s.top_items ?? []);
+      setDailyData(s.daily_data ?? []);
+      setWaiters(s.waiter_stats ?? []);
+      setPayments(s.payment_split ?? []);
+      setStatusCounts(s.status_counts ?? []);
       setMetrics(metricsData);
 
-      // Daily data
-      const dayMap = new Map<string, { orders: number; revenue: number }>();
-      for (const o of (dailyRaw ?? []) as any[]) {
-        const day = (o.billed_at || o.created_at).split("T")[0];
-        const prev = dayMap.get(day) ?? { orders: 0, revenue: 0 };
-        dayMap.set(day, { orders: prev.orders + 1, revenue: prev.revenue + Number(o.total_amount || 0) });
-      }
-      setDailyData([...dayMap.entries()].map(([day, v]) => ({ day, ...v })));
-
-      // Waiter stats — no dummy fallback, show real data only
-      const wMap = new Map<string, WaiterStat>();
-      for (const o of (waiterRaw ?? []) as any[]) {
-        const name = (o.waiter as any)?.name ?? "Unknown";
-        const prev = wMap.get(name) ?? { waiter_name: name, orders_handled: 0, revenue_generated: 0 };
-        wMap.set(name, { ...prev, orders_handled: prev.orders_handled + 1, revenue_generated: prev.revenue_generated + Number(o.total_amount || 0) });
-      }
-      setWaiters([...wMap.values()].sort((a, b) => b.orders_handled - a.orders_handled));
-
-      // Payment split — no dummy fallback, show empty state if no data
-      const pMap = new Map<string, PaymentSplit>();
-      for (const o of (paymentRaw ?? []) as any[]) {
-        const method = o.payment_method ?? "cash";
-        const prev = pMap.get(method) ?? { payment_method: method, count: 0, revenue: 0 };
-        pMap.set(method, { ...prev, count: prev.count + 1, revenue: prev.revenue + Number(o.total_amount || 0) });
-      }
-      setPayments([...pMap.values()]);
-
-      // Status counts
-      const sMap = new Map<string, number>();
-      for (const o of (statusRaw ?? []) as any[]) {
-        sMap.set(o.status, (sMap.get(o.status) ?? 0) + 1);
-      }
-      setStatusCounts([...sMap.entries()].map(([status, count]) => ({ status, count })));
-
-      // Hourly traffic — only real data, no baseline blending
-      const hMap = new Map<number, number>();
-      for (const o of (hourlyRaw ?? []) as any[]) {
-        // Use local time so hours match the user's timezone
-        const h = new Date(o.created_at).getHours();
-        hMap.set(h, (hMap.get(h) ?? 0) + 1);
-      }
-      const hourlyData: HourlyBucket[] = Array.from({ length: 24 }, (_, hour) => ({
-        hour,
-        orders: hMap.get(hour) ?? 0,
-        revenue: 0, // revenue not tracked at hourly granularity
-      }));
-      setHourly(hourlyData);
+      // Build full 24-hour array from sparse hourly data
+      const hMap = new Map((s.hourly_traffic ?? []).map((h) => [h.hour, h.orders]));
+      setHourly(
+        Array.from({ length: 24 }, (_, hour) => ({
+          hour,
+          orders:  hMap.get(hour) ?? 0,
+          revenue: 0,
+        }))
+      );
 
     } catch (err) {
       console.error(err);
@@ -524,24 +425,28 @@ export default function Analytics({ restaurantId }: Props) {
     }
   }, [restaurantId, range]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounce range changes by 300 ms so rapid tab switching doesn't fire multiple requests
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { load(); }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [load]);
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-24">
-      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>
-  );
-
-  // Derived values
+  // Derived values — all hooks must be called before any early return
   const totalRevenue  = sales?.total_sales ?? 0;
   const totalOrders   = sales?.total_orders ?? 0;
   const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
   const revDelta      = pctChange(totalRevenue, prevSales?.total_sales ?? 0);
   const ordDelta      = pctChange(totalOrders,  prevSales?.total_orders ?? 0);
   const aovDelta      = pctChange(avgOrderValue, prevSales?.total_orders ? (prevSales.total_sales / prevSales.total_orders) : 0);
-
-  const barData      = buildBarData(dailyData, range);
+  const barData       = useMemo(() => buildBarData(dailyData, range), [dailyData, range]);
   const maxItem       = topItems[0]?.total_quantity || 1;
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-24">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
 
   const paymentColors: Record<string, string> = {
     cash: "#22c55e", upi: "#6366f1", card: "#f59e0b", null: "#94a3b8",
