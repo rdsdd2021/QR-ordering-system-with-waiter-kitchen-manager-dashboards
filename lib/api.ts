@@ -472,7 +472,7 @@ export async function updateOrderStatus(
           .eq("id", orderRow.restaurant_id)
           .maybeSingle();
 
-        const tableData = orderRow.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+        const tableData = orderRow.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
         const waiterData = orderRow.waiter as { name: string } | null;
         const rawItems = (orderRow.order_items ?? []) as Array<{
           quantity: number;
@@ -679,7 +679,7 @@ export async function acceptOrder(
             .eq("id", orderRow.restaurant_id)
             .maybeSingle();
 
-          const tableData = orderRow.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+          const tableData = orderRow.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
           const rawItems = (orderRow.order_items ?? []) as Array<{
             quantity: number;
             price: number;
