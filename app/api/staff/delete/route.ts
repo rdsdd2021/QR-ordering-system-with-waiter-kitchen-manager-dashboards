@@ -33,7 +33,7 @@ export async function DELETE(req: NextRequest) {
     // 1. Fetch the user to get their auth_id, scoped to this restaurant
     const { data: userRow, error: fetchError } = await supabase
       .from("users")
-      .select("id, auth_id, role")
+      .select("id, auth_id, name, role")
       .eq("id", userId)
       .eq("restaurant_id", restaurantId)
       .maybeSingle();
@@ -66,10 +66,21 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
-    // Fire webhook (non-blocking)
+    // Fire webhook (non-blocking) — include restaurant name and staff name for context
+    const { data: restaurantRow } = await supabase
+      .from("restaurants")
+      .select("name")
+      .eq("id", restaurantId)
+      .maybeSingle();
+
     fireEvent(restaurantId, "staff.deactivated", {
       user_id: userId,
+      name: userRow.name ?? null,
       role: userRow.role,
+      restaurant: {
+        id: restaurantId,
+        name: restaurantRow?.name ?? null,
+      },
     }).catch(err => console.error("[staff/delete] webhook error:", err));
 
     return NextResponse.json({ success: true });

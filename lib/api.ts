@@ -263,16 +263,55 @@ export async function placeOrder(params: {
     return null;
   }
 
-  // Fire webhook (non-blocking)
-  triggerWebhook(restaurantId, "order.placed", {
-    order_id: orderId,
-    table_id: tableId,
-    status: initialStatus,
-    customer_name: customerName?.trim() || null,
-    customer_phone: customerPhone?.trim() || null,
-    party_size: partySize || null,
-    items: orderItems.map(i => ({ menu_item_id: i.menu_item_id, quantity: i.quantity, price: i.price })),
-  });
+  // Fire webhook (non-blocking) — enrich with restaurant, table, and item names
+  (async () => {
+    try {
+      const [restaurantRes, tableRes, menuItemsRes] = await Promise.all([
+        supabase.from("restaurants").select("name, slug").eq("id", restaurantId).maybeSingle(),
+        supabase.from("tables").select("table_number, capacity, floor:floors(name)").eq("id", tableId).maybeSingle(),
+        supabase.from("menu_items").select("id, name, description, tags").in("id", orderItems.map(i => i.menu_item_id)),
+      ]);
+
+      const menuItemMap = Object.fromEntries(
+        (menuItemsRes.data ?? []).map((m: { id: string; name: string; description: string | null; tags: string[] | null }) => [m.id, m])
+      );
+      const tableData = tableRes.data as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+
+      triggerWebhook(restaurantId, "order.placed", {
+        order_id: orderId,
+        status: initialStatus,
+        created_at: new Date().toISOString(),
+        restaurant: {
+          id: restaurantId,
+          name: restaurantRes.data?.name ?? null,
+          slug: restaurantRes.data?.slug ?? null,
+        },
+        table: {
+          id: tableId,
+          table_number: tableData?.table_number ?? null,
+          floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+          capacity: tableData?.capacity ?? null,
+        },
+        customer: {
+          name: customerName?.trim() || null,
+          phone: customerPhone?.trim() || null,
+          party_size: partySize || null,
+        },
+        order_items: orderItems.map(i => ({
+          menu_item_id: i.menu_item_id,
+          name: menuItemMap[i.menu_item_id]?.name ?? null,
+          description: menuItemMap[i.menu_item_id]?.description ?? null,
+          tags: menuItemMap[i.menu_item_id]?.tags ?? null,
+          quantity: i.quantity,
+          unit_price: i.price,
+          subtotal: i.quantity * i.price,
+        })),
+        total_amount: orderItems.reduce((sum, i) => sum + i.quantity * i.price, 0),
+      });
+    } catch {
+      // Non-fatal
+    }
+  })();
 
   return orderId;
 }
@@ -411,24 +450,72 @@ export async function updateOrderStatus(
   };
   const webhookEvent = statusEventMap[newStatus];
   if (webhookEvent) {
-    supabase
-      .from("orders")
-      .select("restaurant_id, table_id, customer_name, customer_phone, party_size")
-      .eq("id", orderId)
-      .maybeSingle()
-      .then(({ data: orderRow }) => {
-        if (orderRow?.restaurant_id) {
-          triggerWebhook(orderRow.restaurant_id, webhookEvent, {
-            order_id: orderId,
-            table_id: orderRow.table_id,
-            status: newStatus,
-            previous_status: currentStatus,
-            customer_name: orderRow.customer_name ?? null,
-            customer_phone: orderRow.customer_phone ?? null,
+    (async () => {
+      try {
+        const { data: orderRow } = await supabase
+          .from("orders")
+          .select(`
+            restaurant_id, table_id, customer_name, customer_phone, party_size,
+            total_amount, created_at, waiter_id,
+            table:tables(table_number, capacity, floor:floors(name)),
+            waiter:users(name),
+            order_items(quantity, price, menu_item:menu_items(id, name, description, tags))
+          `)
+          .eq("id", orderId)
+          .maybeSingle();
+
+        if (!orderRow?.restaurant_id) return;
+
+        const { data: restaurantRow } = await supabase
+          .from("restaurants")
+          .select("name, slug")
+          .eq("id", orderRow.restaurant_id)
+          .maybeSingle();
+
+        const tableData = orderRow.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+        const waiterData = orderRow.waiter as { name: string } | null;
+        const rawItems = (orderRow.order_items ?? []) as Array<{
+          quantity: number;
+          price: number;
+          menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
+        }>;
+
+        triggerWebhook(orderRow.restaurant_id, webhookEvent, {
+          order_id: orderId,
+          status: newStatus,
+          previous_status: currentStatus,
+          created_at: orderRow.created_at,
+          restaurant: {
+            id: orderRow.restaurant_id,
+            name: restaurantRow?.name ?? null,
+            slug: restaurantRow?.slug ?? null,
+          },
+          table: {
+            id: orderRow.table_id,
+            table_number: tableData?.table_number ?? null,
+            floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+            capacity: tableData?.capacity ?? null,
+          },
+          customer: {
+            name: orderRow.customer_name ?? null,
+            phone: orderRow.customer_phone ?? null,
             party_size: orderRow.party_size ?? null,
-          });
-        }
-      });
+          },
+          waiter: waiterData ? { id: orderRow.waiter_id, name: waiterData.name } : null,
+          order_items: rawItems.map(i => ({
+            name: i.menu_item?.name ?? null,
+            description: i.menu_item?.description ?? null,
+            tags: i.menu_item?.tags ?? null,
+            quantity: i.quantity,
+            unit_price: i.price,
+            subtotal: i.quantity * i.price,
+          })),
+          total_amount: orderRow.total_amount,
+        });
+      } catch {
+        // Non-fatal
+      }
+    })();
   }
 
   return true;
@@ -570,25 +657,70 @@ export async function acceptOrder(
     }
 
     if (data === true) {
-      // Fire order.confirmed webhook
-      supabase
-        .from("orders")
-        .select("restaurant_id, table_id, customer_name, customer_phone, party_size")
-        .eq("id", orderId)
-        .maybeSingle()
-        .then(({ data: orderRow }) => {
-          if (orderRow?.restaurant_id) {
-            triggerWebhook(orderRow.restaurant_id, "order.confirmed", {
-              order_id: orderId,
-              table_id: orderRow.table_id,
-              waiter_id: waiterId,
-              status: "confirmed",
-              customer_name: orderRow.customer_name ?? null,
-              customer_phone: orderRow.customer_phone ?? null,
+      // Fire order.confirmed webhook with rich data
+      (async () => {
+        try {
+          const { data: orderRow } = await supabase
+            .from("orders")
+            .select(`
+              restaurant_id, table_id, customer_name, customer_phone, party_size,
+              total_amount, created_at,
+              table:tables(table_number, capacity, floor:floors(name)),
+              order_items(quantity, price, menu_item:menu_items(id, name, description, tags))
+            `)
+            .eq("id", orderId)
+            .maybeSingle();
+
+          if (!orderRow?.restaurant_id) return;
+
+          const { data: restaurantRow } = await supabase
+            .from("restaurants")
+            .select("name, slug")
+            .eq("id", orderRow.restaurant_id)
+            .maybeSingle();
+
+          const tableData = orderRow.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+          const rawItems = (orderRow.order_items ?? []) as Array<{
+            quantity: number;
+            price: number;
+            menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
+          }>;
+
+          triggerWebhook(orderRow.restaurant_id, "order.confirmed", {
+            order_id: orderId,
+            status: "confirmed",
+            created_at: orderRow.created_at,
+            restaurant: {
+              id: orderRow.restaurant_id,
+              name: restaurantRow?.name ?? null,
+              slug: restaurantRow?.slug ?? null,
+            },
+            table: {
+              id: orderRow.table_id,
+              table_number: tableData?.table_number ?? null,
+              floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+              capacity: tableData?.capacity ?? null,
+            },
+            customer: {
+              name: orderRow.customer_name ?? null,
+              phone: orderRow.customer_phone ?? null,
               party_size: orderRow.party_size ?? null,
-            });
-          }
-        });
+            },
+            waiter: { id: waiterId },
+            order_items: rawItems.map(i => ({
+              name: i.menu_item?.name ?? null,
+              description: i.menu_item?.description ?? null,
+              tags: i.menu_item?.tags ?? null,
+              quantity: i.quantity,
+              unit_price: i.price,
+              subtotal: i.quantity * i.price,
+            })),
+            total_amount: orderRow.total_amount,
+          });
+        } catch {
+          // Non-fatal
+        }
+      })();
     }
 
     return data === true;
@@ -673,11 +805,14 @@ export async function createMenuItem(params: {
   }
 
   const item = data as MenuItem;
-  // Fire webhook (non-blocking)
+  // Fire webhook (non-blocking) — include full item details
   triggerWebhook(params.restaurantId, "menu.item_created", {
     item_id: item.id,
     name: item.name,
     price: item.price,
+    description: item.description ?? null,
+    tags: item.tags ?? null,
+    image_url: item.image_url ?? null,
     is_available: item.is_available,
   });
 
@@ -709,13 +844,27 @@ export async function updateMenuItem(
     return false;
   }
 
-  // Fire webhook (non-blocking)
+  // Fire webhook (non-blocking) — include full updated fields
   const rid = restaurantId;
   if (rid) {
-    triggerWebhook(rid, "menu.item_updated", {
-      item_id: itemId,
-      updates,
-    });
+    // Fetch the current state of the item to send complete data
+    supabase
+      .from("menu_items")
+      .select("id, name, price, is_available, description, image_url, tags")
+      .eq("id", itemId)
+      .maybeSingle()
+      .then(({ data: currentItem }) => {
+        triggerWebhook(rid, "menu.item_updated", {
+          item_id: itemId,
+          name: currentItem?.name ?? null,
+          price: currentItem?.price ?? null,
+          description: currentItem?.description ?? null,
+          tags: currentItem?.tags ?? null,
+          image_url: currentItem?.image_url ?? null,
+          is_available: currentItem?.is_available ?? null,
+          changes: updates,
+        });
+      });
   }
 
   return true;
@@ -725,6 +874,17 @@ export async function updateMenuItem(
  * Delete a menu item.
  */
 export async function deleteMenuItem(itemId: string, restaurantId?: string): Promise<boolean> {
+  // Fetch item details before deletion so we can include them in the webhook
+  let deletedItem: { name: string; price: number; description: string | null; tags: string[] | null } | null = null;
+  if (restaurantId) {
+    const { data } = await supabase
+      .from("menu_items")
+      .select("name, price, description, tags")
+      .eq("id", itemId)
+      .maybeSingle();
+    deletedItem = data;
+  }
+
   const { error } = await supabase
     .from("menu_items")
     .delete()
@@ -735,9 +895,15 @@ export async function deleteMenuItem(itemId: string, restaurantId?: string): Pro
     return false;
   }
 
-  // Fire webhook (non-blocking)
+  // Fire webhook (non-blocking) — include item details captured before deletion
   if (restaurantId) {
-    triggerWebhook(restaurantId, "menu.item_deleted", { item_id: itemId });
+    triggerWebhook(restaurantId, "menu.item_deleted", {
+      item_id: itemId,
+      name: deletedItem?.name ?? null,
+      price: deletedItem?.price ?? null,
+      description: deletedItem?.description ?? null,
+      tags: deletedItem?.tags ?? null,
+    });
   }
 
   return true;
@@ -857,34 +1023,91 @@ export async function generateBill(
         await supabase.rpc("close_table_session", { p_table_id: tableId });
       }
 
-      // Fetch restaurant_id + customer details for webhook
+      // Fetch full order details for rich webhook payload
       const { data: fullOrder } = await supabase
         .from("orders")
-        .select("restaurant_id, customer_name, customer_phone, party_size")
+        .select(`
+          restaurant_id, customer_name, customer_phone, party_size, created_at,
+          table:tables(table_number, capacity, floor:floors(name)),
+          waiter:users(name),
+          order_items(quantity, price, menu_item:menu_items(id, name, description, tags))
+        `)
         .eq("id", orderId)
         .maybeSingle();
 
       if (fullOrder?.restaurant_id) {
+        const { data: restaurantRow } = await supabase
+          .from("restaurants")
+          .select("name, slug")
+          .eq("id", fullOrder.restaurant_id)
+          .maybeSingle();
+
         const gross = parseFloat(result.total_amount);
         const net   = parseFloat(result.net_amount ?? result.total_amount);
-        triggerWebhook(fullOrder.restaurant_id, "order.billed", {
+        const tableData = fullOrder.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+        const waiterData = fullOrder.waiter as { name: string } | null;
+        const rawItems = (fullOrder.order_items ?? []) as Array<{
+          quantity: number;
+          price: number;
+          menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
+        }>;
+
+        const sharedOrderData = {
           order_id: orderId,
-          table_id: tableId,
+          created_at: fullOrder.created_at,
+          restaurant: {
+            id: fullOrder.restaurant_id,
+            name: restaurantRow?.name ?? null,
+            slug: restaurantRow?.slug ?? null,
+          },
+          table: {
+            id: tableId,
+            table_number: tableData?.table_number ?? null,
+            floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+            capacity: tableData?.capacity ?? null,
+          },
+          customer: {
+            name: fullOrder.customer_name ?? null,
+            phone: fullOrder.customer_phone ?? null,
+            party_size: fullOrder.party_size ?? null,
+          },
+          waiter: waiterData ? { name: waiterData.name } : null,
+          order_items: rawItems.map(i => ({
+            name: i.menu_item?.name ?? null,
+            description: i.menu_item?.description ?? null,
+            tags: i.menu_item?.tags ?? null,
+            quantity: i.quantity,
+            unit_price: i.price,
+            subtotal: i.quantity * i.price,
+          })),
+        };
+
+        triggerWebhook(fullOrder.restaurant_id, "order.billed", {
+          ...sharedOrderData,
           gross_amount: gross,
           net_amount: net,
           payment_method: options?.paymentMethod ?? null,
           discount_amount: options?.discountAmount ?? 0,
-          customer_name: fullOrder.customer_name ?? null,
-          customer_phone: fullOrder.customer_phone ?? null,
-          party_size: fullOrder.party_size ?? null,
+          discount_note: options?.discountNote ?? null,
         });
         if (options?.paymentMethod) {
           triggerWebhook(fullOrder.restaurant_id, "payment.method_recorded", {
             order_id: orderId,
             payment_method: options.paymentMethod,
             amount: net,
-            customer_name: fullOrder.customer_name ?? null,
-            customer_phone: fullOrder.customer_phone ?? null,
+            restaurant: {
+              id: fullOrder.restaurant_id,
+              name: restaurantRow?.name ?? null,
+            },
+            table: {
+              id: tableId,
+              table_number: tableData?.table_number ?? null,
+              floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+            },
+            customer: {
+              name: fullOrder.customer_name ?? null,
+              phone: fullOrder.customer_phone ?? null,
+            },
           });
         }
       }

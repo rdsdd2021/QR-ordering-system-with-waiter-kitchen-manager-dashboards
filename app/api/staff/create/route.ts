@@ -67,11 +67,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
-    // Fire webhook (non-blocking)
+    // Fire webhook (non-blocking) — include restaurant name for context
+    const { data: restaurantRow } = await supabase
+      .from("restaurants")
+      .select("name")
+      .eq("id", restaurantId)
+      .maybeSingle();
+
     fireEvent(restaurantId, "staff.created", {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       role,
+      restaurant: {
+        id: restaurantId,
+        name: restaurantRow?.name ?? null,
+      },
     }).catch(err => console.error("[staff/create] webhook error:", err));
 
     return NextResponse.json({ success: true });

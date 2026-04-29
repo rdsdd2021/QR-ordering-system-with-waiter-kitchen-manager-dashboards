@@ -47,6 +47,14 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   // Temporarily override events to include "test" and fire directly
   const { signPayload } = await import("@/lib/webhooks");
+
+  // Fetch restaurant name for richer test payload
+  const { data: restaurantRow } = await supabase
+    .from("restaurants")
+    .select("name, slug")
+    .eq("id", restaurantId)
+    .maybeSingle();
+
   const payload = {
     id: crypto.randomUUID(),
     event: "test" as const,
@@ -56,6 +64,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       message: "This is a test webhook from QR Order",
       endpoint_id: id,
       endpoint_name: ep.url,
+      restaurant: {
+        id: restaurantId,
+        name: restaurantRow?.name ?? null,
+        slug: restaurantRow?.slug ?? null,
+      },
     },
   };
 

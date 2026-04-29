@@ -42,14 +42,23 @@ export function useKitchenOrders(restaurantId: string) {
     ReturnType<typeof getSupabaseClient>["channel"]
   > | null>(null);
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedup concurrent fetches for the same order
+  const fetchingRef = useRef<Set<string>>(new Set());
 
-  // ── Initial fetch ──────────────────────────────────────────────────
+  // ── Initial fetch (shows skeleton) ────────────────────────────────
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
     const data = await getKitchenOrders(restaurantId);
     setOrders(data);
     setLoading(false);
+  }, [restaurantId]);
+
+  // ── Silent background refresh (no skeleton flash) ─────────────────
+  // Used on reconnect so existing orders stay visible while we sync.
+  const refreshOrdersSilently = useCallback(async () => {
+    const data = await getKitchenOrders(restaurantId);
+    setOrders(data);
   }, [restaurantId]);
 
   // ── Status update (called by action buttons) ───────────────────────
@@ -98,22 +107,29 @@ export function useKitchenOrders(restaurantId: string) {
     // Fetch a single order and add/update it in state (used for INSERT and
     // UPDATE-into-view cases like pending_waiter → confirmed)
     async function fetchAndUpsertOrder(orderId: string, markNew = false) {
-      await new Promise((r) => setTimeout(r, 300)); // let order_items commit
-      const fresh = await getKitchenOrders(restaurantId);
-      const order = fresh.find((o) => o.id === orderId);
-      if (!order) return;
-      setOrders((prev) => {
-        const idx = prev.findIndex((o) => o.id === orderId);
-        if (idx === -1) return [order, ...prev];
-        const next = [...prev];
-        next[idx] = order;
-        return next;
-      });
-      if (markNew) {
-        setNewOrderIds((prev) => new Set(prev).add(orderId));
-        setTimeout(() => {
-          setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
-        }, 4000);
+      // Deduplicate concurrent fetches for the same order
+      if (fetchingRef.current.has(orderId)) return;
+      fetchingRef.current.add(orderId);
+      try {
+        await new Promise((r) => setTimeout(r, 300)); // let order_items commit
+        const fresh = await getKitchenOrders(restaurantId);
+        const order = fresh.find((o) => o.id === orderId);
+        if (!order) return;
+        setOrders((prev) => {
+          const idx = prev.findIndex((o) => o.id === orderId);
+          if (idx === -1) return [order, ...prev];
+          const next = [...prev];
+          next[idx] = order;
+          return next;
+        });
+        if (markNew) {
+          setNewOrderIds((prev) => new Set(prev).add(orderId));
+          setTimeout(() => {
+            setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+          }, 4000);
+        }
+      } finally {
+        fetchingRef.current.delete(orderId);
       }
     }
 
@@ -189,8 +205,8 @@ export function useKitchenOrders(restaurantId: string) {
         if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
         setIsConnected(true);
         setError(null);
-        // Refresh data on (re)connect to catch any missed events
-        fetchOrders();
+        // Silently sync data on (re)connect — no skeleton flash
+        refreshOrdersSilently();
       } else if (status === "CLOSED") {
         // CLOSED fires during normal reconnect cycles — wait before showing offline
         if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
@@ -206,7 +222,7 @@ export function useKitchenOrders(restaurantId: string) {
         channelRef.current = null;
       }
     };
-  }, [restaurantId, reconnectKey]);
+  }, [restaurantId, reconnectKey, refreshOrdersSilently]);
 
   return { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch: fetchOrders };
 }

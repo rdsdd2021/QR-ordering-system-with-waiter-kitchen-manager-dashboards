@@ -30,6 +30,13 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
     setLoading(false);
   }, [restaurantId, waiterId]);
 
+  // ── Silent background refresh (no skeleton flash) ─────────────────
+  // Used on reconnect so existing orders stay visible while we sync.
+  const refreshOrdersSilently = useCallback(async () => {
+    const data = await getWaiterOrders(restaurantId, waiterId);
+    setOrders(data);
+  }, [restaurantId, waiterId]);
+
   // Fetch a single order by ID and add/update it in state
   const fetchAndUpsertOrder = useCallback(async (orderId: string) => {
     // Deduplicate concurrent fetches for the same order
@@ -220,8 +227,8 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
           if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
           setIsConnected(true);
           setError(null);
-          // Refresh data on (re)connect to catch any missed events
-          fetchOrders();
+          // Silently sync data on (re)connect — no skeleton flash
+          refreshOrdersSilently();
         } else if (status === "CLOSED") {
           // CLOSED fires during normal reconnect cycles — wait before showing offline
           if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
@@ -237,7 +244,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string) {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey]);
+  }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey, refreshOrdersSilently]);
 
   return { 
     orders, 

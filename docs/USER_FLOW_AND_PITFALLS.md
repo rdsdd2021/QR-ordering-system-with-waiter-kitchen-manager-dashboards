@@ -302,6 +302,8 @@ Real-time:
   useKitchenOrders() subscribes to channel: kitchen:{restaurant_id}
   Event: order_changed
   └─ INSERT → re-fetches single order (300ms delay for order_items to commit)
+             → concurrent fetches for the same order are deduplicated via fetchingRef
+               (if a fetch is already in-flight for an order ID, the duplicate is dropped)
              → upserts into list; prepends if new, patches if already present
              → 4s highlight animation via newOrderIds set
   └─ UPDATE → if order is on the board:
@@ -309,6 +311,7 @@ Real-time:
                - status left kitchen scope (e.g. served/cancelled) → removes from board
              if order is NOT on the board and new status is kitchen-relevant
                (e.g. pending_waiter → confirmed) → full re-fetch + upsert with highlight
+               (also deduplicated via fetchingRef)
 ```
 
 ### Order Actions
@@ -340,6 +343,7 @@ advanceStatus():
 - Kitchen has no way to cancel or reject an order — only advance it forward.
 - If the real-time channel drops, new orders won't appear until manual refresh. The "Refresh" button triggers a full re-fetch.
 - `getPreviousStatus()` for rollback is a simple reverse lookup — if the DB has a different status than expected (concurrent update), the rollback may set a wrong status.
+- Both the broadcast and postgres_changes listeners can fire for the same event (the channel subscribes to both as a reliability fallback). `fetchingRef` deduplicates concurrent `fetchAndUpsertOrder` calls for the same order ID — if a fetch is already in-flight, the duplicate is silently dropped rather than triggering a second full re-fetch.
 
 ---
 
@@ -1179,17 +1183,47 @@ Mapped status → event:
 
 Payload for most status events: `{ order_id, table_id, status, previous_status }`
 
-**`order.confirmed` extended payload** — additionally includes customer context fields fetched from the `orders` row:
+**`order.confirmed` rich payload** — fetches full order context from the DB (orders, tables, floors, menu_items, restaurants) and sends a structured object:
 
-| Field | Value |
-|-------|-------|
-| `order_id` | The confirmed order UUID |
-| `table_id` | The table UUID |
-| `waiter_id` | Staff member who confirmed the order |
-| `status` | `"confirmed"` |
-| `customer_name` | Customer name if collected at order placement, otherwise `null` |
-| `customer_phone` | Customer phone if collected at order placement, otherwise `null` |
-| `party_size` | Party size if collected at order placement, otherwise `null` |
+```jsonc
+{
+  "order_id": "<uuid>",
+  "status": "confirmed",
+  "created_at": "<ISO-8601>",
+  "total_amount": 450.00,
+  "restaurant": {
+    "id": "<uuid>",
+    "name": "My Restaurant",
+    "slug": "my-restaurant"
+  },
+  "table": {
+    "id": "<uuid>",
+    "table_number": 4,
+    "floor": "Ground Floor",   // null if no floor assigned
+    "capacity": 4              // null if not set
+  },
+  "customer": {
+    "name": "Alice",           // null if not collected
+    "phone": "+91...",         // null if not collected
+    "party_size": 2            // null if not collected
+  },
+  "waiter": {
+    "id": "<uuid>"
+  },
+  "order_items": [
+    {
+      "name": "Paneer Tikka",
+      "description": "...",    // null if not set
+      "tags": ["veg"],         // null if not set
+      "quantity": 2,
+      "unit_price": 150.00,
+      "subtotal": 300.00
+    }
+  ]
+}
+```
+
+The payload is assembled asynchronously and non-blocking — if the DB fetch fails, the webhook is silently skipped (non-fatal).
 
 Note: `order.placed` and `order.billed` are not fired from this path — they are triggered separately at order creation and billing time.
 
@@ -1238,6 +1272,20 @@ POST /api/webhooks/[id]/retry:
 | Staff | `staff.created`, `staff.deactivated` |
 | Payment | `payment.method_recorded` |
 | Test | `test` |
+
+### Menu Event Payloads
+
+All three menu events share the same payload shape:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `item_id` | string (uuid) | The menu item UUID |
+| `name` | string \| null | Item name |
+| `price` | number \| null | Item price |
+| `description` | string \| null | Item description |
+| `tags` | string[] \| null | Item tags (e.g. `["veg", "spicy"]`) |
+
+For `menu.item_deleted`, the item details (`name`, `price`, `description`, `tags`) are fetched from the DB immediately before deletion so they are available in the payload even though the record no longer exists by the time the webhook fires.
 
 ### Pitfalls
 
