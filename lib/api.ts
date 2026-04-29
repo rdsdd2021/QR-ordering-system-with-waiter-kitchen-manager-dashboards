@@ -473,12 +473,17 @@ export async function updateOrderStatus(
           .maybeSingle();
 
         const tableData = orderRow.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
-        const waiterData = orderRow.waiter as { name: string } | null;
-        const rawItems = (orderRow.order_items ?? []) as Array<{
-          quantity: number;
-          price: number;
-          menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
-        }>;
+        const waiterData = (Array.isArray(orderRow.waiter)
+          ? (orderRow.waiter as { name: string }[])[0] ?? null
+          : orderRow.waiter as { name: string } | null);
+        type RawMenuItem = { id: string; name: string; description: string | null; tags: string[] | null };
+        type RawItem = { quantity: number; price: number; menu_item: RawMenuItem | RawMenuItem[] | null };
+        const rawItems = (orderRow.order_items ?? []) as unknown as RawItem[];
+        const normalizedItems = rawItems.map(i => ({
+          quantity: i.quantity,
+          price: i.price,
+          menu_item: Array.isArray(i.menu_item) ? (i.menu_item[0] ?? null) : i.menu_item,
+        }));
 
         triggerWebhook(orderRow.restaurant_id, webhookEvent, {
           order_id: orderId,
@@ -502,7 +507,7 @@ export async function updateOrderStatus(
             party_size: orderRow.party_size ?? null,
           },
           waiter: waiterData ? { id: orderRow.waiter_id, name: waiterData.name } : null,
-          order_items: rawItems.map(i => ({
+          order_items: normalizedItems.map(i => ({
             name: i.menu_item?.name ?? null,
             description: i.menu_item?.description ?? null,
             tags: i.menu_item?.tags ?? null,
@@ -680,11 +685,14 @@ export async function acceptOrder(
             .maybeSingle();
 
           const tableData = orderRow.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
-          const rawItems = (orderRow.order_items ?? []) as Array<{
-            quantity: number;
-            price: number;
-            menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
-          }>;
+          type RawMenuItem2 = { id: string; name: string; description: string | null; tags: string[] | null };
+          type RawItem2 = { quantity: number; price: number; menu_item: RawMenuItem2 | RawMenuItem2[] | null };
+          const rawItems = (orderRow.order_items ?? []) as unknown as RawItem2[];
+          const normalizedItems2 = rawItems.map(i => ({
+            quantity: i.quantity,
+            price: i.price,
+            menu_item: Array.isArray(i.menu_item) ? (i.menu_item[0] ?? null) : i.menu_item,
+          }));
 
           triggerWebhook(orderRow.restaurant_id, "order.confirmed", {
             order_id: orderId,
@@ -707,7 +715,7 @@ export async function acceptOrder(
               party_size: orderRow.party_size ?? null,
             },
             waiter: { id: waiterId },
-            order_items: rawItems.map(i => ({
+            order_items: normalizedItems2.map(i => ({
               name: i.menu_item?.name ?? null,
               description: i.menu_item?.description ?? null,
               tags: i.menu_item?.tags ?? null,
@@ -1044,13 +1052,20 @@ export async function generateBill(
 
         const gross = parseFloat(result.total_amount);
         const net   = parseFloat(result.net_amount ?? result.total_amount);
-        const tableData = fullOrder.table as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
-        const waiterData = fullOrder.waiter as { name: string } | null;
-        const rawItems = (fullOrder.order_items ?? []) as Array<{
-          quantity: number;
-          price: number;
-          menu_item: { id: string; name: string; description: string | null; tags: string[] | null } | null;
-        }>;
+        const tableData = (Array.isArray(fullOrder.table)
+          ? (fullOrder.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null }[])[0] ?? null
+          : fullOrder.table as unknown as { table_number: number; capacity: number | null; floor: { name: string } | null } | null);
+        const waiterData3 = (Array.isArray(fullOrder.waiter)
+          ? (fullOrder.waiter as { name: string }[])[0] ?? null
+          : fullOrder.waiter as { name: string } | null);
+        type RawMenuItem3 = { id: string; name: string; description: string | null; tags: string[] | null };
+        type RawItem3 = { quantity: number; price: number; menu_item: RawMenuItem3 | RawMenuItem3[] | null };
+        const rawItems3 = (fullOrder.order_items ?? []) as unknown as RawItem3[];
+        const normalizedItems3 = rawItems3.map(i => ({
+          quantity: i.quantity,
+          price: i.price,
+          menu_item: Array.isArray(i.menu_item) ? (i.menu_item[0] ?? null) : i.menu_item,
+        }));
 
         const sharedOrderData = {
           order_id: orderId,
@@ -1071,8 +1086,8 @@ export async function generateBill(
             phone: fullOrder.customer_phone ?? null,
             party_size: fullOrder.party_size ?? null,
           },
-          waiter: waiterData ? { name: waiterData.name } : null,
-          order_items: rawItems.map(i => ({
+          waiter: waiterData3 ? { name: waiterData3.name } : null,
+          order_items: normalizedItems3.map(i => ({
             name: i.menu_item?.name ?? null,
             description: i.menu_item?.description ?? null,
             tags: i.menu_item?.tags ?? null,

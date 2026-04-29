@@ -8,15 +8,20 @@ export function ThemeToggle() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
 
   return (
     <button
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => mounted && setTheme(theme === "dark" ? "light" : "dark")}
       className="rounded-md p-2 hover:bg-accent transition-colors"
       aria-label="Toggle theme"
     >
-      {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+      {/* Render placeholder until mounted to avoid layout shift */}
+      {!mounted
+        ? <span className="h-5 w-5 block" />
+        : theme === "dark"
+          ? <Sun className="h-5 w-5" />
+          : <Moon className="h-5 w-5" />
+      }
     </button>
   );
 }

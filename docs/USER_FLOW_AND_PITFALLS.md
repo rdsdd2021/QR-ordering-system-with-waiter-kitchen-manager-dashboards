@@ -325,9 +325,11 @@ Each OrderCard shows action button based on current status:
   cancelled  → (no action — terminal state, grey card style)
 
 advanceStatus():
-  1. Optimistic update (instant UI)
-  2. updateOrderStatus() → PATCH orders.status
-  3. On failure → rollback to previous status
+  1. Capture actual previous status from state (before optimistic update)
+  2. Optimistic update (instant UI)
+  3. updateOrderStatus() → PATCH orders.status
+  4. On failure → rollback to the captured previous status
+  5. On success → real-time subscription confirms; no re-apply to avoid double-render flicker
 ```
 
 ### Variations
@@ -342,7 +344,7 @@ advanceStatus():
 
 - Kitchen has no way to cancel or reject an order — only advance it forward.
 - If the real-time channel drops, new orders won't appear until manual refresh. The "Refresh" button triggers a full re-fetch.
-- `getPreviousStatus()` for rollback is a simple reverse lookup — if the DB has a different status than expected (concurrent update), the rollback may set a wrong status.
+- `getPreviousStatus()` is still used as a fallback default before the state read completes, but `advanceStatus()` now captures the actual previous status from state inside the `setOrders` updater — so rollbacks use the real prior status rather than a derived guess. A concurrent update that changes the status between the capture and the rollback could still result in a stale rollback value.
 - Both the broadcast and postgres_changes listeners can fire for the same event (the channel subscribes to both as a reliability fallback). `fetchingRef` deduplicates concurrent `fetchAndUpsertOrder` calls for the same order ID — if a fetch is already in-flight, the duplicate is silently dropped rather than triggering a second full re-fetch.
 
 ---

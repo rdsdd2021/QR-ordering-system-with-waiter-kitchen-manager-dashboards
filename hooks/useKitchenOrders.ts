@@ -64,22 +64,25 @@ export function useKitchenOrders(restaurantId: string) {
   // ── Status update (called by action buttons) ───────────────────────
   const advanceStatus = useCallback(
     async (orderId: string, newStatus: OrderStatus) => {
-      // Optimistic update — patch state immediately so UI feels instant
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
-      );
+      // Capture previous status before optimistic update for rollback
+      let previousStatus: OrderStatus = getPreviousStatus(newStatus);
+      setOrders((prev) => {
+        const order = prev.find((o) => o.id === orderId);
+        if (order) previousStatus = order.status;
+        return prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o));
+      });
 
       const ok = await updateOrderStatus(orderId, newStatus);
       if (!ok) {
-        // Roll back on failure
+        // Roll back on failure using the actual previous status
         setOrders((prev) =>
           prev.map((o) =>
-            o.id === orderId
-              ? { ...o, status: getPreviousStatus(newStatus) }
-              : o
+            o.id === orderId ? { ...o, status: previousStatus } : o
           )
         );
       }
+      // On success: real-time subscription will confirm the update.
+      // We intentionally do NOT re-apply the status here to avoid a double-render flicker.
     },
     []
   );
