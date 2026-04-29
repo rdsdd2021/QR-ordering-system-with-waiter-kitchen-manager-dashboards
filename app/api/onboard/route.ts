@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { writeAuditLog } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -41,6 +42,15 @@ export async function POST(req: NextRequest) {
       console.error("[onboard]", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    try {
+      await writeAuditLog({
+        restaurant_id: data.restaurant_id,
+        actor_type: 'manager', actor_id: authId, actor_name: ownerName.trim(),
+        action: 'restaurant.onboarded', resource_type: 'restaurant',
+        resource_id: data.restaurant_id, resource_name: restaurantName.trim(),
+      });
+    } catch (err) { console.error('[onboard] writeAuditLog failed', err); }
 
     return NextResponse.json({ restaurantId: data.restaurant_id });
   } catch (err) {

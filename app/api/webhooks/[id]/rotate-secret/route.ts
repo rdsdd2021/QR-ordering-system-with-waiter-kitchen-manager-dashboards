@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { generateSecret } from "@/lib/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const supabase = getServiceClient();
   const { data: ep } = await supabase
     .from("webhook_endpoints")
-    .select("id")
+    .select("id, url")
     .eq("id", id)
     .eq("restaurant_id", restaurantId)
     .maybeSingle();
@@ -52,6 +53,30 @@ export async function POST(req: NextRequest, { params }: Params) {
     .eq("id", id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Resolve the manager for audit logging
+  const { data: managerRow } = await supabase
+    .from("users")
+    .select("id, name")
+    .eq("restaurant_id", restaurantId)
+    .eq("role", "manager")
+    .maybeSingle();
+
+  try {
+    await writeAuditLog({
+      restaurant_id: restaurantId,
+      actor_type: "manager",
+      actor_id: managerRow?.id ?? "unknown",
+      actor_name: managerRow?.name ?? "Manager",
+      action: "webhook.secret_rotated",
+      resource_type: "webhook",
+      resource_id: id,
+      resource_name: ep.url ?? null,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) {
+    console.error("[webhooks/rotate-secret] writeAuditLog failed", err);
+  }
 
   // Return new secret ONCE
   return NextResponse.json({ secret: newSecret });

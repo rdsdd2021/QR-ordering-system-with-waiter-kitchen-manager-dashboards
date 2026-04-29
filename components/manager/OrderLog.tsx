@@ -10,6 +10,26 @@ import {
 import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
+// Fire-and-forget audit log via /api/audit
+async function logAudit(
+  action: string,
+  resourceType: string,
+  resourceId?: string | null,
+  resourceName?: string | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+    await fetch('/api/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, resource_type: resourceType, resource_id: resourceId, resource_name: resourceName, metadata }),
+    });
+  } catch { /* non-blocking */ }
+}
+
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
 type DateSegment = "today" | "yesterday" | "week" | "month" | "custom";
@@ -796,6 +816,10 @@ function OrderDetailPanel({
     const update: Record<string, string> = { status: next };
     if (tsField[next]) update[tsField[next]] = now;
     await supabase.from("orders").update(update).eq("id", order.id);
+    logAudit('order.status_changed', 'order', order.id, null, {
+      old_status: order.status,
+      new_status: next,
+    });
     setActionLoading(null);
     onStatusChange();
   }
@@ -803,6 +827,10 @@ function OrderDetailPanel({
   async function handleCancel() {
     setActionLoading("cancel");
     await supabase.from("orders").update({ status: "cancelled" }).eq("id", order.id);
+    logAudit('order.cancelled', 'order', order.id, null, {
+      old_status: order.status,
+      new_status: 'cancelled',
+    });
     setActionLoading(null);
     onStatusChange();
   }

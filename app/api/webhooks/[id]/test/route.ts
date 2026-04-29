@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fireEvent } from "@/lib/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -131,6 +132,30 @@ export async function POST(req: NextRequest, { params }: Params) {
     await supabase.from("webhook_endpoints").update({
       last_triggered_at: new Date().toISOString(),
     }).eq("id", id);
+  }
+
+  // Resolve the manager for audit logging
+  const { data: managerRow } = await supabase
+    .from("users")
+    .select("id, name")
+    .eq("restaurant_id", restaurantId)
+    .eq("role", "manager")
+    .maybeSingle();
+
+  try {
+    await writeAuditLog({
+      restaurant_id: restaurantId,
+      actor_type: "manager",
+      actor_id: managerRow?.id ?? "unknown",
+      actor_name: managerRow?.name ?? "Manager",
+      action: "webhook.test_sent",
+      resource_type: "webhook",
+      resource_id: id,
+      resource_name: ep.url ?? null,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) {
+    console.error("[webhooks/test] writeAuditLog failed", err);
   }
 
   return NextResponse.json({ success, httpStatus, responseBody, errorMessage, durationMs });

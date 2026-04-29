@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { retryDelivery } from "@/lib/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -62,5 +63,14 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const result = await retryDelivery(deliveryId);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  try {
+    await writeAuditLog({
+      restaurant_id: restaurantId,
+      actor_type: 'manager', actor_id: 'unknown', actor_name: 'Manager',
+      action: 'webhook.delivery_retried', resource_type: 'webhook',
+      resource_id: id, ip_address: getClientIp(req),
+      metadata: { delivery_id: deliveryId },
+    });
+  } catch (err) { console.error('[webhooks/retry] writeAuditLog failed', err); }
   return NextResponse.json({ success: true });
 }

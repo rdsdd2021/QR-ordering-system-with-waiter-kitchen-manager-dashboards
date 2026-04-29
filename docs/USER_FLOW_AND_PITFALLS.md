@@ -694,7 +694,13 @@ RestaurantDetails component
 ```
 SettingsPanel component
 - Order routing mode: direct_to_kitchen | waiter_first
-- Geo-fencing: enable/disable, set lat/lng/radius
+- Geo-fencing: enable/disable, set lat/lng/radius, auto-detect via browser geolocation
+- Auto-confirm Orders: enable/disable; set delay in minutes (1–60); new orders in "New" status
+  are automatically confirmed after the configured delay
+- Activity Log: "View Activity Log" button opens a centered modal Dialog (80 vw × 85 vh) containing AuditLogPanel,
+  showing a tamper-evident record of all significant actions in the restaurant (scoped to the
+  manager's own restaurant_id). Supports date range presets, severity/actor/action filters,
+  free-text search, pagination, and CSV export.
 ```
 
 **Webhooks (`webhooks` tab)**

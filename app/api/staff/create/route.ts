@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fireEvent } from "@/lib/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     const authId = authData.user.id;
 
     // 2. Insert the user profile row
-    const { error: insertError } = await supabase
+    const { data: insertedUser, error: insertError } = await supabase
       .from("users")
       .insert({
         auth_id: authId,
@@ -58,7 +59,9 @@ export async function POST(req: NextRequest) {
         role,
         restaurant_id: restaurantId,
         is_active: true,
-      });
+      })
+      .select("id")
+      .single();
 
     if (insertError) {
       // Roll back: delete the auth user we just created
@@ -83,6 +86,30 @@ export async function POST(req: NextRequest) {
         name: restaurantRow?.name ?? null,
       },
     }).catch(err => console.error("[staff/create] webhook error:", err));
+
+    // Resolve the manager for this restaurant to use as the actor
+    const { data: managerRow } = await supabase
+      .from("users")
+      .select("id, name")
+      .eq("restaurant_id", restaurantId)
+      .eq("role", "manager")
+      .maybeSingle();
+
+    try {
+      await writeAuditLog({
+        restaurant_id: restaurantId,
+        actor_type: "manager",
+        actor_id: managerRow?.id ?? "unknown",
+        actor_name: managerRow?.name ?? "Manager",
+        action: "staff.created",
+        resource_type: "staff_member",
+        resource_id: insertedUser?.id ?? null,
+        resource_name: name.trim(),
+        ip_address: getClientIp(req),
+      });
+    } catch (err) {
+      console.error("[staff/create] writeAuditLog failed", err);
+    }
 
     return NextResponse.json({ success: true });
   } catch (err) {

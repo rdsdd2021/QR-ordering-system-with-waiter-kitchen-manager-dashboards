@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { writeAuditLog } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -33,6 +34,21 @@ export async function POST(req: NextRequest) {
         { valid: false, reason: "Validation failed" },
         { status: 500 }
       );
+    }
+
+    try {
+      await writeAuditLog({
+        restaurant_id: restaurantId,
+        actor_type: 'system',
+        actor_id: 'coupon_validation',
+        actor_name: 'Coupon Validation',
+        action: 'coupon.validated',
+        resource_type: 'coupon',
+        resource_name: code,
+        metadata: { code, plan, result: data },
+      });
+    } catch (auditErr) {
+      console.error("[audit-log] coupon.validated failed", auditErr);
     }
 
     return NextResponse.json(data);

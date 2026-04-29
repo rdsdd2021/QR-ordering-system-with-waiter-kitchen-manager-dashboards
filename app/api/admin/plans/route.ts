@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { validateAdminRequest } from "@/lib/admin-auth";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -27,5 +28,13 @@ export async function POST(req: NextRequest) {
   const supabase = getServiceClient();
   const { data, error } = await supabase.from("plans").insert(body).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  try {
+    await writeAuditLog({
+      actor_type: 'admin', actor_id: 'admin', actor_name: 'Super Admin',
+      action: 'plan.created', resource_type: 'plan',
+      resource_id: data.id, resource_name: data.name,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) { console.error('[plans/create] writeAuditLog failed', err); }
   return NextResponse.json(data, { status: 201 });
 }

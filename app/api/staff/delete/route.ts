@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fireEvent } from "@/lib/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -82,6 +83,30 @@ export async function DELETE(req: NextRequest) {
         name: restaurantRow?.name ?? null,
       },
     }).catch(err => console.error("[staff/delete] webhook error:", err));
+
+    // Resolve the manager for this restaurant to use as the actor
+    const { data: managerRow } = await supabase
+      .from("users")
+      .select("id, name")
+      .eq("restaurant_id", restaurantId)
+      .eq("role", "manager")
+      .maybeSingle();
+
+    try {
+      await writeAuditLog({
+        restaurant_id: restaurantId,
+        actor_type: "manager",
+        actor_id: managerRow?.id ?? "unknown",
+        actor_name: managerRow?.name ?? "Manager",
+        action: "staff.deleted",
+        resource_type: "staff_member",
+        resource_id: userId,
+        resource_name: userRow.name ?? null,
+        ip_address: getClientIp(req),
+      });
+    } catch (err) {
+      console.error("[staff/delete] writeAuditLog failed", err);
+    }
 
     return NextResponse.json({ success: true });
   } catch (err) {

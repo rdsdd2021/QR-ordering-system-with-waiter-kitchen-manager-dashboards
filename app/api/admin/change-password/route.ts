@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 export async function POST(req: NextRequest) {
   const adminSecret = process.env.ADMIN_SECRET ?? "";
@@ -45,6 +46,23 @@ export async function POST(req: NextRequest) {
 
   if (authErr) {
     return NextResponse.json({ error: authErr.message }, { status: 500 });
+  }
+
+  // Audit log — fire-and-forget; a failed write must never block the response
+  try {
+    await writeAuditLog({
+      restaurant_id: restaurantId,
+      actor_type: 'admin',
+      actor_id: 'admin',
+      actor_name: 'Super Admin',
+      action: 'auth.password_changed',
+      resource_type: 'user',
+      resource_id: user.auth_id,
+      resource_name: user.name ?? null,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) {
+    console.error("[audit-log] change-password audit write failed", err);
   }
 
   return NextResponse.json({ success: true, managerEmail: user.email, managerName: user.name });

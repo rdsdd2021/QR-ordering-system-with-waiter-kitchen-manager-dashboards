@@ -240,6 +240,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M15 | Webhooks | Nice to Have | Register HTTPS endpoints to receive real-time event notifications |
 | M16 | Restaurant details | Must Have | Edit restaurant name and slug. Upload a logo image (stored in Supabase `restaurant-logos` bucket, `{restaurant_id}/logo.{ext}`); `logo_url` is saved to the `restaurants` table and the page reloads to reflect the new logo. |
 | M17 | Manager-initiated orders | Should Have | Manager can place a new order on behalf of a customer directly from the Live Tables detail panel. Opens an "Add Order" modal with menu search, cart, and running total. Uses the same `placeOrder()` API as the customer ordering page, pre-filling session customer info. |
+| M19 | Activity Log | Should Have | Manager can view a tamper-evident audit log of all significant actions in their restaurant from the Settings tab. Opens in a centered modal dialog (92 vw × 88 vh) with date range presets, severity/actor/action filters, free-text search, pagination, and CSV export. Scoped to the manager's own restaurant only. |
 
 ---
 

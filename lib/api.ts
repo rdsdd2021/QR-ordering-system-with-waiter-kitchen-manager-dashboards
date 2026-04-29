@@ -762,6 +762,31 @@ export async function getOrderStatusLogs(
   return (data ?? []) as unknown as OrderStatusLog[];
 }
 
+// ── Audit log helper (client-side) ───────────────────────────────────────────
+
+/**
+ * Fire-and-forget audit log call via the /api/audit endpoint.
+ * Never throws — a failed audit write must never block the primary action.
+ */
+async function logAudit(
+  action: string,
+  resourceType: string,
+  resourceId?: string | null,
+  resourceName?: string | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+    await fetch('/api/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, resource_type: resourceType, resource_id: resourceId, resource_name: resourceName, metadata }),
+    });
+  } catch { /* non-blocking */ }
+}
+
 // ── Manager Dashboard API ─────────────────────────────────────────────────────
 
 /**
@@ -824,6 +849,9 @@ export async function createMenuItem(params: {
     is_available: item.is_available,
   });
 
+  // Fire audit log (non-blocking)
+  logAudit('menu_item.created', 'menu_item', item.id, item.name, { price: item.price });
+
   return item;
 }
 
@@ -875,6 +903,12 @@ export async function updateMenuItem(
       });
   }
 
+  // Fire audit log (non-blocking)
+  const auditAction = updates.is_available !== undefined
+    ? 'menu_item.availability_toggled'
+    : 'menu_item.updated';
+  logAudit(auditAction, 'menu_item', itemId, null, { changes: updates });
+
   return true;
 }
 
@@ -913,6 +947,9 @@ export async function deleteMenuItem(itemId: string, restaurantId?: string): Pro
       tags: deletedItem?.tags ?? null,
     });
   }
+
+  // Fire audit log (non-blocking)
+  logAudit('menu_item.deleted', 'menu_item', itemId, deletedItem?.name ?? null);
 
   return true;
 }
@@ -1341,21 +1378,20 @@ export async function createFloor(params: {
   name: string;
   priceMultiplier: number;
 }) {
-  const { data, error } = await supabase
-    .from("floors")
-    .insert({
-      restaurant_id: params.restaurantId,
+  const res = await fetch('/api/floors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      restaurantId: params.restaurantId,
       name: params.name,
-      price_multiplier: params.priceMultiplier,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("Error creating floor:", error.message);
+      priceMultiplier: params.priceMultiplier,
+    }),
+  });
+  if (!res.ok) {
+    console.error("Error creating floor:", await res.text());
     return null;
   }
-  return data;
+  return res.json();
 }
 
 /**
@@ -1363,30 +1399,40 @@ export async function createFloor(params: {
  */
 export async function updateFloor(
   floorId: string,
-  updates: { name?: string; price_multiplier?: number }
+  updates: { name?: string; price_multiplier?: number },
+  restaurantId?: string
 ) {
-  const { error } = await supabase
-    .from("floors")
-    .update(updates)
-    .eq("id", floorId);
-
-  if (error) {
-    console.error("Error updating floor:", error.message);
-    return false;
+  if (!restaurantId) {
+    // Fallback to direct Supabase call if restaurantId not provided
+    const { error } = await supabase.from("floors").update(updates).eq("id", floorId);
+    if (error) { console.error("Error updating floor:", error.message); return false; }
+    return true;
   }
+  const res = await fetch('/api/floors', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ floorId, restaurantId, updates }),
+  });
+  if (!res.ok) { console.error("Error updating floor:", await res.text()); return false; }
   return true;
 }
 
 /**
  * Delete a floor.
  */
-export async function deleteFloor(floorId: string) {
-  const { error } = await supabase.from("floors").delete().eq("id", floorId);
-
-  if (error) {
-    console.error("Error deleting floor:", error.message);
-    return false;
+export async function deleteFloor(floorId: string, restaurantId?: string) {
+  if (!restaurantId) {
+    // Fallback to direct Supabase call if restaurantId not provided
+    const { error } = await supabase.from("floors").delete().eq("id", floorId);
+    if (error) { console.error("Error deleting floor:", error.message); return false; }
+    return true;
   }
+  const res = await fetch('/api/floors', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ floorId, restaurantId }),
+  });
+  if (!res.ok) { console.error("Error deleting floor:", await res.text()); return false; }
   return true;
 }
 

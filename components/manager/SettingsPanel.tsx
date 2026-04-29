@@ -1,16 +1,43 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Loader2, MapPin, Navigation } from "lucide-react";
+import { Check, Loader2, MapPin, Navigation, ScrollText, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabase";
 import { updateRestaurantRoutingMode } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import AuditLogPanel from "@/components/manager/AuditLogPanel";
+
+// Fire-and-forget audit log via /api/audit
+async function logAudit(
+  action: string,
+  resourceType: string,
+  resourceId?: string | null,
+  resourceName?: string | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+    await fetch('/api/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, resource_type: resourceType, resource_id: resourceId, resource_name: resourceName, metadata }),
+    });
+  } catch { /* non-blocking */ }
+}
 
 type Props = {
   restaurantId: string;
@@ -32,6 +59,9 @@ export default function SettingsPanel({
   autoConfirmMinutes: initAutoConfirm = null,
 }: Props) {
   const router = useRouter();
+
+  // ── Audit log dialog ───────────────────────────────────────────────
+  const [auditLogOpen, setAuditLogOpen] = useState(false);
 
   // ── Routing mode ───────────────────────────────────────────────────
   const [routingMode, setRoutingMode] = useState(currentRoutingMode);
@@ -56,6 +86,9 @@ export default function SettingsPanel({
       setAutoConfirmSaved(true);
       router.refresh();
       setTimeout(() => setAutoConfirmSaved(false), 3000);
+      logAudit('restaurant.settings_updated', 'restaurant', restaurantId, null, {
+        auto_confirm_minutes: mins,
+      });
     } else {
       alert("Failed to save auto-confirm setting");
     }
@@ -81,6 +114,9 @@ export default function SettingsPanel({
       setRoutingSaved(true);
       router.refresh();
       setTimeout(() => setRoutingSaved(false), 3000);
+      logAudit('restaurant.settings_updated', 'restaurant', restaurantId, null, {
+        order_routing_mode: routingMode,
+      });
     } else {
       alert("Failed to update routing settings");
     }
@@ -130,6 +166,12 @@ export default function SettingsPanel({
       setGeoSaved(true);
       router.refresh();
       setTimeout(() => setGeoSaved(false), 3000);
+      logAudit('restaurant.settings_updated', 'restaurant', restaurantId, null, {
+        geofencing_enabled: geoEnabled,
+        geo_latitude: lat,
+        geo_longitude: lng,
+        geo_radius_meters: radius,
+      });
     }
     setGeoSaving(false);
   }
@@ -402,6 +444,51 @@ export default function SettingsPanel({
           </div>
         </Card>
       </section>
+
+      {/* ── Activity Log ──────────────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold">Activity Log</h2>
+          <p className="text-sm text-muted-foreground">
+            A tamper-evident record of all significant actions in your restaurant.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          className="gap-2"
+          onClick={() => setAuditLogOpen(true)}
+        >
+          <ScrollText className="h-4 w-4" />
+          View Activity Log
+        </Button>
+      </section>
+
+      {/* ── Audit Log Dialog ───────────────────────────────────────────────── */}
+      <Dialog open={auditLogOpen} onOpenChange={setAuditLogOpen}>
+        <DialogContent
+          className="max-w-[92vw] w-[92vw] h-[88vh] flex flex-col p-0 gap-0 rounded-xl"
+          showCloseButton={false}
+        >
+          <DialogHeader className="flex flex-row items-center justify-between px-6 py-4 border-b shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+              <ScrollText className="h-4 w-4 text-primary" />
+              Activity Log
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full"
+              onClick={() => setAuditLogOpen(false)}
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </Button>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <AuditLogPanel restaurantId={restaurantId} />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getPhonePeClient } from "@/lib/phonepe";
+import { writeAuditLog } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -95,6 +96,32 @@ export async function POST(req: NextRequest) {
           p_restaurant_id: restaurantId,
         });
       }
+
+      // Audit: payment succeeded + plan changed (Requirements 2.8, 1.8)
+      try {
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.payment_succeeded",
+          resource_type: "billing",
+          resource_id:   merchantOrderId,
+          metadata:      { merchant_order_id: merchantOrderId },
+        });
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.plan_changed",
+          resource_type: "billing",
+          resource_id:   merchantOrderId,
+          metadata:      { old_plan: "free", new_plan: "pro", merchant_order_id: merchantOrderId },
+        });
+      } catch (auditErr) {
+        console.error("[phonepe/webhook] audit log failed:", auditErr);
+      }
     } else if (type === "CHECKOUT_ORDER_FAILED" || payload.state === "FAILED") {
       // Don't downgrade a trialing subscription on payment failure/cancellation.
       // The user may have been on a free trial and cancelled the payment — keep them trialing.
@@ -111,6 +138,22 @@ export async function POST(req: NextRequest) {
       await supabase.from("payment_transactions")
         .update({ status: "failed" })
         .eq("merchant_order_id", merchantOrderId);
+
+      // Audit: payment failed (Requirements 2.8, 1.8)
+      try {
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.payment_failed",
+          resource_type: "billing",
+          resource_id:   merchantOrderId,
+          metadata:      { merchant_order_id: merchantOrderId },
+        });
+      } catch (auditErr) {
+        console.error("[phonepe/webhook] audit log failed:", auditErr);
+      }
     }
   } catch (err) {
     console.error("[phonepe/webhook] handler error:", err);

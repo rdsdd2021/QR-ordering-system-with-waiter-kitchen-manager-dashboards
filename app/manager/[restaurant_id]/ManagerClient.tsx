@@ -68,10 +68,10 @@ function buildNavGroups(pendingCount: number, onOrdersBadgeClick: () => void): N
     {
       label: "Account",
       items: [
-        { key: "details",  label: "Restaurant",  icon: Store      },
-        { key: "billing",  label: "Billing",     icon: CreditCard },
-        { key: "settings", label: "Settings",    icon: Settings   },
-        { key: "webhooks", label: "Integrations",icon: Webhook    },
+        { key: "details",   label: "Restaurant",  icon: Store      },
+        { key: "billing",   label: "Billing",     icon: CreditCard },
+        { key: "settings",  label: "Settings",    icon: Settings   },
+        { key: "webhooks",  label: "Integrations",icon: Webhook    },
       ],
     },
   ];
@@ -90,7 +90,7 @@ const PAGE_META: Record<Tab, { title: string; description: string }> = {
   tables:     { title: "Table Setup",        description: "Configure tables and generate QR codes" },
   details:    { title: "Restaurant Details", description: "Edit your restaurant profile" },
   billing:    { title: "Billing & Subscription",  description: "Manage your plan, billing details and invoices" },
-  settings:   { title: "Settings",           description: "Order routing and preferences" },
+  settings:   { title: "Settings",           description: "Order routing, preferences & activity log" },
   webhooks:   { title: "Integrations",       description: "Connect to external services" },
 };
 

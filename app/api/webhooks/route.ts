@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { generateSecret, validateWebhookUrl } from "@/lib/webhooks";
 import { WEBHOOK_EVENTS } from "@/types/webhooks";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -90,6 +91,30 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Resolve the manager for audit logging
+  const { data: managerRow } = await supabase
+    .from("users")
+    .select("id, name")
+    .eq("restaurant_id", restaurantId)
+    .eq("role", "manager")
+    .maybeSingle();
+
+  try {
+    await writeAuditLog({
+      restaurant_id: restaurantId,
+      actor_type: "manager",
+      actor_id: managerRow?.id ?? "unknown",
+      actor_name: managerRow?.name ?? "Manager",
+      action: "webhook.created",
+      resource_type: "webhook",
+      resource_id: data.id ?? null,
+      resource_name: data.url ?? null,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) {
+    console.error("[webhooks/create] writeAuditLog failed", err);
+  }
 
   // Return secret ONCE — never returned again
   return NextResponse.json({ endpoint: data, secret }, { status: 201 });

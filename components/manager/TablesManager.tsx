@@ -16,9 +16,29 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { getSupabaseClient } from '@/lib/supabase';
+import { getSupabaseClient, supabase } from '@/lib/supabase';
 import { useSubscription } from '@/hooks/useSubscription';
 import { cn } from '@/lib/utils';
+
+// Fire-and-forget audit log via /api/audit
+async function logAudit(
+  action: string,
+  resourceType: string,
+  resourceId?: string | null,
+  resourceName?: string | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+    await fetch('/api/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, resource_type: resourceType, resource_id: resourceId, resource_name: resourceName, metadata }),
+    });
+  } catch { /* non-blocking */ }
+}
 
 type TableStatus = {
   table_id: string;
@@ -275,11 +295,21 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
           floor_id: formData.floor_id || null,
           capacity: formData.capacity,
         });
+        logAudit('table.updated', 'table', editingTable.table_id, `Table ${formData.table_number}`, {
+          table_number: formData.table_number,
+          floor_id: formData.floor_id || null,
+          capacity: formData.capacity,
+        });
       } else {
-        await createTable({
+        const result = await createTable({
           restaurantId,
           tableNumber: formData.table_number,
           floorId: formData.floor_id || undefined,
+          capacity: formData.capacity,
+        });
+        logAudit('table.created', 'table', (result as any)?.id ?? null, `Table ${formData.table_number}`, {
+          table_number: formData.table_number,
+          floor_id: formData.floor_id || null,
           capacity: formData.capacity,
         });
       }
@@ -294,7 +324,11 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
 
   async function handleDelete(tableId: string) {
     if (confirm('Delete this table? This cannot be undone.')) {
+      const tableToDelete = tables.find(t => t.table_id === tableId);
       await deleteTable(tableId);
+      logAudit('table.deleted', 'table', tableId, tableToDelete ? `Table ${tableToDelete.table_number}` : null, {
+        table_number: tableToDelete?.table_number ?? null,
+      });
       fetchData();
     }
   }

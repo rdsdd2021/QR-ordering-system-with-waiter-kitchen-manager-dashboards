@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getPhonePeClient } from "@/lib/phonepe";
+import { writeAuditLog } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -78,6 +79,30 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      // Audit: payment succeeded + subscription activated (Requirements 2.8, 1.8)
+      try {
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.payment_succeeded",
+          resource_type: "billing",
+          metadata:      { merchant_order_id: merchantOrderId, plan: txRow?.plan },
+        });
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.subscription_activated",
+          resource_type: "billing",
+          metadata:      { merchant_order_id: merchantOrderId, plan: txRow?.plan },
+        });
+      } catch (auditErr) {
+        console.error("[phonepe/verify] audit log failed:", auditErr);
+      }
+
       return NextResponse.json({ upgraded: true, state });
     }
 
@@ -85,6 +110,22 @@ export async function POST(req: NextRequest) {
       await supabase.from("payment_transactions")
         .update({ status: "failed" })
         .eq("merchant_order_id", merchantOrderId);
+
+      // Audit: payment failed (Requirements 2.8, 1.8)
+      try {
+        await writeAuditLog({
+          restaurant_id: restaurantId,
+          actor_type:    "system",
+          actor_id:      "phonepe_webhook",
+          actor_name:    "PhonePe Webhook",
+          action:        "billing.payment_failed",
+          resource_type: "billing",
+          metadata:      { merchant_order_id: merchantOrderId },
+        });
+      } catch (auditErr) {
+        console.error("[phonepe/verify] audit log failed:", auditErr);
+      }
+
       return NextResponse.json({ upgraded: false, state });
     }
 

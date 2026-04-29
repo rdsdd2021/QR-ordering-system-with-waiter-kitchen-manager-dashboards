@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { validateAdminRequest } from "@/lib/admin-auth";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -48,6 +49,22 @@ export async function POST(req: NextRequest) {
       .select()
       .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+    try {
+      await writeAuditLog({
+        actor_type: 'admin',
+        actor_id: 'admin',
+        actor_name: 'Super Admin',
+        action: 'coupon.created',
+        resource_type: 'coupon',
+        resource_id: data.id,
+        resource_name: data.code,
+        ip_address: getClientIp(req),
+      });
+    } catch (auditErr) {
+      console.error("[audit-log] coupon.created failed", auditErr);
+    }
+
     return NextResponse.json(data, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });

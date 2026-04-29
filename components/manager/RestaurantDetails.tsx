@@ -7,8 +7,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { updateRestaurantDetails } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import type { Restaurant } from "@/types/database";
+
+// Fire-and-forget audit log via /api/audit
+async function logAudit(
+  action: string,
+  resourceType: string,
+  resourceId?: string | null,
+  resourceName?: string | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return;
+    await fetch('/api/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, resource_type: resourceType, resource_id: resourceId, resource_name: resourceName, metadata }),
+    });
+  } catch { /* non-blocking */ }
+}
 
 type Props = {
   restaurant: Restaurant;
@@ -62,6 +83,10 @@ export default function RestaurantDetails({ restaurant }: Props) {
     setSaved(true);
     router.refresh(); // re-fetch server data so header updates
     setTimeout(() => setSaved(false), 3000);
+    logAudit('restaurant.details_updated', 'restaurant', restaurant.id, name.trim(), {
+      name: name.trim(),
+      slug: slug.trim() || null,
+    });
   }
 
   const qrBaseUrl =

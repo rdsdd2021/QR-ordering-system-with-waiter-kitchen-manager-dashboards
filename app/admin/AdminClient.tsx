@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import CouponManager from "@/components/admin/CouponManager";
 import PlanManager from "@/components/admin/PlanManager";
+import AuditLogAdmin from "@/components/admin/AuditLogAdmin";
 
 type Restaurant = {
   id: string;
@@ -56,12 +57,12 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   const [search, setSearch]     = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
-  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans">(
-    (searchParams.get("tab") as "restaurants" | "coupons" | "plans") ?? "restaurants"
+  const [activeTab, setActiveTab] = useState<"restaurants" | "coupons" | "plans" | "auditlog">(
+    (searchParams.get("tab") as "restaurants" | "coupons" | "plans" | "auditlog") ?? "restaurants"
   );
   const [confirmTarget, setConfirmTarget] = useState<Restaurant | null>(null);
 
-  function handleTabChange(tab: "restaurants" | "coupons" | "plans") {
+  function handleTabChange(tab: "restaurants" | "coupons" | "plans" | "auditlog") {
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
@@ -296,7 +297,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
         {/* Tabs */}
         <div className="flex gap-1 border-b">
-          {(["restaurants", "coupons", "plans"] as const).map((tab) => (
+          {(["restaurants", "coupons", "plans", "auditlog"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => handleTabChange(tab)}
@@ -307,7 +308,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
                   : "border-transparent text-muted-foreground hover:text-foreground"
               )}
             >
-              {tab}
+              {tab === "auditlog" ? "Audit Log" : tab}
             </button>
           ))}
         </div>
@@ -446,6 +447,10 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
         {activeTab === "plans" && (
           <PlanManager pin={pin} />
+        )}
+
+        {activeTab === "auditlog" && (
+          <AuditLogAdmin pin={pin} restaurants={localRestaurants} />
         )}
 
       </main>

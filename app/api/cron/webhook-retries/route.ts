@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { retryDelivery } from "@/lib/webhooks";
+import { writeAuditLog } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -27,9 +28,10 @@ export async function GET(req: NextRequest) {
   const supabase = getServiceClient();
 
   // Find deliveries due for retry (status = retrying, next_retry_at <= now)
+  // Also fetch endpoint details needed for audit logging on permanent failure
   const { data: due, error } = await supabase
     .from("webhook_deliveries")
-    .select("id")
+    .select("id, attempt, max_attempts, endpoint_id, endpoint:webhook_endpoints(url, restaurant_id)")
     .eq("status", "retrying")
     .lte("next_retry_at", new Date().toISOString())
     .limit(50); // Process up to 50 per run
@@ -44,8 +46,53 @@ export async function GET(req: NextRequest) {
   }
 
   // Process retries concurrently (capped at 10 at a time)
+  const batch = due.slice(0, 10);
   const results = await Promise.allSettled(
-    due.slice(0, 10).map(d => retryDelivery(d.id))
+    batch.map(async (d) => {
+      const result = await retryDelivery(d.id);
+
+      // A delivery permanently fails when this retry exhausts all remaining attempts
+      // and the retry itself failed (retryDelivery sets status to "dead" in that case).
+      // We detect this by checking if the next attempt number equals max_attempts
+      // and the retry did not succeed.
+      const nextAttempt = d.attempt + 1;
+      const isPermanentFailure = !result.ok && nextAttempt >= d.max_attempts;
+
+      if (isPermanentFailure) {
+        // Fetch the updated delivery to get the final http_status and error_message
+        const { data: finalDelivery } = await supabase
+          .from("webhook_deliveries")
+          .select("http_status, error_message, attempt")
+          .eq("id", d.id)
+          .single();
+
+        const epRaw = Array.isArray(d.endpoint) ? d.endpoint[0] : d.endpoint;
+        const ep = epRaw as { url: string; restaurant_id: string } | null | undefined;
+
+        try {
+          await writeAuditLog({
+            restaurant_id: ep?.restaurant_id ?? null,
+            actor_type: "system",
+            actor_id: "cron_webhook_retries",
+            actor_name: "Webhook Retry Cron",
+            action: "webhook.delivery_failed",
+            resource_type: "webhook",
+            resource_id: d.endpoint_id,
+            resource_name: ep?.url ?? null,
+            metadata: {
+              endpoint_url: ep?.url ?? null,
+              http_status: finalDelivery?.http_status ?? null,
+              error_message: finalDelivery?.error_message ?? null,
+              attempt: finalDelivery?.attempt ?? nextAttempt,
+            },
+          });
+        } catch (auditErr) {
+          console.error("[cron/webhook-retries] audit log write failed", auditErr);
+        }
+      }
+
+      return result;
+    })
   );
 
   const succeeded = results.filter(r => r.status === "fulfilled" && r.value.ok).length;

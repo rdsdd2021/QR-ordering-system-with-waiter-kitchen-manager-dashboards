@@ -211,7 +211,11 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
       if (!confirm(`${member.name} has ${member.active_orders} active order(s). Deactivating them won't reassign these orders. Continue?`)) return;
     }
     setBusy(member.id);
-    await getSupabaseClient().from('users').update({ is_active: !member.is_active }).eq('id', member.id);
+    await fetch('/api/staff/toggle-active', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: member.id, restaurantId, isActive: !member.is_active }),
+    });
     await fetchStaff();
     setBusy(null);
   }

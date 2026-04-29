@@ -42,7 +42,7 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
         await updateFloor(editingFloor.id, {
           name: formData.name,
           price_multiplier: formData.price_multiplier
-        });
+        }, restaurantId);
       } else {
         await createFloor({
           restaurantId,
@@ -63,7 +63,7 @@ export default function FloorsManager({ restaurantId }: { restaurantId: string }
   async function handleDelete(floorId: string) {
     if (!confirm('Delete this floor? Tables will be unassigned from this floor.')) return;
     try {
-      await deleteFloor(floorId);
+      await deleteFloor(floorId, restaurantId);
     } catch {
       alert('Failed to delete floor. Make sure all tables are unassigned first.');
       return;

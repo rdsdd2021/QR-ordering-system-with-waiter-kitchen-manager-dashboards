@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { validateAdminRequest } from "@/lib/admin-auth";
+import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 
 function getServiceClient() {
   return createClient(
@@ -34,6 +35,15 @@ export async function PATCH(
   const { data, error } = await supabase
     .from("plans").update(update).eq("id", id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  try {
+    await writeAuditLog({
+      actor_type: 'admin', actor_id: 'admin', actor_name: 'Super Admin',
+      action: 'plan.updated', resource_type: 'plan',
+      resource_id: data.id, resource_name: data.name,
+      metadata: { updated_fields: update },
+      ip_address: getClientIp(req),
+    });
+  } catch (err) { console.error('[plans/update] writeAuditLog failed', err); }
   return NextResponse.json(data);
 }
 
@@ -46,7 +56,16 @@ export async function DELETE(
   }
   const { id } = await params;
   const supabase = getServiceClient();
+  const { data: plan } = await supabase.from("plans").select("name").eq("id", id).maybeSingle();
   const { error } = await supabase.from("plans").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  try {
+    await writeAuditLog({
+      actor_type: 'admin', actor_id: 'admin', actor_name: 'Super Admin',
+      action: 'plan.deleted', resource_type: 'plan',
+      resource_id: id, resource_name: plan?.name ?? null,
+      ip_address: getClientIp(req),
+    });
+  } catch (err) { console.error('[plans/delete] writeAuditLog failed', err); }
   return NextResponse.json({ success: true });
 }
