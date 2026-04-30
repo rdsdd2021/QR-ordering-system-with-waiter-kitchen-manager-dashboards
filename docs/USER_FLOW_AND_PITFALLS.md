@@ -560,6 +560,14 @@ OrderLog component
   fetching all rows.
 - Computes derived fields client-side:
     wait_to_confirm_s, prep_time_s, serve_time_s, turnaround_s
+- Billing fields mapped from DB onto each row:
+    discount_amount (numeric, default 0), discount_note (text | null),
+    payment_method ('cash' | 'card' | 'upi' | null)
+    These are set at billing time and available in the order detail drawer.
+- Session fields (session_id, session_opened_at) are always null in the row
+    data — the table_sessions join was removed from the main query. Session
+    summary data for the detail drawer is fetched separately on demand (see
+    "Table Session block" below) and is not part of the paginated row data.
 - SORT_COLUMN map translates client SortKey values to DB column names
 
 Order ID format: #ORD-XXXX (first 4 chars of UUID, uppercased)
@@ -626,6 +634,30 @@ Order detail drawer:
         preparing               → "Mark as Ready"
         ready                   → "Mark as Served"
       No advance action shown for served or cancelled orders
+  - Table Session block (shown when order has a billed_at):
+      Displayed as a bordered card below the billing timestamp row.
+      Header: "Table Session" label + short session ID (first 8 chars of UUID,
+        uppercased, monospace) when session_id is present.
+      Body: fetches a session summary (sessionSummary) asynchronously on open;
+        shows a spinner while loading (sessionLoading).
+      When sessionSummary is available, shows:
+        - Session opened time (HH:MM)
+        - Orders in session count (only shown when > 1)
+        - All Items breakdown (always shown):
+            header: "All Items (N total)" where N is the sum of all item quantities
+            items are merged across all sibling orders by name+price (duplicates
+              aggregated into a single row with combined quantity)
+            each row: "{qty}× {name}" on the left, line total (qty × price) on the right
+            falls back to "No items recorded for this session" when items list is empty
+        - Session gross total (sum of all order_totals in the session)
+        - Discount row (only shown when total_discount > 0):
+            label uses discount_note if present, otherwise "Discount applied"
+            icon: Tag (lucide)
+        - Session net total (gross − discount); green when 0, primary colour otherwise
+        - Payment method row (only shown when set):
+            icon: Smartphone (UPI) / CreditCard (card) / Banknote (cash)
+      When sessionSummary is null (no data or no session_id), falls back to
+        plain text: "Billed as part of table session"
 ```
 
 Status badge colours (display label → colour):
@@ -886,6 +918,14 @@ After billing:
 Revenue dashboard (TableSessions):
   - Uses total_amount (net after discount) from the DB for billed orders
   - Does not recompute gross from items client-side
+
+Per-order billing breakdown (TableSessions — order item list):
+  - When an order has billed_at set, a breakdown section is shown below the item list:
+      Subtotal  — gross sum of (price × quantity) for all items, computed client-side
+      Discount  — shown only when discount_amount > 0; displays discount_note if present
+      Net       — order_total (net after discount); highlighted green when 0 with a
+                  "(Fully Discounted)" label when discount_amount > 0
+  - This breakdown is display-only and does not affect stored values.
 
 State update strategy (OrderBilling component):
   - No optimistic update is applied after billing succeeds.
@@ -1297,7 +1337,7 @@ POST /api/webhooks/trigger
   Auth: Bearer token (user session) — manager, waiter, or kitchen staff only
   Body: { restaurantId: string; event: WebhookEventType; data: Record<string, unknown> }
 
-  1. Validates session token via Supabase anon client
+  1. Decodes JWT locally (no outbound Auth call) via `getUserFromToken()` in `lib/server-auth.ts`
   2. Looks up caller's restaurant_id from users table (service role)
   3. Rejects if bodyRestaurantId doesn't match the caller's restaurant_id (403)
   4. Validates event type against WEBHOOK_EVENTS enum

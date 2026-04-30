@@ -9,39 +9,17 @@
  * Body: { restaurantId: string; event: WebhookEventType; data: Record<string, unknown> }
  */
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { fireEvent } from "@/lib/webhooks";
 import { WEBHOOK_EVENTS, type WebhookEventType } from "@/types/webhooks";
-
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
 
 async function getRestaurantIdForUser(req: NextRequest): Promise<string | null> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
-
-  const anonClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-  const { data: { user }, error } = await anonClient.auth.getUser(token);
-  if (error || !user) return null;
-
-  const svc = getServiceClient();
-  const { data } = await svc
-    .from("users")
-    .select("restaurant_id, role")
-    .eq("auth_id", user.id)
-    .maybeSingle();
-
+  const token = extractBearerToken(req.headers.get("authorization"));
+  if (!token) return null;
+  const user = await getUserFromToken(token);
   // Allow manager, waiter, kitchen — any authenticated staff member
-  if (!data?.restaurant_id) return null;
-  return data.restaurant_id;
+  if (!user?.restaurant_id) return null;
+  return user.restaurant_id;
 }
 
 export async function POST(req: NextRequest) {

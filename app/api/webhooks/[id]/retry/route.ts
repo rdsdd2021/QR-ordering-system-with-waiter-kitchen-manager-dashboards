@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { retryDelivery } from "@/lib/webhooks";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
+import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
 
 function getServiceClient() {
   return createClient(
@@ -16,19 +17,11 @@ function getServiceClient() {
 }
 
 async function getManagerRestaurantId(req: NextRequest): Promise<string | null> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return null;
-  const svc = getServiceClient();
-  const { data } = await svc.from("users").select("restaurant_id, role").eq("auth_id", user.id).maybeSingle();
-  if (!data || data.role !== "manager") return null;
-  return data.restaurant_id;
+  const token = extractBearerToken(req.headers.get("authorization"));
+  if (!token) return null;
+  const user = await getUserFromToken(token);
+  if (!user || user.role !== "manager") return null;
+  return user.restaurant_id;
 }
 
 type Params = { params: Promise<{ id: string }> };

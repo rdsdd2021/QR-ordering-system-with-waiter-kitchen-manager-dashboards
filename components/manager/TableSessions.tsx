@@ -8,6 +8,7 @@ import {
   ChevronDown, ChevronUp, Bell,
   MoreHorizontal, Minus, Search, ShoppingCart,
   CheckCircle2, AlertCircle, Banknote,
+  CreditCard, Smartphone, Tag,
 } from "lucide-react";
 import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { getTableAvailability, getFloors, getMenuItems, placeOrder } from "@/lib/api";
@@ -33,6 +34,9 @@ type OrderRow = {
   customer_phone: string | null;
   party_size: number | null;
   order_total: number;
+  discount_amount: number;
+  discount_note: string | null;
+  payment_method: string | null;
   items: Array<{ id: string; name: string; quantity: number; price: number }>;
 };
 
@@ -155,6 +159,7 @@ async function fetchData(restaurantId: string) {
       .select(`
         id, status, created_at, billed_at,
         customer_name, customer_phone, party_size, total_amount,
+        discount_amount, discount_note, payment_method,
         table:tables(id, table_number, floor_id, floor:floors(id, name)),
         waiter:users(name),
         order_items(id, quantity, price, menu_item:menu_items(name))
@@ -188,6 +193,9 @@ async function fetchData(restaurantId: string) {
       id: o.id, status: o.status, created_at: o.created_at, billed_at: o.billed_at,
       customer_name: o.customer_name, customer_phone: o.customer_phone,
       party_size: o.party_size, order_total: orderTotal, items,
+      discount_amount: parseFloat(o.discount_amount) || 0,
+      discount_note: o.discount_note ?? null,
+      payment_method: o.payment_method ?? null,
     };
     const isBilled = !!o.billed_at;
     // Cancelled orders are never billed — exclude them from the active session
@@ -1219,6 +1227,38 @@ function TableDetailPanel({ tile, onClose, onBill, onAddOrder }: {
                           <span>₹{(item.quantity * item.price).toFixed(0)}</span>
                         </div>
                       ))}
+                      {/* Per-order billing breakdown */}
+                      {order.billed_at && (
+                        <div className="mt-1.5 pt-1.5 border-t border-border/60 space-y-0.5">
+                          {(() => {
+                            const gross = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+                            return (
+                              <>
+                                <div className="flex justify-between text-xs text-muted-foreground">
+                                  <span>Subtotal</span>
+                                  <span>₹{gross.toFixed(2)}</span>
+                                </div>
+                                {order.discount_amount > 0 && (
+                                  <div className="flex justify-between text-xs text-red-600 dark:text-red-400">
+                                    <span className="flex items-center gap-1">
+                                      <Tag className="h-2.5 w-2.5" />
+                                      Discount{order.discount_note ? ` (${order.discount_note})` : ""}
+                                    </span>
+                                    <span>−₹{order.discount_amount.toFixed(2)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between text-xs font-semibold text-foreground pt-0.5 border-t border-border/60">
+                                  <span>Net</span>
+                                  <span className={order.order_total === 0 ? "text-green-600 dark:text-green-400" : ""}>
+                                    ₹{order.order_total.toFixed(2)}
+                                    {order.order_total === 0 && order.discount_amount > 0 && " (Fully Discounted)"}
+                                  </span>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1244,6 +1284,64 @@ function TableDetailPanel({ tile, onClose, onBill, onAddOrder }: {
               </div>
             </div>
           </div>
+
+          {/* Billing summary — shown only for billed sessions */}
+          {session.is_billed && (() => {
+            const billedOrders = session.orders.filter(o => !!o.billed_at);
+            const sessionGross = billedOrders.reduce(
+              (s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0
+            );
+            const sessionDiscount = billedOrders.reduce((s, o) => s + o.discount_amount, 0);
+            const paymentMethod   = billedOrders.find(o => o.payment_method)?.payment_method ?? null;
+            const billedAt        = billedOrders.reduce<string | null>((latest, o) => {
+              if (!o.billed_at) return latest;
+              if (!latest) return o.billed_at;
+              return o.billed_at > latest ? o.billed_at : latest;
+            }, null);
+            return (
+              <div className="px-4 py-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Billing Summary</p>
+                <div className="rounded-lg bg-muted/40 px-3 py-2.5 space-y-1.5">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Gross Total</span>
+                    <span>₹{sessionGross.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  {sessionDiscount > 0 && (
+                    <div className="flex justify-between text-xs text-red-600 dark:text-red-400">
+                      <span className="flex items-center gap-1">
+                        <Tag className="h-3 w-3" />
+                        Discount Applied
+                      </span>
+                      <span>−₹{sessionDiscount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-xs font-bold text-foreground pt-1 border-t border-border/60">
+                    <span>Net Total</span>
+                    <span className="text-primary">
+                      ₹{session.session_total.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  {paymentMethod && (
+                    <div className="flex justify-between text-xs text-muted-foreground pt-0.5">
+                      <span>Payment</span>
+                      <span className="flex items-center gap-1 font-medium capitalize">
+                        {paymentMethod === "upi"  && <Smartphone className="h-3 w-3" />}
+                        {paymentMethod === "card" && <CreditCard  className="h-3 w-3" />}
+                        {paymentMethod === "cash" && <Banknote    className="h-3 w-3" />}
+                        {paymentMethod}
+                      </span>
+                    </div>
+                  )}
+                  {billedAt && (
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Billed</span>
+                      <span>{new Date(billedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Recent activity */}
           <div className="px-4 py-3">

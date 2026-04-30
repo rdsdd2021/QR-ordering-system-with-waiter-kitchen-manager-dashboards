@@ -6,6 +6,7 @@ import {
   Loader2, RefreshCw, Search, Filter, Download,
   X, User, Phone, TrendingUp, ShoppingBag, AlertCircle,
   Receipt, CheckCircle2, XCircle, Calendar, ChevronDown,
+  Banknote, CreditCard, Smartphone, Tag,
 } from "lucide-react";
 import { supabase, getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ type Props = { restaurantId: string };
 
 type OrderLogRow = {
   id: string;
+  table_id: string | null;
   status: string;
   table_number: number;
   floor_name: string | null;
@@ -75,6 +77,11 @@ type OrderLogRow = {
   total_qty: number;
   order_total: number;
   total_amount: number;
+  discount_amount: number;
+  discount_note: string | null;
+  payment_method: string | null;
+  session_id: string | null;
+  session_opened_at: string | null;
   billed_at: string | null;
   created_at: string;
   confirmed_at: string | null;
@@ -272,15 +279,15 @@ export default function OrderLog({ restaurantId }: Props) {
     const confirmed = ts(o.confirmed_at);
     const ready     = ts(o.ready_at);
     const served    = ts(o.served_at);
-    const tableRaw  = Array.isArray(o.table) ? o.table[0] : o.table;
-    const waiterRaw = Array.isArray(o.waiter) ? o.waiter[0] : o.waiter;
+    const tableRaw   = Array.isArray(o.table)   ? o.table[0]   : o.table;
+    const waiterRaw  = Array.isArray(o.waiter)  ? o.waiter[0]  : o.waiter;
     const items = (o.order_items ?? []).map((oi: any) => ({
       id: oi.id, name: oi.menu_item?.name ?? "Item",
       quantity: oi.quantity, price: parseFloat(oi.price),
     }));
     const order_total = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
     return {
-      id: o.id, status: o.status,
+      id: o.id, table_id: o.table_id ?? null, status: o.status,
       table_number: tableRaw?.table_number ?? 0,
       floor_name: tableRaw?.floor?.name ?? null,
       capacity: tableRaw?.capacity ?? null,
@@ -290,6 +297,11 @@ export default function OrderLog({ restaurantId }: Props) {
       item_count: items.length,
       total_qty: items.reduce((s: number, i: any) => s + i.quantity, 0),
       order_total, total_amount: parseFloat(o.total_amount) || order_total,
+      discount_amount: parseFloat(o.discount_amount) || 0,
+      discount_note: o.discount_note ?? null,
+      payment_method: o.payment_method ?? null,
+      session_id: null,
+      session_opened_at: null,
       billed_at: o.billed_at, created_at: o.created_at,
       confirmed_at: o.confirmed_at, preparing_at: o.preparing_at,
       ready_at: o.ready_at, served_at: o.served_at,
@@ -320,8 +332,9 @@ export default function OrderLog({ restaurantId }: Props) {
     let query = supabase
       .from("orders")
       .select(`
-        id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
-        billed_at, total_amount, customer_name, customer_phone,
+        id, table_id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
+        billed_at, total_amount, discount_amount, discount_note, payment_method,
+        customer_name, customer_phone,
         table:tables(table_number, capacity, floor:floors(name)),
         waiter:users(name),
         order_items(id, quantity, price, menu_item:menu_items(name))
@@ -354,8 +367,9 @@ export default function OrderLog({ restaurantId }: Props) {
     const { data } = await supabase
       .from("orders")
       .select(`
-        id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
-        billed_at, total_amount, customer_name, customer_phone,
+        id, table_id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
+        billed_at, total_amount, discount_amount, discount_note, payment_method,
+        customer_name, customer_phone,
         table:tables(table_number, capacity, floor:floors(name)),
         waiter:users(name),
         order_items(id, quantity, price, menu_item:menu_items(name))
@@ -847,6 +861,21 @@ export default function OrderLog({ restaurantId }: Props) {
   );
 }
 
+// ── Session billing summary (fetched on demand when order is billed) ──────────
+
+type SessionItem = { name: string; quantity: number; price: number };
+
+type SessionSummary = {
+  session_id: string;
+  opened_at: string;
+  gross_total: number;
+  total_discount: number;
+  net_total: number;
+  payment_method: string | null;
+  order_count: number;
+  items: SessionItem[];
+};
+
 // ── Order Detail Panel ────────────────────────────────────────────────────────
 
 function OrderDetailPanel({
@@ -857,6 +886,81 @@ function OrderDetailPanel({
   onStatusChange: () => void;
 }) {
   const [actionLoading, setActionLoading] = useState<"advance" | "cancel" | null>(null);
+  const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+
+  // When the order is billed, fetch all sibling orders in the same billing batch
+  // to compute session-level gross, discount, and net totals.
+  useEffect(() => {
+    if (!order.billed_at || !order.table_id) {
+      setSessionSummary(null);
+      return;
+    }
+
+    setSessionLoading(true);
+
+    // All orders in the same billing batch share the same table_id and were
+    // billed atomically — billed_at timestamps will be within milliseconds of
+    // each other. Use a ±60s window to catch them all safely.
+    const billedAt  = new Date(order.billed_at);
+    const windowMin = new Date(billedAt.getTime() - 60_000).toISOString();
+    const windowMax = new Date(billedAt.getTime() + 60_000).toISOString();
+
+    // Run both fetches in parallel: sibling orders + the session record
+    Promise.all([
+      supabase
+        .from("orders")
+        .select("id, total_amount, discount_amount, payment_method, order_items(quantity, price, menu_item:menu_items(name))")
+        .eq("table_id", order.table_id)
+        .not("billed_at", "is", null)
+        .gte("billed_at", windowMin)
+        .lte("billed_at", windowMax),
+      supabase
+        .from("table_sessions")
+        .select("id, opened_at")
+        .eq("table_id", order.table_id)
+        .lte("opened_at", order.billed_at)
+        .order("opened_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]).then(([ordersRes, sessionRes]) => {
+      const siblings = ordersRes.data ?? [];
+      const session  = sessionRes.data;
+
+      // Flatten all items across all orders, merging duplicates by name+price
+      const itemMap = new Map<string, SessionItem>();
+      for (const o of siblings) {
+        for (const oi of (o.order_items ?? []) as any[]) {
+          const menuItem = Array.isArray(oi.menu_item) ? oi.menu_item[0] : oi.menu_item;
+          const name  = menuItem?.name ?? "Item";
+          const price = parseFloat(String(oi.price));
+          const key   = `${name}_${price}`;
+          if (itemMap.has(key)) {
+            itemMap.get(key)!.quantity += oi.quantity;
+          } else {
+            itemMap.set(key, { name, quantity: oi.quantity, price });
+          }
+        }
+      }
+
+      const gross    = [...itemMap.values()].reduce((s, i) => s + i.quantity * i.price, 0);
+      const discount = siblings.reduce((s, o) => s + (parseFloat(String(o.discount_amount)) || 0), 0);
+      const net      = siblings.reduce((s, o) => s + (parseFloat(String(o.total_amount))    || 0), 0);
+      const pm       = siblings.find(o => o.payment_method)?.payment_method ?? null;
+
+      setSessionSummary({
+        session_id:     session?.id ?? order.table_id,
+        opened_at:      session?.opened_at ?? order.created_at,
+        gross_total:    gross,
+        total_discount: discount,
+        net_total:      net,
+        payment_method: pm,
+        order_count:    siblings.length,
+        items:          [...itemMap.values()],
+      });
+      setSessionLoading(false);
+    });
+  }, [order.id, order.billed_at, order.table_id]);
 
   const canAdvance = !!NEXT_STATUS[order.status];
   const nextLabel  = NEXT_LABEL[order.status] ?? "Mark as Ready";
@@ -986,17 +1090,169 @@ function OrderDetailPanel({
           <div className="mt-4 pt-3 border-t border-border space-y-1.5">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Subtotal</span>
-              <span>₹{order.order_total.toLocaleString("en-IN")}</span>
+              <span>₹{order.order_total.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
+            {order.discount_amount > 0 && (
+              <div className="flex justify-between text-sm text-red-600 dark:text-red-400">
+                <span className="flex items-center gap-1">
+                  <Tag className="h-3 w-3" />
+                  Discount{order.discount_note ? ` (${order.discount_note})` : ""}
+                </span>
+                <span>−₹{order.discount_amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Taxes & Charges</span>
               <span>₹0.00</span>
             </div>
             <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-border">
               <span className="text-foreground">Total Amount</span>
-              <span className="text-primary">₹{order.order_total.toLocaleString("en-IN")}</span>
+              {order.billed_at ? (
+                <span className={cn(
+                  order.total_amount === 0 ? "text-green-600 dark:text-green-400" : "text-primary"
+                )}>
+                  {order.total_amount === 0 && order.discount_amount > 0
+                    ? "₹0 (Fully Discounted)"
+                    : `₹${order.total_amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  }
+                </span>
+              ) : (
+                <span className="text-primary">
+                  ₹{order.order_total.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
             </div>
           </div>
+
+          {/* Billing info — shown only after billing */}
+          {order.billed_at && (
+            <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+              {order.payment_method && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Payment</span>
+                  <span className="flex items-center gap-1.5 font-medium capitalize">
+                    {order.payment_method === "upi"  && <Smartphone className="h-3.5 w-3.5 text-muted-foreground" />}
+                    {order.payment_method === "card" && <CreditCard  className="h-3.5 w-3.5 text-muted-foreground" />}
+                    {order.payment_method === "cash" && <Banknote    className="h-3.5 w-3.5 text-muted-foreground" />}
+                    {order.payment_method}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Billed</span>
+                <span className="text-foreground">{fmtAgo(order.billed_at)}</span>
+              </div>
+              {/* Session block */}
+              <div className="mt-2 rounded-lg border border-border bg-muted/30 overflow-hidden">
+                {/* Session header */}
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/40">
+                  <div className="flex items-center gap-1.5">
+                    <Receipt className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Table Session
+                    </span>
+                  </div>
+                  {sessionSummary?.session_id && (
+                    <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      #{sessionSummary.session_id.slice(0, 8).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+
+                {/* Session billing summary */}
+                {sessionLoading ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : sessionSummary ? (
+                  <div className="px-3 py-2 space-y-1.5">
+                    {/* Meta row */}
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Session opened</span>
+                      <span>{new Date(sessionSummary.opened_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Orders in session</span>
+                      <span>{sessionSummary.order_count}</span>
+                    </div>
+
+                    {/* All items across the session */}
+                    <div className="pt-1.5 border-t border-border/60">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                        All Items ({sessionSummary.items.reduce((s, i) => s + i.quantity, 0)} total)
+                      </p>
+                      {sessionSummary.items.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">No items recorded for this session</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {sessionSummary.items.map((item, i) => (
+                            <div key={i} className="flex justify-between text-xs">
+                              <span className="text-foreground">
+                                <span className="font-medium">{item.quantity}×</span> {item.name}
+                              </span>
+                              <span className="text-muted-foreground">
+                                ₹{(item.quantity * item.price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Billing breakdown */}
+                    <div className="pt-1.5 border-t border-border/60 space-y-1">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Gross total</span>
+                        <span>₹{sessionSummary.gross_total.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      {/* Always show discount row when billed — makes it explicit even when ₹0 */}
+                      <div className={cn(
+                        "flex justify-between text-xs",
+                        sessionSummary.total_discount > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                      )}>
+                        <span className="flex items-center gap-1">
+                          <Tag className="h-2.5 w-2.5" />
+                          {sessionSummary.total_discount > 0
+                            ? (order.discount_note ? `Discount (${order.discount_note})` : "Discount applied")
+                            : "No discount"
+                          }
+                        </span>
+                        <span>
+                          {sessionSummary.total_discount > 0
+                            ? `−₹${sessionSummary.total_discount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "—"
+                          }
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs font-bold text-foreground pt-0.5 border-t border-border/60">
+                        <span>Net total</span>
+                        <span className={sessionSummary.net_total === 0 ? "text-green-600 dark:text-green-400" : "text-primary"}>
+                          ₹{sessionSummary.net_total.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Payment */}
+                    {sessionSummary.payment_method && (
+                      <div className="flex justify-between text-xs text-muted-foreground pt-1 border-t border-border/60">
+                        <span>Paid via</span>
+                        <span className="flex items-center gap-1 font-medium capitalize">
+                          {sessionSummary.payment_method === "upi"  && <Smartphone className="h-3 w-3" />}
+                          {sessionSummary.payment_method === "card" && <CreditCard  className="h-3 w-3" />}
+                          {sessionSummary.payment_method === "cash" && <Banknote    className="h-3 w-3" />}
+                          {sessionSummary.payment_method}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground px-3 py-2">
+                    Billed as part of table session
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Order Timeline */}

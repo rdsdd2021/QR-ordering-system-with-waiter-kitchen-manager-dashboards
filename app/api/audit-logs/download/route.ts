@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { validateAdminRequest } from "@/lib/admin-auth";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
+import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,42 +50,23 @@ async function resolveManagerAuth(req: NextRequest): Promise<
   | { forbidden: true }
   | null
 > {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
+  const token = extractBearerToken(req.headers.get("authorization"));
+  if (!token) return null;
 
-  // Validate the JWT with the anon client
-  const anonClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-  const {
-    data: { user },
-    error,
-  } = await anonClient.auth.getUser(token);
-  if (error || !user) return null;
-
-  // Look up the user's role and restaurant_id via service role
-  const svc = getServiceClient();
-  const { data } = await svc
-    .from("users")
-    .select("restaurant_id, role, name")
-    .eq("auth_id", user.id)
-    .maybeSingle();
-
-  if (!data) return null;
+  const user = await getUserFromToken(token);
+  if (!user) return null;
 
   // Staff roles are explicitly forbidden
-  if (data.role === "waiter" || data.role === "kitchen") {
+  if (user.role === "waiter" || user.role === "kitchen") {
     return { forbidden: true };
   }
 
-  if (data.role !== "manager" || !data.restaurant_id) return null;
+  if (user.role !== "manager" || !user.restaurant_id) return null;
 
   return {
-    restaurantId: data.restaurant_id,
-    userId: user.id,
-    actorName: data.name ?? "Manager",
+    restaurantId: user.restaurant_id,
+    userId: user.auth_id,
+    actorName: user.name ?? "Manager",
   };
 }
 
