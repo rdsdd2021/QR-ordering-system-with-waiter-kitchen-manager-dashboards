@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell, AlertTriangle } from "lucide-react";
 import { useCart } from "@/hooks/useCart";
 import { useRealtimeMenu } from "@/hooks/useRealtimeMenu";
 import { useGeofence } from "@/hooks/useGeofence";
@@ -32,27 +32,50 @@ export default function OrderPageClient({
   const [activeTab, setActiveTab] = useState<Tab>("menu");
   const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems);
 
-  const { cartItems, addToCart, updateQuantity, clearCart, totalPrice, totalItems } = useCart(
-    floorInfo?.price_multiplier ?? 1.0
+  // B1: track names of items removed from cart due to deletion so we can warn the customer
+  const [removedItemNames, setRemovedItemNames] = useState<string[]>([]);
+
+  const handleItemInvalidated = useCallback((itemId: string) => {
+    // Look up the name from current menuItems state before it's removed
+    setMenuItems((prev) => {
+      const item = prev.find((i) => i.id === itemId);
+      if (item) {
+        setRemovedItemNames((names) => [...names, item.name]);
+      }
+      return prev;
+    });
+  }, []);
+
+  const { cartItems, addToCart, updateQuantity, clearCart, invalidateCartItem, totalPrice, totalItems } = useCart(
+    floorInfo?.price_multiplier ?? 1.0,
+    table.id,
+    handleItemInvalidated,
   );
 
-  const { customerInfo, saveCustomerInfo, activeOrders } = useCustomerSession(
+  const { customerInfo, saveCustomerInfo, activeOrders, refetchOrders } = useCustomerSession(
     restaurant.id,
     table.id
   );
 
   // ── Table occupancy check ────────────────────────────────────────────
-  // If this browser has no active session for this table but the table has
-  // unpaid orders, it means another customer is still being served.
-  const [tableOccupied, setTableOccupied] = useState<boolean | null>(null); // null = checking
+  // B3 fix: use a ref to track whether useCustomerSession has initialised
+  // instead of a fixed 100ms timeout. We know it's ready once the effect
+  // that reads sessionStorage has run — which happens synchronously on
+  // mount in the same microtask queue. We use a one-shot useEffect with
+  // no deps to flip the flag after the first render cycle completes.
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  const sessionLoadedRef = useRef(false);
 
-  // Wait for customerInfo to be loaded from sessionStorage
   useEffect(() => {
-    // Give useCustomerSession a moment to initialize
-    const timer = setTimeout(() => setSessionLoaded(true), 100);
-    return () => clearTimeout(timer);
-  }, []);
+    // This runs after the first render, by which point useCustomerSession
+    // has already read sessionStorage and set customerInfo.
+    if (!sessionLoadedRef.current) {
+      sessionLoadedRef.current = true;
+      setSessionLoaded(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [tableOccupied, setTableOccupied] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!sessionLoaded) return;
@@ -60,7 +83,6 @@ export default function OrderPageClient({
     async function checkOccupancy() {
       const hasUnpaid = await checkTableHasUnpaidOrders(table.id);
       if (hasUnpaid) {
-        // Check if this browser owns the session (customerInfo will be set if so)
         setTableOccupied(!customerInfo);
       } else {
         setTableOccupied(false);
@@ -76,6 +98,17 @@ export default function OrderPageClient({
     restaurantLng: restaurant.geo_longitude ?? null,
     radiusMeters: restaurant.geo_radius_meters ?? 100,
   });
+
+  // B2: geo-fence "permission denied" should not hard-block — show a warning
+  // banner but still allow ordering. Only block when the customer is provably
+  // outside the radius (status === "denied", i.e. location obtained but too far).
+  const geoBlocked =
+    (restaurant.geofencing_enabled ?? false) &&
+    geoStatus === "denied"; // "error" (permission denied / unavailable) no longer blocks
+
+  const geoPermissionDenied =
+    (restaurant.geofencing_enabled ?? false) &&
+    geoStatus === "error";
 
   const handleMenuChange = useCallback(
     (payload: any) => {
@@ -107,22 +140,22 @@ export default function OrderPageClient({
           )
         );
       } else if (payload.event === "DELETE") {
+        // B1: remove deleted item from cart before removing from menu list
+        invalidateCartItem(payload.id);
         setMenuItems((prev) => prev.filter((i) => i.id !== payload.id));
       }
     },
-    [restaurant.id]
+    [restaurant.id, invalidateCartItem]
   );
 
   useRealtimeMenu({ restaurantId: restaurant.id, onMenuChange: handleMenuChange });
 
   const cartQty = Object.fromEntries(cartItems.map((c) => [c.id, c.quantity]));
-  const geoBlocked =
-    (restaurant.geofencing_enabled ?? false) &&
-    (geoStatus === "denied" || geoStatus === "error");
 
   // Switch to orders tab automatically when an order is placed
   function handleOrderSuccess() {
     clearCart();
+    setRemovedItemNames([]);
     setActiveTab("orders");
   }
 
@@ -151,7 +184,6 @@ export default function OrderPageClient({
         },
       });
       setWaiterCalled(true);
-      // Reset after 60s so they can call again
       setTimeout(() => setWaiterCalled(false), 60_000);
     } catch {
       // Non-critical
@@ -162,7 +194,6 @@ export default function OrderPageClient({
 
   // ── Table occupied screen ────────────────────────────────────────────
   if (tableOccupied === null) {
-    // Still checking — show a brief loading state
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -217,7 +248,33 @@ export default function OrderPageClient({
         </div>
       </header>
 
-      {/* ── Geo-fencing banner ──────────────────────────────────────── */}
+      {/* ── B1: Removed-item warning banner ────────────────────────── */}
+      {removedItemNames.length > 0 && (
+        <div className="mx-auto max-w-lg w-full px-4 pt-3">
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm text-amber-800 dark:text-amber-300">
+                {removedItemNames.length === 1
+                  ? `"${removedItemNames[0]}" was removed from your cart`
+                  : `${removedItemNames.length} items were removed from your cart`}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                {removedItemNames.length === 1 ? "This item is" : "These items are"} no longer available.
+              </p>
+            </div>
+            <button
+              onClick={() => setRemovedItemNames([])}
+              className="text-amber-600 hover:text-amber-800 text-xs shrink-0"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Geo-fencing banners ─────────────────────────────────────── */}
       {(restaurant.geofencing_enabled ?? false) && geoStatus === "checking" && (
         <div className="mx-auto max-w-lg w-full px-4 pt-3">
           <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
@@ -227,6 +284,7 @@ export default function OrderPageClient({
         </div>
       )}
 
+      {/* B2: Hard block only when provably outside radius */}
       {geoBlocked && (
         <div className="mx-auto max-w-lg w-full px-4 pt-3">
           <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
@@ -234,6 +292,21 @@ export default function OrderPageClient({
             <div>
               <p className="font-semibold text-sm text-destructive">Ordering not available</p>
               <p className="text-xs text-muted-foreground mt-0.5">{geoMessage}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* B2: Soft warning when location permission was denied — ordering still allowed */}
+      {geoPermissionDenied && (
+        <div className="mx-auto max-w-lg w-full px-4 pt-3">
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3">
+            <MapPin className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm text-amber-800 dark:text-amber-300">Location access denied</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                We couldn't verify your location. You can still order — a staff member may check if needed.
+              </p>
             </div>
           </div>
         </div>
@@ -289,7 +362,12 @@ export default function OrderPageClient({
                 </button>
               </div>
             ) : (
-              <OrderStatusTracker orders={activeOrders} />
+              // B5: pass restaurantId and refetchOrders so the tracker can cancel orders
+              <OrderStatusTracker
+                orders={activeOrders}
+                restaurantId={restaurant.id}
+                onOrderCancelled={refetchOrders}
+              />
             )}
           </div>
         )}

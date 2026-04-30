@@ -181,13 +181,13 @@ export type CustomerOrderSession = {
 
 /** Valid state transitions for order status */
 export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ["confirmed"],
-  pending_waiter: ["confirmed"],
-  confirmed: ["preparing"],
-  preparing: ["ready"],
-  ready: ["served"],
-  served: [],
-  cancelled: [],
+  pending:        ["confirmed", "cancelled"],
+  pending_waiter: ["confirmed", "cancelled"],
+  confirmed:      ["preparing", "cancelled"],
+  preparing:      ["ready"],
+  ready:          ["served"],
+  served:         [],
+  cancelled:      [],
 };
 
 /** Check if a status transition is valid */

@@ -114,7 +114,7 @@ Step 3: Plan
 ### Pitfalls
 
 - If `onboard_restaurant()` RPC fails mid-transaction (e.g. DB constraint), the auth user is created but has no restaurant. User is stuck — re-visiting `/onboarding` will re-attempt the RPC since `existing?.restaurant_id` will be null.
-- The `NEXT_PUBLIC_ADMIN_PIN` is exposed to the client bundle. It should be treated as a weak gate only.
+- ~~The `NEXT_PUBLIC_ADMIN_PIN` is exposed to the client bundle.~~ **Fixed (G4)** — PIN verification is now handled server-side via `POST /api/admin/verify-pin`. The browser sends only the PIN; the server compares it against `ADMIN_PIN` (or `NEXT_PUBLIC_ADMIN_PIN` as a fallback during migration) and returns `{ ok: true }` or `401`. The endpoint is rate-limited to 5 attempts per IP per minute to prevent brute-force. Remove `NEXT_PUBLIC_ADMIN_PIN` from the environment once `ADMIN_PIN` is set.
 - `ownerName` is required but only validated client-side. Empty strings can reach the API if JS is bypassed.
 
 ---
@@ -140,27 +140,29 @@ Step 3: Plan
 ```
 session exists?
   No  → render page (guest)
-  Yes → has restaurant_id?
-          No  → allowNoRestaurant=true  → render page (let through for onboarding)
-                allowNoRestaurant=false → redirect to /onboarding
-          Yes → redirect to role dashboard:
-                  manager  → /manager/[restaurant_id]
-                  waiter   → /waiter/[restaurant_id]
-                  kitchen  → /kitchen/[restaurant_id]
-                  other    → /onboarding
+  Yes → has users row?
+          No  → sign out → redirect to /login?error=account_incomplete
+          Yes → has restaurant_id?
+                  No  → allowNoRestaurant=true  → render page (let through for onboarding)
+                        allowNoRestaurant=false → redirect to /onboarding
+                  Yes → redirect to role dashboard:
+                          manager  → /manager/[restaurant_id]
+                          waiter   → /waiter/[restaurant_id]
+                          kitchen  → /kitchen/[restaurant_id]
+                          other    → /onboarding
 ```
 
 ### Variations
 
-- **New auth user with no users row:** `profile` is null → redirected to `/onboarding`. This happens if staff creation partially failed.
+- **New auth user with no users row (broken/partial account):** `AuthRedirect` signs the user out and redirects to `/login?error=account_incomplete`. This prevents an infinite redirect loop and surfaces a clear error. Occurs when staff creation partially failed (auth user created but no `users` row inserted).
 - **Logged-in user with no restaurant on `/onboarding`:** `allowNoRestaurant=true` is set on the onboarding page, so the user is allowed through to complete setup. On any other protected page (`allowNoRestaurant=false`), they are redirected to `/onboarding`.
-- **Inactive user (`is_active = false`):** No special redirect — they can still log in. The dashboard will load but RLS will block data access for most queries. This is a known gap (see Pitfalls).
+- **Inactive user (`is_active = false`):** `loadUserProfile` selects `is_active` and signs out deactivated users immediately, returning `{ deactivated: true }`. `signIn` checks this flag and returns an error — deactivated users cannot log in.
 - **Super admin:** `is_super_admin = true` users are not redirected to `/admin` automatically — they must navigate there manually and enter the PIN.
 
 ### Pitfalls
 
-- `useAuth()` uses `maybeSingle()` — if a user has multiple rows in `users` (duplicate auth_id), only the first is returned silently.
-- Auth state is client-side only. There is no server-side session validation on dashboard pages — a user with a valid JWT but a deleted `users` row will see a loading spinner indefinitely.
+- `useAuth()` uses `maybeSingle()` — the `users.auth_id` column now has a `UNIQUE` constraint (`users_auth_id_unique`), so duplicate rows for the same `auth_id` are prevented at the DB level.
+- Auth state is client-side only. There is no server-side session validation on dashboard pages. `AuthRedirect` handles the "valid JWT but no `users` row" case by signing the user out and redirecting to `/login?error=account_incomplete`, but pages that do not use `AuthRedirect` (e.g. direct deep-links to dashboard routes) may still show a loading spinner indefinitely in this scenario.
 - Staff created via `/api/staff/create` get a temporary password. There is no forced password-change flow.
 
 ---
@@ -185,7 +187,7 @@ session exists?
 ### Table Occupancy Check (client-side)
 
 ```
-On mount (300ms delay to let sessionStorage load):
+On mount (resolved via one-shot useEffect after first render cycle):
   checkTableHasUnpaidOrders(table_id)
   └─ If true AND no sessionStorage key for this table
      → tableOccupied = true → shows "Table is occupied" screen
@@ -199,8 +201,8 @@ On mount (300ms delay to let sessionStorage load):
 ```
 useGeofence() calls browser navigator.geolocation.getCurrentPosition()
   └─ status: 'checking' | 'inside' | 'outside' | 'error' | 'disabled'
-  └─ If 'outside' → cart "Add" buttons are disabled
-  └─ If 'error' (permission denied) → cart is blocked with message
+  └─ If 'outside' (status === "denied", provably outside radius) → cart "Add" buttons are disabled
+  └─ If 'error' (permission denied) → shows a soft amber warning but does NOT block ordering
   └─ If geofencing_enabled=false → skipped entirely
 
 Options: { enableHighAccuracy: true, timeout: 10s, maximumAge: 10s }
@@ -215,7 +217,8 @@ Options: { enableHighAccuracy: true, timeout: 10s, maximumAge: 10s }
 - Real-time updates via useRealtimeMenu() → channel: manager:{restaurant_id}
   - INSERT → adds item to list
   - UPDATE → patches name/price/availability in place
-  - DELETE → removes from list
+  - DELETE → removes from list; calls invalidateCartItem(itemId) before removal
+            (invalidates the cart item and fires onItemInvalidated callback so the UI can show a warning banner)
 - Unavailable items hidden (is_available=false filtered server-side)
 - Tags shown as badges (veg, spicy, bestseller, etc.)
 - Floor price_multiplier shown as info badge if > 1.0
@@ -226,31 +229,42 @@ Options: { enableHighAccuracy: true, timeout: 10s, maximumAge: 10s }
 ```
 Tab: "Menu" (default) | "Orders"
 
-Cart state managed by useCart(priceMultiplier) — in-memory only (no persistence).
-The `priceMultiplier` (floor's `price_multiplier`, default 1.0) is passed in so the cart's
-`totalPrice` matches the floor-adjusted prices shown on `MenuItemCard`.
+Cart state managed by useCart(priceMultiplier, tableId, onItemInvalidated?) — persisted to
+sessionStorage under the key `cart_{tableId}` so the cart survives page refreshes within the
+same tab. The `priceMultiplier` (floor's `price_multiplier`, default 1.0) is passed in so the
+cart's `totalPrice` matches the floor-adjusted prices shown on `MenuItemCard`.
+When `tableId` is not provided (e.g. manager add-order modal), the hook falls back to
+in-memory only (no persistence).
+The optional `onItemInvalidated(itemId)` callback is fired when a cart item is removed via
+`invalidateCartItem()` — used to surface a toast/banner to the customer.
 
 Add to cart → CartDrawer (bottom sheet, expandable)
 
 On "Place Order":
   Case A — No saved customer info (first order):
     → Step "info": collect name (required), phone (required), party size (optional)
-    → Validate: name non-empty, phone non-empty
+    → Validate: name non-empty, phone non-empty, party_size in range 1–50 (enforced in handleInfoSubmit)
     → submitOrder()
 
   Case B — Saved customer info (sessionStorage):
     → Skip form, call submitOrder() directly
 
 submitOrder():
-  1. placeOrder() → lib/api.ts
-  2. check_table_has_unpaid_orders(table_id, customer_phone)
-     └─ If true → returns 'UNPAID_ORDERS_EXIST' → shows error step
-  3. getRestaurant() → determine routing mode
-  4. INSERT into orders (status = 'pending' or 'pending_waiter')
-  5. calculate_item_prices_batch() RPC → applies floor multiplier
-     └─ Falls back to base prices if RPC fails
-  6. INSERT into order_items
-  7. On success → save customer info to sessionStorage
+  1. POST /api/orders (server-side route — enforces rate limiting)
+     └─ If HTTP 429 → shows error step immediately (rate limit exceeded)
+     └─ If non-2xx → id = null (treated as failure)
+     └─ On network error → id = null
+     └─ On success → id = data.result
+  2. /api/orders internally calls placeOrder() → lib/api.ts:
+     a. check_table_has_unpaid_orders(table_id, customer_phone)
+        └─ If true → returns 'UNPAID_ORDERS_EXIST' → shows error step
+     b. getRestaurant() → determine routing mode
+     c. INSERT into orders (status = 'pending' or 'pending_waiter')
+     d. calculate_item_prices_batch() RPC → applies floor multiplier
+        └─ Falls back to fetching floor multiplier directly from DB if RPC fails
+        └─ If DB fetch also fails, order is aborted (returns null) — no silent base-price fallback
+     e. INSERT into order_items
+  3. On success → save customer info to sessionStorage
                → show success screen (2.5s) → clear cart → back to menu
 ```
 
@@ -263,6 +277,8 @@ Tab: "Orders"
   - OrderStatusTracker shows visual progress bar:
     pending → confirmed → preparing → ready → served
     (cancelled is a terminal state shown separately — order exits the progress bar)
+  - Customers can cancel orders in 'pending' or 'pending_waiter' status via a Cancel button
+    in OrderStatusTracker. The DB RLS policy 'customers_can_cancel_pending_orders' enforces this.
   - Session clears from sessionStorage when all orders have billed_at set
 ```
 
@@ -270,17 +286,19 @@ Tab: "Orders"
 
 - **Multiple orders same session:** Customer can place additional orders. The billing safety check uses `customer_phone` to scope — same phone = same customer = allowed. Different phone = blocked.
 - **No phone number:** If customer skips phone, billing safety check uses `null` phone — any unpaid order at the table blocks them.
-- **Menu item deleted mid-session:** Real-time DELETE removes it from the displayed list. Items already in cart are NOT removed — they will fail at `order_items` INSERT if `menu_item_id` no longer exists (FK constraint).
+- **Menu item deleted mid-session:** Real-time DELETE removes it from the displayed list. If the item is in the cart, `useRealtimeMenu()` calls `invalidateCartItem(itemId)` on `useCart`, which removes it from the cart and fires `onItemInvalidated` so the UI can show an amber warning banner. This prevents the FK constraint failure that would otherwise occur at `order_items` INSERT.
 - **Floor pricing:** `calculate_item_prices_batch()` applies `floor.price_multiplier`. If the table has no `floor_id`, multiplier defaults to 1.0. The same multiplier is passed to `useCart(priceMultiplier)` so the cart total shown to the customer is consistent with per-item prices before the order is submitted.
 
 ### Pitfalls
 
-- Cart is in-memory only. Refreshing the page clears the cart.
-- `tableOccupied` check has a 300ms delay — fast users could see a flash of the normal UI before the occupied screen appears.
-- Geo-fencing relies on browser geolocation. If the user denies permission, they are blocked from ordering even if physically present.
+- Cart is persisted to `sessionStorage` (key: `cart_{tableId}`) and survives page refreshes within the same tab. It is cleared on successful order placement or when `tableId` is not provided.
+- `tableOccupied` check is resolved via a one-shot `useEffect` after the first render cycle — no arbitrary delay. Fast loads will not flash the normal UI before the occupied screen appears.
+- Geo-fencing relies on browser geolocation. `geoBlocked` only triggers when `status === "denied"` (provably outside the radius). If the user denies permission (`status === "error"`), a soft amber warning is shown but ordering is not blocked.
 - `sessionStorage` is tab-scoped. Opening the QR link in a new tab loses the session — the table will appear occupied to the new tab.
-- If `calculate_item_prices_batch()` RPC is unavailable, orders are placed at base prices (no floor multiplier). This is a silent fallback — no error shown to customer.
+- If `calculate_item_prices_batch()` RPC is unavailable, the floor multiplier is fetched directly from the DB. If that also fails, the order is aborted (returns null) — no silent base-price fallback.
+- `party_size` is validated in `CartDrawer.handleInfoSubmit` (range 1–50). A DB CHECK constraint `orders_party_size_check` also enforces this range server-side.
 - Menu items with `is_available=false` are hidden from customers but can still be in the DB. If a manager marks an item unavailable after a customer adds it to cart, the cart still shows it — the order will succeed (price is stored at order time), but the kitchen will see an item that's technically unavailable.
+- **Rate limiting (G5):** Order submission goes through `POST /api/orders` (server-side) rather than calling `placeOrder()` directly from the client. This allows the server to enforce rate limiting. If the server returns HTTP 429, `CartDrawer` transitions to the error step immediately — no retry is attempted. The customer must wait before trying again.
 
 ---
 
@@ -334,8 +352,14 @@ Each OrderCard shows action button based on current status:
   ready      → (no action — waiter marks served)
   cancelled  → (no action — terminal state, grey card style)
 
+Kitchen can also reject orders from 'pending' or 'confirmed' status:
+  pending / confirmed → "Reject" button → status: cancelled
+  ORDER_STATUS_TRANSITIONS allows 'cancelled' from 'pending', 'pending_waiter', and 'confirmed'.
+  The DB trigger validate_order_status_transition was updated to match.
+  The order is removed from the board optimistically and set to 'cancelled' in the DB.
+
 advanceStatus():
-  1. Capture actual previous status from state (before optimistic update)
+  1. Capture actual previous status from state inside the setOrders callback (atomic)
   2. Optimistic update (instant UI)
   3. updateOrderStatus() → PATCH orders.status
   4. On failure → rollback to the captured previous status
@@ -352,10 +376,10 @@ advanceStatus():
 
 ### Pitfalls
 
-- Kitchen has no way to cancel or reject an order — only advance it forward.
+- **Kitchen reject:** Kitchen staff can cancel (reject) an order from `pending` or `confirmed` status using the reject button on each `OrderCard`. `STATUS_CONFIG` has `canReject: true` for those two statuses; the button is hidden for all others. `KitchenClient` passes `rejectOrder` (from `useKitchenOrders`) as the `onReject` prop. The order is removed from the board optimistically and set to `cancelled` in the DB.
 - If the real-time channel drops, new orders won't appear until manual refresh. The "Refresh" button triggers a full re-fetch.
-- `getPreviousStatus()` is still used as a fallback default before the state read completes, but `advanceStatus()` now captures the actual previous status from state inside the `setOrders` updater — so rollbacks use the real prior status rather than a derived guess. A concurrent update that changes the status between the capture and the rollback could still result in a stale rollback value.
-- Both the broadcast and postgres_changes listeners can fire for the same event (the channel subscribes to both as a reliability fallback). `fetchingRef` deduplicates concurrent `fetchAndUpsertOrder` calls for the same order ID — if a fetch is already in-flight, the duplicate is silently dropped rather than triggering a second full re-fetch.
+- `advanceStatus()` captures the actual previous status from state inside the `setOrders` updater callback (atomic). The static `getPreviousStatus()` helper has been removed. Rollbacks use the real prior status rather than a derived guess. A concurrent update that changes the status between the capture and the rollback could still result in a stale rollback value.
+- `fetchingRef` deduplicates concurrent `fetchAndUpsertOrder` calls for the same order ID — if a fetch is already in-flight, the duplicate is silently dropped rather than triggering a second full re-fetch.
 
 ---
 
@@ -429,9 +453,9 @@ markServed(orderId):
 
 ### Pitfalls
 
-- Two waiters can both see the same "Available" order simultaneously. `assign_order_to_waiter()` uses an advisory lock, so only one will succeed — the other gets an error (currently silent in UI).
+- Two waiters can both see the same "Available" order simultaneously. `assign_order_to_waiter()` uses an advisory lock, so only one will succeed — the other gets an error shown as a red error banner below the header in `WaiterClient`.
 - A waiter who is `is_active=false` can still log in and see orders. No active-status enforcement in the dashboard.
-- `markServed` does not check if the order is actually `ready` first — the status transition trigger `validate_order_status_transition` enforces this at DB level and will throw an error, but the UI shows no specific message.
+- `markServed` now checks `currentOrder.status !== "ready"` before the optimistic update. If the order is not ready, it sets an error message and returns early. On DB failure, it rolls back and shows "Could not mark order as served. Please try again."
 
 ---
 
@@ -492,11 +516,18 @@ Props:
 **Order Log (`orderlog` tab)**
 ```
 OrderLog component
-- Fetches up to 500 most recent orders (created_at DESC) scoped to the active date range
-  (server-side `.gte`/`.lte` filter on `created_at`) with full joins:
-  tables → floors, waiter (users), order_items → menu_items
+- Fetches one page (PAGE_SIZE rows) at a time from the DB — server-side pagination.
+  Date range, status filter, and sort order are applied server-side where possible:
+    - Date range: `.gte`/`.lte` on `created_at`
+    - Status filter: `.eq("status", ...)` (skipped when "all" is selected)
+    - Sort: DB column for created_at and total_amount; table_number and turnaround_s
+      fall back to created_at server-side (those are computed/joined fields)
+  Full joins: tables → floors, waiter (users), order_items → menu_items
+  Response includes `count: "exact"` so the total row count is known without
+  fetching all rows.
 - Computes derived fields client-side:
     wait_to_confirm_s, prep_time_s, serve_time_s, turnaround_s
+- SORT_COLUMN map translates client SortKey values to DB column names
 
 Order ID format: #ORD-XXXX (first 4 chars of UUID, uppercased)
 
@@ -520,27 +551,33 @@ Status tabs:
 Date filter toolbar:
   - Segments: Today | Yesterday | Last 7 days | Last 30 days | Custom
   - Custom range: two date inputs (from / to), applied on selection
-  - Filters are applied server-side (`.gte`/`.lte` on `created_at`) — only orders within the selected range are fetched
-  - Additional client-side filtering (search, status tab) is applied against the fetched subset
+  - Filters are applied server-side (`.gte`/`.lte` on `created_at`)
+  - Changing the date range resets to page 1 and triggers a fresh server fetch
   - Helper functions: startOfDay / endOfDay / getSegmentRange / fmtDate / toInputDate
     (defined in OrderLog.tsx)
 
 Search & sort toolbar:
   - Free-text search across: order ID, table number, floor name,
     waiter name, customer name, customer phone, item names
+  - Search is applied client-side against the current page's rows
   - Sortable columns: Table, Amount, Time (created_at)
   - Sort toggles asc/desc; defaults to created_at DESC
+  - Changing sort resets to page 1 and triggers a fresh server fetch
 
 Pagination:
-  - 10 rows per page, client-side (from filtered + sorted dataset)
+  - PAGE_SIZE rows per page, server-side (DB `.range()` call)
+  - Total count comes from Supabase `count: "exact"` — reflects the full
+    filtered dataset, not just the current page
   - Shows page range and total count
 
 Real-time:
   - Subscribes to postgres_changes on orders table
     (filter: restaurant_id=eq.{restaurantId})
-  - INSERT → full re-fetch (to get joined data)
-  - UPDATE → patches status fields in-place without re-fetch
-  - selectedOrder kept in sync with live row updates
+  - INSERT → full re-fetch of the current page (to get joined data and updated count)
+  - UPDATE → targeted single-order re-fetch via `refetchOrder(orderId)`:
+      fetches the one changed row with all joins so waiter_name, floor_name,
+      and order_items are always fresh (not just raw orders columns)
+  - selectedOrder kept in sync: `refetchOrder` also updates the drawer if open
 
 Order detail drawer:
   - Slides in from the right (portal into document.body)
@@ -694,6 +731,9 @@ RestaurantDetails component
 ```
 SettingsPanel component
 - Order routing mode: direct_to_kitchen | waiter_first
+  Switching to 'direct_to_kitchen' calls updateRestaurantRoutingMode(), which also invokes
+  the migrate_pending_waiter_orders(restaurant_id) RPC to migrate any orphaned
+  'pending_waiter' orders to 'pending' so they appear in the kitchen queue immediately.
 - Geo-fencing: enable/disable, set lat/lng/radius, auto-detect via browser geolocation
 - Auto-confirm Orders: enable/disable; set delay in minutes (1–60); new orders in "New" status
   are automatically confirmed after the configured delay
@@ -722,7 +762,7 @@ WebhooksManager component
 - Staff deletion goes through `DELETE /api/staff/delete` (service role key). The `users` row is deleted first; the Supabase Auth account is then deleted best-effort. If the auth deletion fails, a warning is logged server-side but the operation still returns success — the profile row is already gone so the orphaned auth account will land on `/onboarding` if it tries to log in.
 - Staff email edits go through `PATCH /api/staff/update` (service role key). The `users` table is updated first; the Supabase Auth email is then synced best-effort. If the auth update fails it is logged server-side but the API still returns success — the staff member's login email may temporarily differ from their profile email until manually corrected.
 - The QR code URL is stored as `qr_code_url` in the `tables` table but is just a plain URL string — there is no actual QR image generation in the DB. The frontend must generate the QR image from this URL.
-- Changing `order_routing_mode` takes effect immediately for new orders only — the restaurant cache is invalidated on save so the next order picks up the new mode without waiting for the 5-minute TTL to expire. In-flight `pending_waiter` orders are not retroactively changed.
+- Changing `order_routing_mode` takes effect immediately for new orders only — the restaurant cache is invalidated on save so the next order picks up the new mode without waiting for the 5-minute TTL to expire. When switching to `direct_to_kitchen`, `migrate_pending_waiter_orders(restaurant_id)` is called automatically to migrate any orphaned `pending_waiter` orders to `pending` so they appear in the kitchen queue.
 
 ### Shared UI Components
 
@@ -759,29 +799,59 @@ open_table_session(restaurant_id, table_id, waiter_id)
 
 close_table_session(session_id)
   └─ Sets closed_at=now()
-  └─ Called after all orders at the table are billed
+  └─ Called after ALL non-cancelled orders at the table are billed
+     (cancelled orders are excluded from this check and never block session close)
 ```
 
 ### Billing Flow
 
 ```
-Manager: Live Tables tab → "Bill (N)" button
+Manager: Live Tables tab → "Bill (N)" button → BillDialog
 
-generate_bill(order_id) RPC:
-  1. Checks order.status = 'served' (throws if not)
+BillDialog (components/manager/BillDialog.tsx):
+  - Shows unbilled orders, payment method selector, and optional discount input
+  - If any orders are not yet in 'served' status (nonServedCount > 0):
+    → Shows "Manager override" checkbox (amber warning banner)
+    → Label: "Manager override — bill N unserved order(s)"
+    → Sub-text: "These orders will be marked as served automatically before billing.
+                 Use this when a customer leaves before the waiter marks the order served."
+    → forceOverride state (default: false)
+    → When checked, bill_table() is called with force=true
+    → When unchecked (default), only served orders are billed; unserved orders are skipped
+  - Billing is atomic: BillDialog calls billTable(tableId, options) — a single atomic RPC
+    (bill_table) that acquires row locks, bills all orders in one transaction, and closes
+    the session. No per-order looping.
+
+bill_table(table_id, { force?, paymentMethod?, discountAmount? }) RPC:
+  1. Acquires row locks on all unbilled orders for the table
+  2. If force=false (default): skips non-served orders
+     If force=true: auto-advances non-served orders to 'served' before billing
+  3. For each order: calculates total, sets total_amount and billed_at
+  4. Closes the table session atomically
+  5. Returns billing summary
+
+generate_bill(order_id, { force? }) RPC (also available standalone):
+  1. If force=false (default): checks order.status = 'served' (throws if not)
+     If force=true: auto-advances non-served orders to 'served' before billing
   2. Calculates total: SUM(order_items.quantity * order_items.price)
-  3. Sets orders.total_amount = calculated_total
+  3. Sets orders.total_amount = calculated_total (net after discount)
   4. Sets orders.billed_at = now()
   5. Returns: order_id, total_amount, billed_at, success=true
 
 After billing:
   - billed_at is set → order excluded from "unpaid" checks
-  - When ALL served orders at a table have billed_at set:
+  - When ALL non-cancelled orders at a table have billed_at set:
+    → close_table_session() is called automatically
     → Customer sessionStorage session clears
     → Table shows as "free" in Live Tables
+  - Cancelled orders are excluded from this check — they never block session close
+
+Revenue dashboard (TableSessions):
+  - Uses total_amount (net after discount) from the DB for billed orders
+  - Does not recompute gross from items client-side
 
 State update strategy (OrderBilling component):
-  - No optimistic update is applied after generate_bill() succeeds.
+  - No optimistic update is applied after billing succeeds.
   - The postgres_changes Realtime subscription on the orders table
     triggers a full re-fetch of both unbilled and billed order lists.
   - This ensures the UI always reflects the true DB state, at the cost
@@ -801,9 +871,10 @@ No automated payment processing — purely manual recording.
 
 ### Pitfalls
 
-- `generate_bill()` requires `status = 'served'`. If a waiter forgets to mark an order served, the manager cannot bill it. There is no manager override to force-bill.
-- Billing is per-order, not per-table. A table with 3 orders requires 3 separate `generate_bill()` calls (the "Bill (N)" button loops through them).
-- `discount_amount` is stored but not subtracted from `total_amount` automatically — the frontend must calculate the net amount for display.
+- `generate_bill()` requires `status = 'served'` by default. If a waiter forgets to mark an order served, the manager can pass `force=true` to auto-advance it to served before billing.
+- Billing is atomic: `BillDialog` calls `billTable(tableId, options)` — a single `bill_table` RPC that acquires row locks and bills all orders in one transaction. There is no per-order looping.
+- `total_amount` stored in the DB is the net amount after discount. The revenue dashboard (`TableSessions`) reads `total_amount` directly from the DB for billed orders — no client-side gross recomputation.
+- Session close is triggered when all **non-cancelled** orders are billed. Cancelled orders are ignored. If any pending/preparing/ready/served order remains unbilled, the session stays open.
 - If `close_table_session()` is not called after billing, the table remains "occupied" in the Live Tables view indefinitely.
 
 ---
@@ -960,9 +1031,12 @@ POST /api/phonepe/verify (popup flow — no webhook dependency):
 
 PhonePe Webhook → POST /api/phonepe/webhook:
   → Verify callback via SDK
+  → Resolve restaurant_id: first from DB lookup by merchantOrderId;
+    if not found, falls back to payload.metaInfo.udf1
   → On success: upsert subscriptions (status='active')
                record_coupon_usage() if coupon applied
-  → On failure: update subscriptions.status = 'failed'
+  → On failure (renewal failed for active Pro): update subscriptions.status = 'past_due'
+  → On failure (first-time payment failure): update subscriptions.status = 'incomplete'
 ```
 
 ### Plan Limit Enforcement
@@ -983,7 +1057,9 @@ useSubscription(restaurantId):
   └─ Returns: { isPro, isTrial, isActive, isExpired, trialEndsAt, subscription, limits, startUpgrade }
     - isActive: true when subscription.status === 'active' (paid, not trialing)
     - isTrial: true when subscription.status === 'trialing'
-    - isExpired: true when subscription.status === 'expired'
+    - isExpired: true when subscription.status is any terminal non-active state:
+                 'expired' | 'incomplete' | 'past_due' | 'canceled'
+                 All four statuses fire the paywall and show the upgrade prompt.
     - isPro: true when plan === 'pro' AND (isActive OR isTrial) — trialing users get full Pro access
     - trialEndsAt: subscription.current_period_end when trialing, otherwise null
 
@@ -1010,7 +1086,7 @@ Manager dashboard header displays a plan label and renewal info derived from use
 - `STRIPE_WEBHOOK_SECRET` must match the signing secret for the specific webhook endpoint in Stripe Dashboard. Local testing requires `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
 - If the webhook fires but `restaurant_id` is missing from `session.metadata`, the subscription is not updated. This can happen if the checkout session was created without metadata (e.g. direct Stripe Dashboard test).
 - Trial period means the subscription status is `trialing`, not `active`. `useSubscription` correctly treats `trialing` as Pro (`isPro = plan === 'pro' && (isActive || isTrial)`). Code that checks `status === 'active'` directly (bypassing the hook) will still incorrectly block trialing users.
-- `past_due` subscriptions are not downgraded to free automatically — only `canceled` or `deleted` events trigger a plan downgrade.
+- `past_due` and `canceled` subscriptions are treated as expired (`isExpired = true`) — the paywall fires and the manager sees the upgrade prompt. The webhook failure branch now distinguishes: `past_due` is set for active Pro subscriptions where renewal failed; `incomplete` is set for first-time payment failures. If you need a grace period before locking out `past_due` users, that logic must be added to `useSubscription` before the `isExpired` derivation.
 - `useSubscription` opens a Realtime channel (name: `subscription:{restaurantId}:{n}`) to reflect webhook-driven plan changes instantly. `n` is a module-level counter (`_channelCounter`) incremented on each effect run, guaranteeing a unique name even in React Strict Mode where effects are double-invoked in development. If Supabase Realtime is disabled or the `subscriptions` table is not in the publication, the UI will only update on the next full page load.
 - PhonePe credentials (`PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`) must never be exposed client-side. All SDK calls happen server-side only via `getPhonePeClient()`. Credentials are read inside the function (not at module load time) so they are always fresh — do not hoist them to module scope.
 - `getPhonePeClient()` resets `StandardCheckoutClient._client = undefined` before calling `getInstance()` to force the SDK to reinitialise with the current env credentials on every call. The SDK's singleton check uses `=== undefined` (not `=== null`), so setting it to `null` would not trigger reinitialisation.
@@ -1152,7 +1228,12 @@ Rotate secret:
 fireEvent(restaurantId, eventType, data):
   1. Fetch active endpoints subscribed to this event
   2. Build WebhookPayload: { id, event, restaurant_id, timestamp, data }
-  3. Dispatch to up to 10 endpoints concurrently
+  3. Dispatch to up to 10 endpoints concurrently — NON-BLOCKING
+     HTTP calls are detached from the caller immediately:
+       - On Vercel Edge/Node runtimes: registered via waitUntil so the
+         runtime keeps the function alive until all dispatches complete.
+       - On other runtimes: detached via a void promise (fire-and-forget).
+     fireEvent() returns immediately without awaiting delivery outcomes.
   4. Per endpoint:
      a. Create webhook_deliveries row (status='pending')
      b. POST to endpoint URL with headers:
@@ -1161,11 +1242,14 @@ fireEvent(restaurantId, eventType, data):
         X-Webhook-Event: event type
         X-Webhook-ID: event UUID
      c. Timeout: 8 seconds
-     d. Success (2xx) → status='success', reset failure_count
-     e. Failure → status='retrying', schedule next retry
+     d. Payload size check: if payload > 64 KB, strip array fields from data
+        and add _truncated: true; only hard-fail if truncated version is still > 64 KB
+     e. Success (2xx) → status='success', reset failure_count
+     f. Failure → status='retrying', schedule next retry
         Retry schedule: 1m → 5m → 30m → 2h (5 total attempts)
-     f. After 5 failures → status='dead'
-     g. After 10 consecutive endpoint failures → auto-disable endpoint
+        Automatic retries run via cron every minute ("* * * * *")
+     g. After 5 failures → status='dead'
+     h. After 10 consecutive endpoint failures → auto-disable endpoint
 ```
 
 ### Internal Trigger Endpoint
@@ -1271,6 +1355,12 @@ Note: `order.placed` and `order.billed` are not fired from this path — they ar
 ### Retry Flow
 
 ```
+Automatic retries:
+  Cron job at /api/cron/webhook-retries runs every minute ("* * * * *").
+  On each run, it finds deliveries in 'retrying' status with next_retry_at <= now()
+  and re-dispatches them.
+
+Manual retry:
 POST /api/webhooks/[id]/retry:
   retryDelivery(deliveryId):
   1. Fetch delivery + endpoint
@@ -1307,11 +1397,11 @@ For `menu.item_deleted`, the item details (`name`, `price`, `description`, `tags
 
 ### Pitfalls
 
-- Webhook secret is only shown once at creation. If lost, the only option is to rotate it.
+- Webhook secret is only shown once at creation. If lost, the only option is to rotate it. `SecretModal` now requires a checkbox confirmation ("I have copied and securely stored the signing secret") before the **Done** button becomes active, reducing the risk of accidental dismissal without saving the secret. A dedicated **Copy secret** button with clipboard feedback is provided, and an amber warning banner is shown at the top of the modal.
 - SSRF protection is enforced at two layers: the URL input field rejects private/loopback addresses (`localhost`, `127.x`, `10.x`, `192.168.x`, `172.16–31.x`, `0.0.0.0`) and non-public hostnames client-side before submission; the server also blocks these at dispatch time. Webhooks cannot be tested against local servers without a tunnel (ngrok, etc.).
-- Payload size is capped at 64 KB. Large order payloads (many items) could be truncated.
-- The retry scheduler is not a background job — retries only happen when `/api/webhooks/[id]/retry` is called manually or by an external cron. There is no automatic retry execution built in.
-- `fireEvent()` is called asynchronously from `POST /api/webhooks/trigger` — the response returns immediately with `{ queued: true }` and dispatch happens in the background. Errors are logged server-side but not surfaced to the caller.
+- Payload size is capped at 64 KB. Before hard-failing, `dispatchToUrl` strips array fields from `data` and adds `_truncated: true`. Only fails if the truncated version is still too large.
+- The retry cron runs every minute (`"* * * * *"`). Retries are automatic — no manual trigger required.
+- `fireEvent()` detaches dispatch immediately (non-blocking). On Vercel runtimes it uses `waitUntil` to keep the function alive; on other runtimes it uses a detached promise. `fireEvent()` returns immediately without awaiting delivery outcomes. Errors are logged server-side but not surfaced to the caller.
 
 ---
 
@@ -1378,7 +1468,7 @@ For `menu.item_deleted`, the item details (`name`, `price`, `description`, `tags
 | `name` | text | |
 | `role` | text | `waiter` \| `manager` \| `kitchen` |
 | `restaurant_id` | uuid → restaurants | |
-| `auth_id` | uuid (nullable) → auth.users | |
+| `auth_id` | uuid (nullable, unique) → auth.users | `UNIQUE` constraint `users_auth_id_unique` prevents duplicate rows per auth user |
 | `email` | text (nullable) | |
 | `is_active` | boolean | Default true |
 | `is_super_admin` | boolean | Default false. Platform-level admin. |
@@ -1536,7 +1626,7 @@ Same structure as `food_categories` minus `parent_id`.
 | `update_order_timestamps` | trigger function | Sets `confirmed_at`, `preparing_at`, `ready_at`, `served_at` on status change |
 | `log_order_status_change` | trigger function | Inserts row into `order_status_logs` on every status change |
 | `calculate_order_total` | `(p_order_id)` | Returns SUM(quantity * price) for all order_items |
-| `generate_bill` | `(p_order_id)` | Requires status=`served`. Sets `total_amount` + `billed_at`. Returns order details. |
+| `generate_bill` | `(p_order_id, p_force boolean DEFAULT false)` | Requires status=`served` by default. When `p_force=true`, auto-advances non-served orders to `served` before billing. Sets `total_amount` + `billed_at`. Returns order details. |
 
 ### Pricing
 
@@ -1636,10 +1726,12 @@ Same structure as `food_categories` minus `parent_id`.
 
 | Channel | Subscribers | Trigger |
 |---------|-------------|---------|
-| `kitchen:{restaurant_id}` | Kitchen dashboard | Order INSERT/UPDATE |
-| `waiter:{restaurant_id}` | Waiter dashboard | Order INSERT/UPDATE |
+| `kitchen:{restaurant_id}:{reconnectKey}` | Kitchen dashboard | Order INSERT/UPDATE via `postgres_changes` (auth-gated by RLS, requires valid JWT) |
+| `waiter:{restaurant_id}` | Waiter dashboard | Order INSERT/UPDATE via `postgres_changes` (auth-gated by RLS, requires valid JWT) |
 | `manager:{restaurant_id}` | Manager dashboard | Order INSERT/UPDATE, menu changes |
 | `customer:{restaurant_id}:{table_id}` | Customer order tracker | Order UPDATE for that table |
+
+> **Kitchen channel note:** `useKitchenOrders` subscribes to `kitchen:{restaurantId}:{reconnectKey}` (no HMAC token in the Supabase channel name). The DB trigger broadcasts to `kitchen:{restaurantId}` — the reconnect key suffix is appended client-side to force a fresh subscription on reconnect. Security for the kitchen feed relies on the `postgres_changes` subscription, which is auth-gated by RLS and requires a valid session JWT. The public `.on("broadcast", ...)` handlers have been removed from `useKitchenOrders` and `useWaiterOrders` — both hooks now use `postgres_changes` only.
 
 ### Broadcast Mechanism
 
@@ -1648,9 +1740,15 @@ PostgreSQL trigger (broadcast_order_changes / broadcast_order_on_items_insert)
   → calls realtime.send(channel, event, payload)
   → payload: { event: 'INSERT'|'UPDATE', id, restaurant_id, table_id, status, waiter_id, created_at }
 
-Client (useKitchenOrders / useWaiterOrders / useManagerRealtime):
+Client (useManagerRealtime / customer pages):
   supabase.channel(channelName)
     .on('broadcast', { event: 'order_changed' }, handler)
+    .subscribe()
+
+Kitchen and waiter clients (useKitchenOrders / useWaiterOrders):
+  Use postgres_changes only — the public broadcast handlers have been removed.
+  supabase.channel(channelName)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
     .subscribe()
 
 On INSERT:
@@ -1666,9 +1764,10 @@ On UPDATE:
 ### Fallback
 
 ```
-useKitchenOrders also subscribes to postgres_changes as fallback:
+useKitchenOrders and useWaiterOrders use postgres_changes as the primary (and only) subscription:
   supabase.channel(...)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
+  The public broadcast listener has been removed from both hooks.
 ```
 
 ### Notification Sounds & Vibration
@@ -1710,11 +1809,10 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 ### Pitfalls
 
-- Real-time channels are public (no auth token required). Any client that knows the channel name can subscribe. This is intentional for the kitchen/customer MVP but means order data is not private.
+- The kitchen and waiter real-time feeds now use `postgres_changes` only (auth-gated by RLS, requires valid session JWT). The public `.on("broadcast", ...)` handlers have been removed from `useKitchenOrders` and `useWaiterOrders`. Cross-restaurant isolation is enforced by the `restaurant_id` filter on the `postgres_changes` subscription.
 - If the Supabase Realtime connection drops, `useKitchenOrders` auto-reconnects: on `CHANNEL_ERROR` it retries after 3 s; on `CLOSED` it retries after 1 s. On successful `SUBSCRIBED`, it immediately re-fetches all orders to catch any events missed during the outage.
 - The `on_order_item_insert` trigger fires on the FIRST `order_items` INSERT for an order. If the batch insert fails after the first item, the broadcast fires with incomplete item data.
 - `REPLICA IDENTITY FULL` must be set on `orders`, `menu_items`, `order_items` for postgres_changes to include old row data. If not set, UPDATE events won't include the previous values.
-- Channel names are not authenticated — a customer at table A could subscribe to `customer:{restaurant_id}:{table_B}` and see another table's order updates.
 
 ---
 
@@ -1786,60 +1884,60 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| A1 | Cart is in-memory only | Refresh clears cart | No localStorage/sessionStorage persistence for cart |
+| A1 | Cart persisted per-tab in `sessionStorage` | Refresh preserves cart; new tab = new cart | Cart keyed by `cart_{tableId}` — cleared on order success or when `tableId` absent |
 | A2 | `sessionStorage` is tab-scoped | New tab = new session = table appears occupied | Customer must use same tab throughout |
-| A3 | Staff with no `users` row loops to `/onboarding` | Confusing UX | Happens if staff creation partially fails |
-| A4 | `is_active=false` users can still log in | Soft-disabled staff can access dashboards | No login-time check against `is_active` |
-| A5 | Duplicate `users` rows for same `auth_id` | `maybeSingle()` returns first silently | No unique constraint on `users.auth_id` |
+| A3 | ~~Staff with no `users` row loops to `/onboarding`~~ | ~~Confusing UX~~ | **Fixed** — `AuthRedirect` now signs the user out and redirects to `/login?error=account_incomplete` instead of looping |
+| A4 | ~~`is_active=false` users can still log in~~ | ~~Soft-disabled staff can access dashboards~~ | **Fixed** — `loadUserProfile` selects `is_active`, signs out deactivated users immediately, returns `{ deactivated: true }`; `signIn` checks this and returns an error |
+| A5 | ~~Duplicate `users` rows for same `auth_id`~~ | ~~`maybeSingle()` returns first silently~~ | **Fixed** — `UNIQUE` constraint `users_auth_id_unique` added to `users.auth_id` |
 
 ### Ordering
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| B1 | Cart items not removed when menu item deleted | Order fails at DB level (FK RESTRICT) | No real-time cart invalidation |
-| B2 | Geo-fence blocks ordering if permission denied | Customer physically present but blocked | No fallback for denied geolocation |
-| B3 | `tableOccupied` check has 300ms delay | Brief flash of normal UI | Race condition on fast loads |
-| B4 | Floor pricing silently falls back to base price | Customer charged wrong amount | If `calculate_item_prices_batch` RPC fails |
-| B5 | No order cancellation for customers | Customer must contact staff | No cancel flow exists |
-| B6 | `party_size` is optional and not validated | Analytics may have gaps | No minimum/maximum enforced |
+| B1 | ~~Cart items not removed when menu item deleted~~ | ~~Order fails at DB level (FK RESTRICT)~~ | **Fixed** — `useRealtimeMenu` DELETE handler calls `invalidateCartItem(itemId)` before removing from list; amber warning banner shown |
+| B2 | ~~Geo-fence blocks ordering if permission denied~~ | ~~Customer physically present but blocked~~ | **Fixed** — `geoBlocked` only triggers on `status === "denied"` (provably outside radius); `status === "error"` (permission denied) shows soft amber warning but does not block ordering |
+| B3 | ~~`tableOccupied` check has 300ms delay~~ | ~~Brief flash of normal UI~~ | **Fixed** — replaced `setTimeout(100ms)` with one-shot `useEffect` after first render cycle |
+| B4 | ~~Floor pricing silently falls back to base price~~ | ~~Customer charged wrong amount~~ | **Fixed** — fallback now fetches floor multiplier directly from DB; if that also fails, order is aborted (returns null) |
+| B5 | ~~No order cancellation for customers~~ | ~~Customer must contact staff~~ | **Fixed** — customers can cancel orders in `pending` or `pending_waiter` status via Cancel button in `OrderStatusTracker`; DB RLS policy `customers_can_cancel_pending_orders` enforces this |
+| B6 | ~~`party_size` is optional and client-validated~~ | ~~Analytics may have gaps~~ | **Fixed** — `CartDrawer` validates party_size (1–50) in `handleInfoSubmit`; DB CHECK constraint `orders_party_size_check` enforces the range |
 
 ### Order Status & Routing
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| C1 | Kitchen cannot cancel/reject orders | Stuck orders if item unavailable | Only forward transitions allowed |
-| C2 | Changing routing mode affects only new orders | In-flight `pending_waiter` orders not migrated | No migration logic |
-| C3 | Waiter rollback uses `getPreviousStatus()` | May set wrong status on concurrent update | Simple reverse lookup, not DB-aware |
-| C4 | Two waiters can race to claim same order | One silently fails | Advisory lock protects DB but UI shows no error |
-| C5 | `markServed` doesn't pre-check status | DB trigger throws, UI shows generic error | No client-side status validation |
+| C1 | ~~Kitchen reject partially implemented~~ | ~~Stuck orders if item unavailable~~ | **Resolved** — `onReject` wired in `KitchenClient`; reject button rendered for `pending`/`confirmed` orders; `ORDER_STATUS_TRANSITIONS` and DB trigger updated to allow `cancelled` from `pending`, `pending_waiter`, and `confirmed` |
+| C2 | Changing routing mode to `direct_to_kitchen` left orphaned `pending_waiter` orders | In-flight orders stuck in waiter queue | **Fixed** — `updateRestaurantRoutingMode` now calls `migrate_pending_waiter_orders(restaurant_id)` RPC to migrate orphaned orders to `pending` |
+| C3 | Waiter rollback uses `getPreviousStatus()` | May set wrong status on concurrent update | **Fixed** — `advanceStatus` now captures `previousStatus` inside the synchronous `setOrders` callback (atomic); `getPreviousStatus()` helper removed |
+| C4 | Two waiters can race to claim same order | One silently fails | Advisory lock protects DB; error now shown as a red error banner below the header in `WaiterClient` |
+| C5 | `markServed` doesn't pre-check status | DB trigger throws, UI shows generic error | **Fixed** — `markServed` now checks `currentOrder.status !== "ready"` before optimistic update; sets error message and returns early if not ready; on failure rolls back and shows "Could not mark order as served. Please try again." |
 
 ### Billing
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| D1 | `generate_bill()` requires `status=served` | Manager cannot bill unserved orders | No manager override |
-| D2 | `discount_amount` not subtracted from `total_amount` | Frontend must calculate net | DB stores gross total only |
-| D3 | Table stays "occupied" if session not closed | Live Tables view shows stale data | `close_table_session()` must be called manually |
-| D4 | Billing is per-order, not per-table | Multiple clicks needed for multi-order tables | No "bill all" atomic operation |
+| D1 | ~~`generate_bill()` requires `status=served`~~ | ~~Manager cannot bill unserved orders~~ | **Resolved** — `BillDialog` shows a manager override checkbox when `nonServedCount > 0`; checking it calls `bill_table()` with `force=true`, auto-advancing unserved orders to `served` before billing |
+| D2 | ~~`discount_amount` not subtracted from `total_amount`~~ | ~~Frontend must calculate net~~ | **Fixed** — `total_amount` in the DB is now the net amount after discount; revenue dashboard reads it directly |
+| D3 | ~~Table stays "occupied" if session not closed~~ | ~~Live Tables view shows stale data~~ | **Fixed** — `close_table_session` now only closes when ALL non-cancelled orders are billed (not just served ones); cancelled orders are excluded from the check |
+| D4 | ~~Billing is per-order, not per-table~~ | ~~Multiple clicks needed for multi-order tables~~ | **Fixed** — `BillDialog` now calls `billTable(tableId, options)` (single atomic `bill_table` RPC); acquires row locks, bills all orders in one transaction, closes session |
 
 ### Subscriptions & Stripe
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| E1 | `trialing` status not treated as `active` in some checks | Pro features may be blocked during trial | **Fixed** — `useSubscription` now uses `isPro = plan==='pro' && (isActive \|\| isTrial)`. Direct `status='active'` checks elsewhere still need auditing. |
-| E2 | `past_due` not auto-downgraded to free | Pro features accessible despite failed payment | Only `canceled`/`deleted` triggers downgrade |
+| E1 | `trialing` status not treated as `active` in some checks | Pro features may be blocked during trial | **Fixed** — `useSubscription` now uses `isPro = plan==='pro' && (isActive \|\| isTrial)`; `AdminClient` `proCount` now includes `trialing` restaurants. Direct `status='active'` checks elsewhere still need auditing. |
+| E2 | `past_due` not auto-downgraded to free | Pro features accessible despite failed payment | **Fixed** — webhook failure branch now sets `past_due` for active Pro subscriptions (renewal failed) vs `incomplete` for first-time failures; `isExpired` covers `past_due` and `canceled` |
 | E3 | Stripe webhook body parsing | Any JSON-parsing middleware breaks signature verification | Must use `req.text()` |
-| E4 | Missing `restaurant_id` in Stripe metadata | Subscription not updated | Can happen with manual Stripe test events |
+| E4 | Missing `restaurant_id` in Stripe/PhonePe metadata | Subscription not updated | **Fixed** — PhonePe webhook now reads `payload.metaInfo.udf1` as a fallback `restaurant_id` when the DB lookup misses |
 
 ### Webhooks
 
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
-| F1 | No automatic retry execution | Retries only happen on manual trigger | No background job / cron |
-| F2 | `fireEvent()` is synchronous in API routes | Slow endpoints delay API response (up to 80s for 10 endpoints) | Should be async/queued |
-| F3 | Payload capped at 64 KB | Large orders silently fail | No partial payload fallback |
-| F4 | Secret shown only once | If lost, must rotate | No recovery option |
-| F5 | Channel names not authenticated | Any client can subscribe to any channel | Real-time data is public |
+| F1 | No automatic retry execution | Retries only happen on manual trigger | **Fixed** — cron schedule changed from `"0 1 * * *"` (daily) to `"* * * * *"` (every minute); retries now run automatically |
+| F2 | `fireEvent()` is synchronous in API routes | Slow endpoints delay API response (up to 80s for 10 endpoints) | **Fixed** — `fireEvent` now detaches dispatch immediately; uses `waitUntil` on Vercel runtimes, falls back to detached promise on others |
+| F3 | Payload capped at 64 KB | Large orders silently fail | **Fixed** — before hard-failing, `dispatchToUrl` strips array fields from `data` and adds `_truncated: true`; only fails if truncated version is still too large |
+| F4 | Secret shown only once | If lost, must rotate | **Fixed** — `SecretModal` now requires a checkbox confirmation before Done button is enabled; dedicated Copy button with clipboard feedback; amber warning banner shown at top |
+| F5 | ~~Channel names not authenticated for broadcast~~ | ~~Any client can subscribe to the broadcast channel~~ | **Fixed** — kitchen and waiter hooks now use only `postgres_changes` (auth-gated by RLS, requires valid JWT); public `.on("broadcast", ...)` handlers removed from `useKitchenOrders` and `useWaiterOrders` |
 
 ### RLS & Security
 
@@ -1848,7 +1946,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | G1 | `orders` public UPDATE with `qual: true` | Anyone can update any order status | Mitigated by DB trigger but not fully secure |
 | G2 | `order_items` public INSERT | Anyone can add items to any order | No restaurant scoping |
 | G3 | `restaurants` INSERT by any authenticated user | Orphaned restaurants possible | Bypasses onboarding RPC |
-| G4 | `NEXT_PUBLIC_ADMIN_PIN` in client bundle | PIN is visible in browser | Weak gate — not production-safe |
+| G4 | ~~`NEXT_PUBLIC_ADMIN_PIN` in client bundle~~ | ~~PIN is visible in browser~~ | **Fixed** — PIN verified server-side via `POST /api/admin/verify-pin` (rate-limited 5/min/IP). Set `ADMIN_PIN` env var (non-public); `NEXT_PUBLIC_ADMIN_PIN` accepted as fallback during migration only. |
 | G5 | No rate limiting on order placement | Spam orders possible | No throttle on `/r/[id]/t/[id]` |
 
 ### Real-time
@@ -1864,8 +1962,9 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
 | I2 | ~~Stat card trend values are hardcoded (`+8.2% vs yesterday`)~~ | ~~Misleading — not computed from real data~~ | **Fixed** — sub-labels now derived from `rangeRows`: date segment label, served count, order count, or "All clear" |
-| I3 | Order Log fetches up to 300 rows client-side | Large restaurants may miss older orders | Date-range filter added (today/yesterday/last 7d/last 30d/custom) — narrows visible set client-side; server-side pagination still absent |
-| I4 | Real-time UPDATE patches `msg.new` fields directly onto the row | Joined fields (waiter_name, items, floor_name) are NOT updated on UPDATE events | Only a full re-fetch (triggered by INSERT) refreshes joined data |
+| I3 | ~~Order Log fetches up to 300 rows client-side~~ | ~~Large restaurants may miss older orders~~ | **Fixed** — server-side pagination via DB `.range()` + `count: "exact"`; status filter and sort applied server-side; search remains client-side against the current page |
+| I3a | ~~Date-filter badge showed `rangeRows.length` (current page only)~~ | ~~Count was wrong on any page > 1~~ | **Fixed** — badge now uses `totalCount` (server-side total for the active filters) |
+| I4 | ~~Real-time UPDATE patches `msg.new` fields directly onto the row~~ | ~~Joined fields (waiter_name, items, floor_name) are NOT updated on UPDATE events~~ | **Fixed** — UPDATE events now trigger `refetchOrder(orderId)`, a targeted single-row re-fetch with full joins |
 | I5 | "Cancel Order" and advance-status buttons in detail panel have no API call wired up | Buttons render but clicking them does nothing | Implementation pending |
 
 ---

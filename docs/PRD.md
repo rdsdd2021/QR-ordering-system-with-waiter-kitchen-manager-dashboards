@@ -202,6 +202,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | K5 | Real-time updates | Must Have | No page refresh needed — new orders appear instantly |
 | K6 | Waiter-first mode support | Should Have | Kitchen only sees orders after waiter has accepted them |
 | K7 | Bulk mark ready | Should Have | "All Ready" button in the Preparing column header marks all preparing orders as ready in one tap (visible only when ≥ 2 orders are preparing) |
+| K8 | Reject order | Should Have | Kitchen staff can cancel a `pending` or `confirmed` order directly from the board using a reject button on the order card. The order is removed from the board immediately (optimistic) and set to `cancelled` in the DB. Not available for orders already in `preparing` or later. |
 
 ---
 
@@ -223,7 +224,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | # | Feature | Priority | Description |
 |---|---------|----------|-------------|
 | M1 | Live tables view | Must Have | See all tables: occupied/free, active orders, waiter assigned |
-| M2 | Generate bill | Must Have | Bill all served orders at a table. Records total_amount + billed_at. |
+| M2 | Generate bill | Must Have | Bill orders at a table. Records total_amount + billed_at. When unserved orders exist, a manager override checkbox appears in the bill dialog — checking it auto-advances those orders to `served` before billing (uses `force=true` on `generate_bill()`). |
 | M3 | Payment method recording | Should Have | Record how the bill was paid: cash / card / UPI |
 | M4 | Manual discount | Should Have | Apply a discount amount + reason at billing time |
 | M5 | Order log | Must Have | Full history of all orders with filters by status and date |
@@ -388,7 +389,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 - Customer ordering requires no authentication (by design)
 - RLS policies enforce restaurant-scoped data access for all staff
 - Webhook payloads signed with HMAC-SHA256 — receivers can verify authenticity
-- Admin API routes protected by `ADMIN_SECRET` bearer token (validated server-side via `lib/admin-auth.ts`). The browser never sees `ADMIN_SECRET` — the admin panel sends only the PIN to `POST /api/admin/proxy`, which validates the PIN and forwards requests to admin endpoints with the secret attached server-side.
+- Admin API routes protected by `ADMIN_SECRET` bearer token (validated server-side via `lib/admin-auth.ts`). The browser never sees `ADMIN_SECRET` — the admin panel sends only the PIN to `POST /api/admin/verify-pin`, which validates it server-side (rate-limited to 5 attempts/IP/minute) and returns `{ ok: true }` or `401`. Subsequent admin API calls go through `POST /api/admin/proxy`, which attaches the secret server-side. Set `ADMIN_PIN` env var (non-public); `NEXT_PUBLIC_ADMIN_PIN` is accepted as a fallback during migration but should be removed once `ADMIN_PIN` is configured.
 - Stripe webhook signature verified before processing any event
 
 ### Scalability
@@ -396,6 +397,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 - Multi-tenant architecture — each restaurant's data is isolated by `restaurant_id`
 - Database indexes on all high-frequency query paths (orders by restaurant, status, table)
 - Real-time channels scoped per restaurant — no cross-tenant broadcast
+- The kitchen channel uses `kitchen:{restaurantId}:{reconnectKey}` on the client side. The DB trigger broadcasts to `kitchen:{restaurantId}`; the reconnect key suffix is appended client-side to force a fresh Supabase subscription on reconnect. The `postgres_changes` subscription is auth-gated by RLS and requires a valid session JWT. `secureChannel()` in `lib/channel-token.ts` computes a short HMAC-SHA256 token (12 hex chars) from `CHANNEL_SECRET` + scope + ID, used by the broadcast trigger to target the correct channel. Requires `CHANNEL_SECRET` env var in production.
 
 ### Accessibility & UX
 
@@ -502,7 +504,7 @@ These are explicitly not being built in the current version. They are documented
 | R4 | Stripe payment failure during onboarding | Low | Medium | Free plan available as fallback. Stripe errors shown clearly. |
 | R5 | Restaurant deactivated mid-service | Low | High | Admin deactivation is immediate. No grace period currently. Customers scanning QR codes will see a friendly "Restaurant is currently closed" screen instead of a 404. |
 | R6 | Two customers scan same QR simultaneously | Medium | Medium | Billing safety check + sessionStorage scoping handles this. |
-| R7 | Menu item deleted while in customer cart | Low | Medium | Order fails at DB level. Customer sees generic error. No graceful recovery. |
+| R7 | Menu item deleted while in customer cart | Low | Low | `useRealtimeMenu()` DELETE event calls `invalidateCartItem()` on `useCart`, which removes the item from the cart and fires the optional `onItemInvalidated` callback so the UI can show a toast/banner. Cart is kept consistent before order submission. |
 | R8 | Geo-fencing blocks legitimate customers | Medium | Medium | Customers can request staff to place order manually. Geo-fence is optional. |
 | R9 | `orders` public UPDATE RLS policy | High | High | Any unauthenticated user can update order status. Needs to be tightened. |
 | R10 | Free plan limits too restrictive for small restaurants | Medium | Medium | 5 tables + 20 items covers most small cafés. Monitor feedback. |
@@ -515,10 +517,10 @@ These are explicitly not being built in the current version. They are documented
 |---|---------|-------|--------|
 | Q1 | Should phone number be optional for customers? What's the fallback for billing safety? | Product | Open |
 | Q2 | Should inactive staff (`is_active=false`) be blocked at login, not just at the data layer? | Engineering | Open |
-| Q3 | Should `past_due` subscriptions be automatically downgraded to free after a grace period? | Product | Open |
-| Q4 | Should the admin panel be protected by proper auth instead of a PIN? | Engineering | Resolved — API routes use `ADMIN_SECRET` bearer token auth. The secret is kept server-side; the browser sends only the PIN to `/api/admin/proxy`, which forwards requests with the secret attached. |
+| Q3 | Should `past_due` subscriptions be automatically downgraded to free after a grace period? | Product | Partially resolved — `past_due` (and `canceled`) are now treated as `isExpired` in `useSubscription`, so the paywall fires immediately. A grace period before hard lock-out is not yet implemented. |
+| Q4 | Should the admin panel be protected by proper auth instead of a PIN? | Engineering | Resolved — API routes use `ADMIN_SECRET` bearer token auth. The secret is kept server-side; the browser sends only the PIN to `POST /api/admin/verify-pin` (rate-limited 5/min/IP), which validates it and returns `{ ok: true }` or `401`. Subsequent requests go through `/api/admin/proxy` with the secret attached server-side. Set `ADMIN_PIN` env var; remove `NEXT_PUBLIC_ADMIN_PIN` once migrated. |
 | Q5 | Should webhook retries be executed automatically by a cron job? | Engineering | Open |
-| Q6 | Should managers be able to force-bill an order that isn't in `served` status? | Product | Open |
+| Q6 | Should managers be able to force-bill an order that isn't in `served` status? | Product | Resolved — `BillDialog` shows a manager override checkbox when unserved orders exist; checking it auto-advances them to `served` before billing |
 | Q7 | Should cart state persist across page refreshes (localStorage)? | Product | Open |
 | Q8 | What happens when a restaurant hits the free plan limit mid-service? Should existing orders still go through? | Product | Open |
 | Q9 | Should there be a grace period before a restaurant is deactivated by admin? | Product | Open |

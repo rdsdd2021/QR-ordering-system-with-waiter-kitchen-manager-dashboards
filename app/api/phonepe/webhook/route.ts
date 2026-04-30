@@ -43,16 +43,36 @@ export async function POST(req: NextRequest) {
   // Look up subscription by transaction ID
   const { data: sub } = await supabase
     .from("subscriptions")
-    .select("restaurant_id, pending_coupon_id")
+    .select("restaurant_id, pending_coupon_id, status, plan")
     .eq("phonepe_transaction_id", merchantOrderId)
     .maybeSingle();
 
-  if (!sub?.restaurant_id) {
+  let restaurantId = sub?.restaurant_id as string | undefined;
+
+  // E4: If the DB lookup missed (race between checkout API crash and webhook),
+  // fall back to the restaurantId stored in PhonePe's metaInfo.udf1 field.
+  if (!restaurantId) {
+    const metaInfo = payload.metaInfo as Record<string, unknown> | undefined;
+    const udf1 = metaInfo?.udf1 as string | undefined;
+    if (udf1 && udf1.length > 0) {
+      console.warn("[phonepe/webhook] subscription lookup missed — recovering restaurantId from udf1:", udf1);
+      restaurantId = udf1;
+
+      // Also update the subscription row so future lookups work
+      await supabase
+        .from("subscriptions")
+        .update({
+          phonepe_transaction_id: merchantOrderId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("restaurant_id", restaurantId);
+    }
+  }
+
+  if (!restaurantId) {
     console.warn("[phonepe/webhook] no subscription found for orderId:", merchantOrderId);
     return NextResponse.json({ received: true });
   }
-
-  const restaurantId = sub.restaurant_id as string;
 
   // Look up the transaction to determine billing cycle and coupon duration
   const { data: txRow } = await supabase
@@ -90,7 +110,7 @@ export async function POST(req: NextRequest) {
         .update({ status: "completed", completed_at: new Date().toISOString() })
         .eq("merchant_order_id", merchantOrderId);
 
-      if (sub.pending_coupon_id) {
+      if (sub?.pending_coupon_id) {
         await supabase.rpc("record_coupon_usage", {
           p_coupon_id:     sub.pending_coupon_id,
           p_restaurant_id: restaurantId,
@@ -123,17 +143,26 @@ export async function POST(req: NextRequest) {
         console.error("[phonepe/webhook] audit log failed:", auditErr);
       }
     } else if (type === "CHECKOUT_ORDER_FAILED" || payload.state === "FAILED") {
-      // Don't downgrade a trialing subscription on payment failure/cancellation.
-      // The user may have been on a free trial and cancelled the payment — keep them trialing.
-      await supabase
-        .from("subscriptions")
-        .update({
-          status:           "incomplete",
-          pending_coupon_id: null,
-          updated_at:       new Date().toISOString(),
-        })
-        .eq("restaurant_id", restaurantId)
-        .neq("status", "trialing");
+      // E2: Distinguish between a failed renewal on an active Pro subscription
+      // (→ past_due, keeps access temporarily) vs a failed first-time payment
+      // (→ incomplete, no access). Never downgrade a trialing subscription.
+      const currentStatus = sub?.status as string | undefined;
+      const currentPlan   = sub?.plan   as string | undefined;
+
+      if (currentStatus !== "trialing") {
+        const newStatus = (currentPlan === "pro" && currentStatus === "active")
+          ? "past_due"   // renewal failed — keep plan but flag as past_due
+          : "incomplete"; // first-time payment failed — no access
+
+        await supabase
+          .from("subscriptions")
+          .update({
+            status:            newStatus,
+            pending_coupon_id: null,
+            updated_at:        new Date().toISOString(),
+          })
+          .eq("restaurant_id", restaurantId);
+      }
 
       await supabase.from("payment_transactions")
         .update({ status: "failed" })

@@ -11,6 +11,7 @@ type Props = {
   order: KitchenOrder;
   isNew: boolean;
   onAdvance: (orderId: string, newStatus: OrderStatus) => Promise<void>;
+  onReject:  (orderId: string) => Promise<void>;
 };
 
 const STATUS_CONFIG: Record<OrderStatus, {
@@ -21,44 +22,45 @@ const STATUS_CONFIG: Record<OrderStatus, {
   nextStatus: OrderStatus | null;
   actionLabel: string | null;
   actionClass: string;
+  canReject: boolean; // C1: kitchen can reject/cancel from these statuses
 }> = {
   pending_waiter: {
     label: "Waiting for waiter",
     dot: "bg-purple-400", border: "border-purple-400/40", stripe: "bg-purple-400",
-    nextStatus: null, actionLabel: null, actionClass: "",
+    nextStatus: null, actionLabel: null, actionClass: "", canReject: false,
   },
   pending: {
     label: "New order",
     dot: "bg-amber-400 animate-pulse", border: "border-amber-400/40", stripe: "bg-amber-400",
     nextStatus: "confirmed", actionLabel: "Accept order",
-    actionClass: "bg-amber-500 hover:bg-amber-600 text-white",
+    actionClass: "bg-amber-500 hover:bg-amber-600 text-white", canReject: true,
   },
   confirmed: {
     label: "Confirmed",
     dot: "bg-blue-400", border: "border-blue-400/40", stripe: "bg-blue-400",
     nextStatus: "preparing", actionLabel: "Start preparing",
-    actionClass: "bg-blue-500 hover:bg-blue-600 text-white",
+    actionClass: "bg-blue-500 hover:bg-blue-600 text-white", canReject: true,
   },
   preparing: {
     label: "Preparing",
     dot: "bg-orange-400 animate-pulse", border: "border-orange-400/40", stripe: "bg-orange-400",
     nextStatus: "ready", actionLabel: "Mark ready",
-    actionClass: "bg-emerald-500 hover:bg-emerald-600 text-white",
+    actionClass: "bg-emerald-500 hover:bg-emerald-600 text-white", canReject: false,
   },
   ready: {
     label: "Ready for pickup",
     dot: "bg-green-500", border: "border-green-400/40", stripe: "bg-emerald-500",
-    nextStatus: null, actionLabel: null, actionClass: "",
+    nextStatus: null, actionLabel: null, actionClass: "", canReject: false,
   },
   served: {
     label: "Served",
     dot: "bg-muted-foreground/40", border: "border-border", stripe: "bg-muted-foreground/30",
-    nextStatus: null, actionLabel: null, actionClass: "",
+    nextStatus: null, actionLabel: null, actionClass: "", canReject: false,
   },
   cancelled: {
     label: "Cancelled",
     dot: "bg-gray-400", border: "border-border", stripe: "bg-muted-foreground/30",
-    nextStatus: null, actionLabel: null, actionClass: "",
+    nextStatus: null, actionLabel: null, actionClass: "", canReject: false,
   },
 };
 
@@ -77,8 +79,9 @@ function urgencyClass(iso: string, status: string): string {
   return "";
 }
 
-export default function OrderCard({ order, isNew, onAdvance }: Props) {
+export default function OrderCard({ order, isNew, onAdvance, onReject }: Props) {
   const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [, setTick] = useState(0);
   const cfg = STATUS_CONFIG[order.status];
 
@@ -93,6 +96,13 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
     setBusy(true);
     await onAdvance(order.id, cfg.nextStatus);
     setBusy(false);
+  }
+
+  async function handleReject() {
+    if (!cfg.canReject) return;
+    setRejecting(true);
+    await onReject(order.id);
+    setRejecting(false);
   }
 
   return (
@@ -146,20 +156,34 @@ export default function OrderCard({ order, isNew, onAdvance }: Props) {
 
         {/* Action */}
         {cfg.actionLabel && (
-          <div className="px-4 pb-4 pt-1">
+          <div className="px-4 pb-4 pt-1 flex gap-2">
             <button
               className={cn(
-                "w-full h-10 text-sm font-bold rounded-lg transition-colors duration-150",
+                "flex-1 h-10 text-sm font-bold rounded-lg transition-colors duration-150",
                 cfg.actionClass
               )}
               onClick={handleAdvance}
-              disabled={busy}
+              disabled={busy || rejecting}
             >
               {busy
                 ? <span className="flex items-center justify-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />Updating…</span>
                 : <span className="flex items-center justify-center gap-2"><ChefHat className="h-3.5 w-3.5" />{cfg.actionLabel}</span>
               }
             </button>
+            {/* C1: Reject button — only on pending/confirmed */}
+            {cfg.canReject && (
+              <button
+                className="h-10 px-3 text-xs font-semibold rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                onClick={handleReject}
+                disabled={busy || rejecting}
+                title="Reject order"
+              >
+                {rejecting
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : "Reject"
+                }
+              </button>
+            )}
           </div>
         )}
 

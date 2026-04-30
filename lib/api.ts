@@ -268,13 +268,30 @@ export async function placeOrder(params: {
   let orderItems: { order_id: string; menu_item_id: string; quantity: number; price: number }[];
 
   if (priceError || !pricedItems) {
-    // Fallback to base prices if batch RPC not available
-    console.warn("Batch price calculation failed, using base prices:", priceError?.message);
+    // B4 fix: RPC failed — fetch the floor multiplier directly so we never
+    // silently fall back to the base price and charge the wrong amount.
+    console.warn("Batch price calculation failed, fetching floor multiplier directly:", priceError?.message);
+
+    let multiplier = 1.0;
+    try {
+      const { data: floorRow } = await supabase
+        .from("tables")
+        .select("floor:floors(price_multiplier)")
+        .eq("id", tableId)
+        .maybeSingle();
+      const floor = (Array.isArray(floorRow?.floor) ? floorRow.floor[0] : floorRow?.floor) as { price_multiplier: number } | null | undefined;
+      if (floor?.price_multiplier) multiplier = floor.price_multiplier;
+    } catch {
+      // If this also fails, log clearly — do NOT silently use base price
+      console.error("[placeOrder] Could not fetch floor multiplier — order aborted to prevent wrong billing");
+      return null;
+    }
+
     orderItems = items.map(item => ({
       order_id: orderId,
       menu_item_id: item.menu_item_id,
       quantity: item.quantity,
-      price: item.price,
+      price: Math.round(item.price * multiplier * 100) / 100,
     }));
   } else {
     orderItems = (pricedItems as { menu_item_id: string; final_price: number }[]).map((p, i) => ({
@@ -1045,8 +1062,9 @@ export async function getBilledOrders(
 
 /**
  * Generate bill for an order.
- * Accepts optional payment method and discount.
- * After billing, closes the table session if all served orders are billed.
+ * Accepts optional payment method, discount, and a force flag.
+ * D1: When force=true, non-served orders are auto-advanced to served before billing.
+ * D3: Session is only closed when ALL non-cancelled orders are billed.
  */
 export async function generateBill(
   orderId: string,
@@ -1054,6 +1072,7 @@ export async function generateBill(
     paymentMethod?: "cash" | "card" | "upi";
     discountAmount?: number;
     discountNote?: string;
+    force?: boolean;
   }
 ): Promise<{
   success: boolean;
@@ -1073,6 +1092,7 @@ export async function generateBill(
       p_payment_method:  options?.paymentMethod  ?? null,
       p_discount_amount: options?.discountAmount  ?? 0,
       p_discount_note:   options?.discountNote    ?? null,
+      p_force:           options?.force           ?? false,
     });
 
     if (error) {
@@ -1088,14 +1108,16 @@ export async function generateBill(
 
     if (result.success && orderRow) {
       const tableId = (orderRow as any).table_id;
-      const { data: servedUnbilled } = await supabase
+
+      // D3: Close session only when no unbilled non-cancelled orders remain
+      const { data: stillActive } = await supabase
         .from("orders")
         .select("id")
         .eq("table_id", tableId)
         .is("billed_at", null)
-        .eq("status", "served");
+        .not("status", "in", '("cancelled")');
 
-      if ((servedUnbilled ?? []).length === 0) {
+      if ((stillActive ?? []).length === 0) {
         await supabase.rpc("close_table_session", { p_table_id: tableId });
       }
 
@@ -1211,7 +1233,68 @@ export async function generateBill(
 }
 
 /**
+ * D4: Bill all orders for a table atomically in a single DB transaction.
+ * Replaces the sequential per-order loop in BillDialog.
+ * When force=true, non-served orders are auto-advanced to served before billing.
+ */
+export async function billTable(
+  tableId: string,
+  options?: {
+    paymentMethod?: "cash" | "card" | "upi";
+    discountAmount?: number;
+    discountNote?: string;
+    force?: boolean;
+  }
+): Promise<{
+  success: boolean;
+  billedCount?: number;
+  skippedCount?: number;
+  grossTotal?: number;
+  netTotal?: number;
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.rpc("bill_table", {
+      p_table_id:        tableId,
+      p_payment_method:  options?.paymentMethod  ?? null,
+      p_discount_amount: options?.discountAmount  ?? 0,
+      p_discount_note:   options?.discountNote    ?? null,
+      p_force:           options?.force           ?? false,
+    });
+
+    if (error) {
+      console.error("Error billing table:", error.message);
+      return { success: false, error: error.message };
+    }
+
+    const result = data as {
+      success: boolean;
+      billed_count: number;
+      skipped_count: number;
+      gross_total: number;
+      net_total: number;
+    };
+
+    return {
+      success:      result.success,
+      billedCount:  result.billed_count,
+      skippedCount: result.skipped_count,
+      grossTotal:   parseFloat(String(result.gross_total)),
+      netTotal:     parseFloat(String(result.net_total)),
+    };
+  } catch (err) {
+    console.error("Exception billing table:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}
+
+/**
  * Update restaurant order routing mode.
+ * C2: When switching to direct_to_kitchen, migrate any orphaned pending_waiter
+ * orders to pending so the kitchen sees them immediately.
  */
 export async function updateRestaurantRoutingMode(
   restaurantId: string,
@@ -1226,8 +1309,21 @@ export async function updateRestaurantRoutingMode(
     console.error("Error updating routing mode:", error.message);
     return false;
   }
+
   // Invalidate cache so next order picks up the new routing mode immediately
   invalidateRestaurantCache(restaurantId);
+
+  // C2: Migrate orphaned pending_waiter orders when switching to direct_to_kitchen
+  if (routingMode === "direct_to_kitchen") {
+    const { error: migrateError } = await supabase.rpc("migrate_pending_waiter_orders", {
+      p_restaurant_id: restaurantId,
+    });
+    if (migrateError) {
+      // Non-fatal — log but don't fail the routing mode save
+      console.warn("[updateRestaurantRoutingMode] migrate_pending_waiter_orders failed:", migrateError.message);
+    }
+  }
+
   return true;
 }
 

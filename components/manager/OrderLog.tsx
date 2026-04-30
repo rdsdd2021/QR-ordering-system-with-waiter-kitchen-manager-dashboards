@@ -207,8 +207,17 @@ function exportCSV(rows: OrderLogRow[], label: string) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// Helper: map client sort key to DB column name
+const SORT_COLUMN: Record<SortKey, string> = {
+  created_at:   "created_at",
+  table_number: "created_at", // table_number is a join — fall back to created_at server-side
+  turnaround_s: "created_at", // computed client-side — fall back to created_at server-side
+  order_total:  "total_amount",
+};
+
 export default function OrderLog({ restaurantId }: Props) {
   const [rows,          setRows]          = useState<OrderLogRow[]>([]);
+  const [totalCount,    setTotalCount]    = useState(0);   // I3: server-side total
   const [loading,       setLoading]       = useState(true);
   const [refreshing,    setRefreshing]    = useState(false);
   const [search,        setSearch]        = useState("");
@@ -228,14 +237,21 @@ export default function OrderLog({ restaurantId }: Props) {
   const filterRef = useRef<HTMLDivElement>(null);
 
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
-  const loadRef    = useRef<() => Promise<void>>(undefined);
-  // Refs so load() always reads the latest date range without needing to be in deps
-  const dateSegmentRef = useRef(dateSegment);
-  const customFromRef  = useRef(customFrom);
-  const customToRef    = useRef(customTo);
-  useEffect(() => { dateSegmentRef.current = dateSegment; }, [dateSegment]);
-  useEffect(() => { customFromRef.current  = customFrom;  }, [customFrom]);
-  useEffect(() => { customToRef.current    = customTo;    }, [customTo]);
+  // Refs so the realtime handler always reads the latest state without stale closures
+  const pageRef          = useRef(page);
+  const statusFilterRef  = useRef(statusFilter);
+  const sortKeyRef       = useRef(sortKey);
+  const sortDirRef       = useRef(sortDir);
+  const dateSegmentRef   = useRef(dateSegment);
+  const customFromRef    = useRef(customFrom);
+  const customToRef      = useRef(customTo);
+  useEffect(() => { pageRef.current         = page;         }, [page]);
+  useEffect(() => { statusFilterRef.current = statusFilter; }, [statusFilter]);
+  useEffect(() => { sortKeyRef.current      = sortKey;      }, [sortKey]);
+  useEffect(() => { sortDirRef.current      = sortDir;      }, [sortDir]);
+  useEffect(() => { dateSegmentRef.current  = dateSegment;  }, [dateSegment]);
+  useEffect(() => { customFromRef.current   = customFrom;   }, [customFrom]);
+  useEffect(() => { customToRef.current     = customTo;     }, [customTo]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -247,10 +263,95 @@ export default function OrderLog({ restaurantId }: Props) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  async function load() {
-    if (rows.length === 0) setLoading(true); else setRefreshing(true);
-    const [rangeFrom, rangeTo] = getSegmentRange(dateSegmentRef.current, customFromRef.current, customToRef.current);
-    const { data, error } = await supabase
+  // ── Row mapper (shared between load and single-order fetch) ───────────────
+  function mapRow(o: any): OrderLogRow {
+    const ts  = (f: string | null) => f ? new Date(f).getTime() : null;
+    const sec = (a: number | null, b: number | null) =>
+      a !== null && b !== null ? Math.round((b - a) / 1000) : null;
+    const created   = ts(o.created_at);
+    const confirmed = ts(o.confirmed_at);
+    const ready     = ts(o.ready_at);
+    const served    = ts(o.served_at);
+    const tableRaw  = Array.isArray(o.table) ? o.table[0] : o.table;
+    const waiterRaw = Array.isArray(o.waiter) ? o.waiter[0] : o.waiter;
+    const items = (o.order_items ?? []).map((oi: any) => ({
+      id: oi.id, name: oi.menu_item?.name ?? "Item",
+      quantity: oi.quantity, price: parseFloat(oi.price),
+    }));
+    const order_total = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
+    return {
+      id: o.id, status: o.status,
+      table_number: tableRaw?.table_number ?? 0,
+      floor_name: tableRaw?.floor?.name ?? null,
+      capacity: tableRaw?.capacity ?? null,
+      waiter_name: waiterRaw?.name ?? null,
+      customer_name: o.customer_name ?? null,
+      customer_phone: o.customer_phone ?? null,
+      item_count: items.length,
+      total_qty: items.reduce((s: number, i: any) => s + i.quantity, 0),
+      order_total, total_amount: parseFloat(o.total_amount) || order_total,
+      billed_at: o.billed_at, created_at: o.created_at,
+      confirmed_at: o.confirmed_at, preparing_at: o.preparing_at,
+      ready_at: o.ready_at, served_at: o.served_at,
+      wait_to_confirm_s: sec(created, confirmed),
+      prep_time_s: sec(confirmed, ready),
+      serve_time_s: sec(ready, served),
+      turnaround_s: sec(created, served),
+      items,
+    };
+  }
+
+  // ── I3: Server-side paginated load ────────────────────────────────────────
+  // Fetches exactly PAGE_SIZE rows for the current page from the DB.
+  // Status filter and sort are applied server-side where possible.
+  // Search is still client-side (requires full-text across joined fields).
+  async function load(targetPage = pageRef.current) {
+    if (rows.length === 0 && targetPage === 1) setLoading(true); else setRefreshing(true);
+
+    const [rangeFrom, rangeTo] = getSegmentRange(
+      dateSegmentRef.current, customFromRef.current, customToRef.current
+    );
+    const from = (targetPage - 1) * PAGE_SIZE;
+    const to   = from + PAGE_SIZE - 1;
+
+    const dbSortCol = SORT_COLUMN[sortKeyRef.current];
+    const ascending = sortDirRef.current === "asc";
+
+    let query = supabase
+      .from("orders")
+      .select(`
+        id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
+        billed_at, total_amount, customer_name, customer_phone,
+        table:tables(table_number, capacity, floor:floors(name)),
+        waiter:users(name),
+        order_items(id, quantity, price, menu_item:menu_items(name))
+      `, { count: "exact" })
+      .eq("restaurant_id", restaurantId)
+      .gte("created_at", rangeFrom.toISOString())
+      .lte("created_at", rangeTo.toISOString())
+      .order(dbSortCol, { ascending })
+      .range(from, to);
+
+    // Apply status filter server-side when not "all"
+    if (statusFilterRef.current !== "all") {
+      query = query.eq("status", statusFilterRef.current);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) { setLoading(false); setRefreshing(false); return; }
+
+    setRows((data ?? []).map(mapRow));
+    setTotalCount(count ?? 0);
+    setLoading(false);
+    setRefreshing(false);
+  }
+
+  // ── I4: Targeted single-order re-fetch with all joins ─────────────────────
+  // Called on UPDATE events so joined fields (waiter_name, floor_name, items)
+  // are always fresh — not just the raw orders columns from msg.new.
+  async function refetchOrder(orderId: string) {
+    const { data } = await supabase
       .from("orders")
       .select(`
         id, status, created_at, confirmed_at, preparing_at, ready_at, served_at,
@@ -259,57 +360,20 @@ export default function OrderLog({ restaurantId }: Props) {
         waiter:users(name),
         order_items(id, quantity, price, menu_item:menu_items(name))
       `)
-      .eq("restaurant_id", restaurantId)
-      .gte("created_at", rangeFrom.toISOString())
-      .lte("created_at", rangeTo.toISOString())
-      .order("created_at", { ascending: false })
-      .limit(500);
+      .eq("id", orderId)
+      .maybeSingle();
 
-    if (error) { setLoading(false); setRefreshing(false); return; }
-
-    const mapped: OrderLogRow[] = (data ?? []).map((o: any) => {
-      const ts  = (f: string | null) => f ? new Date(f).getTime() : null;
-      const sec = (a: number | null, b: number | null) =>
-        a !== null && b !== null ? Math.round((b - a) / 1000) : null;
-      const created   = ts(o.created_at);
-      const confirmed = ts(o.confirmed_at);
-      const ready     = ts(o.ready_at);
-      const served    = ts(o.served_at);
-      const items = (o.order_items ?? []).map((oi: any) => ({
-        id: oi.id, name: oi.menu_item?.name ?? "Item",
-        quantity: oi.quantity, price: parseFloat(oi.price),
-      }));
-      const order_total = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
-      return {
-        id: o.id, status: o.status,
-        table_number: o.table?.table_number ?? 0,
-        floor_name: o.table?.floor?.name ?? null,
-        capacity: o.table?.capacity ?? null,
-        waiter_name: o.waiter?.name ?? null,
-        customer_name: o.customer_name ?? null,
-        customer_phone: o.customer_phone ?? null,
-        item_count: items.length,
-        total_qty: items.reduce((s: number, i: any) => s + i.quantity, 0),
-        order_total, total_amount: parseFloat(o.total_amount) || order_total,
-        billed_at: o.billed_at, created_at: o.created_at,
-        confirmed_at: o.confirmed_at, preparing_at: o.preparing_at,
-        ready_at: o.ready_at, served_at: o.served_at,
-        wait_to_confirm_s: sec(created, confirmed),
-        prep_time_s: sec(confirmed, ready),
-        serve_time_s: sec(ready, served),
-        turnaround_s: sec(created, served),
-        items,
-      };
-    });
-    setRows(mapped);
-    setLoading(false);
-    setRefreshing(false);
+    if (!data) return;
+    const updated = mapRow(data);
+    setRows(prev => prev.map(r => r.id === orderId ? updated : r));
+    setSelectedOrder(prev => prev?.id === orderId ? updated : prev);
   }
 
-  loadRef.current = load;
-  useEffect(() => { loadRef.current?.(); }, [restaurantId]);
-  // Re-fetch when date range changes (server-side filtering)
-  useEffect(() => { setPage(1); loadRef.current?.(); }, [dateSegment, customFrom, customTo]);
+  useEffect(() => { load(1); }, [restaurantId]);
+  // Re-fetch page 1 when date range, status filter, or sort changes
+  useEffect(() => { setPage(1); load(1); }, [dateSegment, customFrom, customTo, statusFilter, sortKey, sortDir]);
+  // Re-fetch current page when page number changes
+  useEffect(() => { load(page); }, [page]);
 
   useEffect(() => {
     const client = getSupabaseClient();
@@ -319,18 +383,15 @@ export default function OrderLog({ restaurantId }: Props) {
       .on("postgres_changes" as any,
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         (msg: any) => {
-          if (msg.eventType === "INSERT") loadRef.current?.();
-          else if (msg.eventType === "UPDATE" && msg.new?.id)
-            setRows(prev => prev.map(r => r.id === msg.new.id ? {
-              ...r,
-              status: msg.new.status ?? r.status,
-              billed_at: msg.new.billed_at ?? r.billed_at,
-              total_amount: msg.new.total_amount ?? r.total_amount,
-              confirmed_at: msg.new.confirmed_at ?? r.confirmed_at,
-              preparing_at: msg.new.preparing_at ?? r.preparing_at,
-              ready_at: msg.new.ready_at ?? r.ready_at,
-              served_at: msg.new.served_at ?? r.served_at,
-            } : r));
+          if (msg.eventType === "INSERT") {
+            // New order — reload page 1 so it appears at the top
+            setPage(1);
+            load(1);
+          } else if (msg.eventType === "UPDATE" && msg.new?.id) {
+            // I4: Re-fetch the full order with all joins (waiter_name, floor_name, items)
+            // instead of patching msg.new fields which only contain raw orders columns.
+            refetchOrder(msg.new.id);
+          }
         })
       .subscribe();
     channelRef.current = ch;
@@ -344,19 +405,20 @@ export default function OrderLog({ restaurantId }: Props) {
   }, [rows]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  // Server already filters by date range, so rows === rangeRows
-  const rangeRows     = rows; // alias kept for JSX references below
+  // rows = current page only; stats are computed from the visible page.
+  // totalCount = server-side total across all pages for the current filters.
   const totalRevenue  = rows.reduce((s, r) => s + r.order_total, 0);
   const avgOrderValue = rows.length ? totalRevenue / rows.length : 0;
   const pendingCount  = rows.filter(r =>
     ["pending","pending_waiter","confirmed","preparing","ready"].includes(r.status)
   ).length;
 
-  // ── Filter + sort ──────────────────────────────────────────────────────────
-  const filtered = rows
-    .filter(r => {
-      if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (search) {
+  // ── Client-side search filter (applied on top of server-side page) ─────────
+  // Search is still client-side since it needs to match across joined fields
+  // (waiter_name, floor_name, item names) that can't be filtered server-side.
+  // When search is active, all rows on the current page are filtered in-place.
+  const filtered = search
+    ? rows.filter(r => {
         const q = search.toLowerCase();
         return (
           r.id.toLowerCase().includes(q) ||
@@ -368,19 +430,15 @@ export default function OrderLog({ restaurantId }: Props) {
           (r.floor_name?.toLowerCase().includes(q) ?? false) ||
           r.items.some(i => i.name.toLowerCase().includes(q))
         );
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      let av: any = a[sortKey], bv: any = b[sortKey];
-      if (av === null) av = sortDir === "asc" ? Infinity : -Infinity;
-      if (bv === null) bv = sortDir === "asc" ? Infinity : -Infinity;
-      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-      return sortDir === "asc" ? av - bv : bv - av;
-    });
+      })
+    : rows;
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // I3: Pagination is now server-side — totalPages derived from server count
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  // When search is active, paginate the filtered subset client-side
+  const paginated  = search
+    ? filtered.slice(0, PAGE_SIZE) // show first PAGE_SIZE matches on current page
+    : filtered;
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -458,7 +516,7 @@ export default function OrderLog({ restaurantId }: Props) {
           )
         ))}
         <span className="text-xs text-muted-foreground ml-1">
-          {rangeRows.length} order{rangeRows.length !== 1 ? "s" : ""}
+          {totalCount} order{totalCount !== 1 ? "s" : ""}
         </span>
       </div>
 
@@ -466,7 +524,8 @@ export default function OrderLog({ restaurantId }: Props) {
       <div className="flex items-center justify-between gap-3 border-b border-border -mt-1">
         <div className="flex items-center overflow-x-auto">
           {TABS.map(({ key, label }) => {
-            const count = key === "all" ? rangeRows.length : rangeRows.filter(r => r.status === key).length;
+            // Tab counts: use totalCount for "all", page rows for specific statuses
+            const count = key === "all" ? totalCount : rows.filter(r => r.status === key).length;
             return (
               <button
                 key={key}
@@ -542,7 +601,7 @@ export default function OrderLog({ restaurantId }: Props) {
                         "text-[11px] rounded-full px-1.5 py-0.5 leading-none",
                         statusFilter === key ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
                       )}>
-                        {key === "all" ? rangeRows.length : rangeRows.filter(r => r.status === key).length}
+                        {key === "all" ? totalCount : rows.filter(r => r.status === key).length}
                       </span>
                     </button>
                   ))}
@@ -574,7 +633,7 @@ export default function OrderLog({ restaurantId }: Props) {
           </button>
 
           {/* Refresh */}
-          <button onClick={() => load()} disabled={refreshing}
+          <button onClick={() => load(pageRef.current)} disabled={refreshing}
             className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           </button>
@@ -584,9 +643,9 @@ export default function OrderLog({ restaurantId }: Props) {
       {/* ── Stat cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 py-4">
         {[
-          { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",     value: rangeRows.length,  sub: dateSegment === "today" ? "Today" : dateSegment === "yesterday" ? "Yesterday" : dateSegment === "week" ? "Last 7 days" : dateSegment === "month" ? "Last 30 days" : `${fmtDate(new Date(customFrom))} – ${fmtDate(new Date(customTo))}`, up: false },
-          { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",    value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: `${rangeRows.filter(r => r.status === "served").length} served`, up: true },
-          { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value",  value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: rangeRows.length ? `across ${rangeRows.length} orders` : "No orders", up: false },
+          { icon: ShoppingBag, bg: "bg-blue-50",   ic: "text-blue-500",   label: "Total Orders",    value: totalCount, sub: dateSegment === "today" ? "Today" : dateSegment === "yesterday" ? "Yesterday" : dateSegment === "week" ? "Last 7 days" : dateSegment === "month" ? "Last 30 days" : `${fmtDate(new Date(customFrom))} – ${fmtDate(new Date(customTo))}`, up: false },
+          { icon: TrendingUp,  bg: "bg-green-50",  ic: "text-green-500",  label: "Total Revenue",   value: `₹${totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: `${rows.filter(r => r.status === "served").length} served on page`, up: true },
+          { icon: Receipt,     bg: "bg-purple-50", ic: "text-purple-500", label: "Avg. Order Value", value: `₹${avgOrderValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`, sub: rows.length ? `across ${rows.length} orders` : "No orders", up: false },
           { icon: AlertCircle, bg: "bg-amber-50",  ic: "text-amber-500",  label: "Active Orders",   value: pendingCount, sub: pendingCount > 0 ? "Need attention" : "All clear", up: false },
         ].map(({ icon: Icon, bg, ic, label, value, sub, up }) => (
           <div key={label} className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
@@ -752,7 +811,7 @@ export default function OrderLog({ restaurantId }: Props) {
               className="px-2 py-1 rounded border border-border text-xs hover:bg-muted disabled:opacity-40 transition-colors">›</button>
           </div>
           <span className="text-xs text-muted-foreground">
-            Showing {Math.min((page - 1) * PAGE_SIZE + 1, filtered.length)} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} orders
+            Showing {totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)} of {totalCount} orders
           </span>
           <span className="text-xs text-muted-foreground">{PAGE_SIZE} / page</span>
         </div>
@@ -777,7 +836,7 @@ export default function OrderLog({ restaurantId }: Props) {
               <OrderDetailPanel
                 order={selectedOrder}
                 onClose={() => setSelectedOrder(null)}
-                onStatusChange={() => loadRef.current?.()}
+                onStatusChange={() => load(pageRef.current)}
               />
             )}
           </div>

@@ -179,7 +179,11 @@ async function fetchData(restaurantId: string) {
       id: oi.id, name: oi.menu_item?.name ?? "Item",
       quantity: oi.quantity, price: parseFloat(oi.price),
     }));
-    const orderTotal = items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
+    // D2: for billed orders use the stored net total_amount (after discount);
+    // for unbilled orders compute from items (total_amount is 0 until billed).
+    const orderTotal = o.billed_at
+      ? parseFloat(o.total_amount ?? 0)
+      : items.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
     const orderRow: OrderRow = {
       id: o.id, status: o.status, created_at: o.created_at, billed_at: o.billed_at,
       customer_name: o.customer_name, customer_phone: o.customer_phone,

@@ -8,7 +8,8 @@ import {
   markOrderServed,
   acceptOrder
 } from "@/lib/api";
-import type { WaiterOrder } from "@/types/database";
+import { secureChannel } from "@/lib/channel-token";
+import type { WaiterOrder, OrderStatus } from "@/types/database";
 import type { NotificationEvent } from "@/hooks/useNotificationSounds";
 
 type NotifyFn = (event: NotificationEvent) => void;
@@ -133,16 +134,34 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
   }, []);
 
   const markServed = useCallback(async (orderId: string, wId: string) => {
+    // C5: Pre-check status before optimistic update — avoids a confusing
+    // snap-back if the order isn't actually ready to serve.
+    const currentOrder = orders.find((o) => o.id === orderId);
+    if (!currentOrder) return;
+    if (currentOrder.status !== "ready") {
+      setError("This order isn't ready to serve yet.");
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
+    // Optimistic update — capture previous status for rollback (C3 fix)
+    let previousStatus: OrderStatus = currentOrder.status;
     setOrders((prev) =>
-      prev.map((o) => o.id === orderId ? { ...o, status: "served" as const } : o)
+      prev.map((o) => {
+        if (o.id === orderId) { previousStatus = o.status; return { ...o, status: "served" as const }; }
+        return o;
+      })
     );
+
     const success = await markOrderServed(orderId, wId);
     if (!success) {
       setOrders((prev) =>
-        prev.map((o) => o.id === orderId ? { ...o, status: "ready" as const } : o)
+        prev.map((o) => o.id === orderId ? { ...o, status: previousStatus } : o)
       );
+      setError("Could not mark order as served. Please try again.");
+      setTimeout(() => setError(null), 4000);
     }
-  }, []);
+  }, [orders]);
 
   // ── Real-time subscription ─────────────────────────────────────────
   useEffect(() => {
@@ -154,83 +173,51 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
       channelRef.current = null;
     }
 
-    const channel = supabase
-      .channel(`waiter:${restaurantId}:${reconnectKey}`)
-      // Broadcast from DB trigger (fires after order_items are inserted)
-      .on("broadcast", { event: "order_changed" }, (msg: any) => {
-        const p = msg.payload;
-        if (!p?.id) return;
+    let cancelled = false;
 
-        if (p.event === "INSERT") {
-          // Fetch the full order with items
-          fetchAndUpsertOrder(p.id);
-          notify?.("newOrder");
-        } else if (p.event === "UPDATE") {
-          const assignedToMe = p.waiter_id === waiterId;
-          const assignedToOther = p.waiter_id && p.waiter_id !== waiterId;
-          const isServed = p.status === "served";
-          const isReady = p.status === "ready";
+    async function subscribe() {
+      // F5: Only use postgres_changes (auth-gated by RLS), not broadcast (public).
+      // postgres_changes requires a valid JWT and is filtered by RLS policies,
+      // preventing unauthorized clients from receiving sensitive order data.
+      if (cancelled) return;
 
-          setOrders((prev) => {
-            const exists = prev.some((o) => o.id === p.id);
+      const channel = supabase
+        .channel(`waiter:${restaurantId}:${reconnectKey}`)
+        // F5: postgres_changes is auth-gated by RLS — requires valid JWT
+        .on(
+          "postgres_changes" as any,
+          { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+          (msg: any) => {
+            const row = msg.new ?? msg.old;
+            if (!row?.id) return;
 
-            if (exists) {
-              // Order is in our list — remove it if it's now served or taken by someone else
-              if (isServed || assignedToOther) {
-                return prev.filter((o) => o.id !== p.id);
-              }
-              if (isReady) notify?.("orderReady");
-              else notify?.("orderUpdate");
-              return prev.map((o) =>
-                o.id === p.id ? { ...o, status: p.status, waiter_id: p.waiter_id } : o
-              );
-            } else if (assignedToMe) {
-              // Order just got assigned to me — fetch full data and add it
-              fetchAndUpsertOrder(p.id);
+            if (msg.eventType === "INSERT") {
+              fetchAndUpsertOrder(row.id);
               notify?.("newOrder");
-            }
-            return prev;
-          });
-        }
-      })
-      // Postgres changes as fallback
-      .on(
-        "postgres_changes" as any,
-        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
-        (msg: any) => {
-          const row = msg.new ?? msg.old;
-          if (!row?.id) return;
+            } else if (msg.eventType === "UPDATE") {
+              const assignedToMe = row.waiter_id === waiterId;
+              const assignedToOther = row.waiter_id && row.waiter_id !== waiterId;
+              const isServed = row.status === "served";
+              const isReady = row.status === "ready";
 
-          if (msg.eventType === "INSERT") {
-            fetchAndUpsertOrder(row.id);
-            notify?.("newOrder");
-          } else if (msg.eventType === "UPDATE") {
-            const assignedToMe = row.waiter_id === waiterId;
-            const assignedToOther = row.waiter_id && row.waiter_id !== waiterId;
-            const isServed = row.status === "served";
-            const isReady = row.status === "ready";
-
-            setOrders((prev) => {
-              const exists = prev.some((o) => o.id === row.id);
-
-              if (exists) {
-                if (isServed || assignedToOther) {
-                  return prev.filter((o) => o.id !== row.id);
+              setOrders((prev) => {
+                const exists = prev.some((o) => o.id === row.id);
+                if (exists) {
+                  if (isServed || assignedToOther) return prev.filter((o) => o.id !== row.id);
+                  if (isReady) notify?.("orderReady");
+                  else notify?.("orderUpdate");
+                  return prev.map((o) =>
+                    o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
+                  );
+                } else if (assignedToMe) {
+                  fetchAndUpsertOrder(row.id);
+                  notify?.("newOrder");
                 }
-                if (isReady) notify?.("orderReady");
-                else notify?.("orderUpdate");
-                return prev.map((o) =>
-                  o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
-                );
-              } else if (assignedToMe) {
-                fetchAndUpsertOrder(row.id);
-                notify?.("newOrder");
-              }
-              return prev;
-            });
+                return prev;
+              });
+            }
           }
-        }
-      )
+        )
       .subscribe((status: string) => {
         if (status === "CHANNEL_ERROR") {
           if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
@@ -240,22 +227,26 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
           if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
           setIsConnected(true);
           setError(null);
-          // Silently sync data on (re)connect — no skeleton flash
           refreshOrdersSilently();
         } else if (status === "CLOSED") {
-          // CLOSED fires during normal reconnect cycles — wait before showing offline
           if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
           disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
           setTimeout(() => setReconnectKey((k) => k + 1), 1000);
         }
       });
 
-    channelRef.current = channel;
+      channelRef.current = channel;
+    }
+
+    subscribe();
 
     return () => {
+      cancelled = true;
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-      supabase.removeChannel(channel);
-      channelRef.current = null;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
   }, [restaurantId, waiterId, fetchAndUpsertOrder, reconnectKey, refreshOrdersSilently, notify]);
 

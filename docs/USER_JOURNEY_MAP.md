@@ -140,15 +140,13 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **Action** | Taps "Add" on items, adjusts quantities |
 | **Touchpoint** | `MenuItemCard` → `CartDrawer` (bottom sheet) |
 | **Emotion** | 😊 Satisfying, quick |
-| **System** | `useCart()` — in-memory state |
+| **System** | `useCart(priceMultiplier, tableId)` — persisted to `sessionStorage` (key: `cart_{tableId}`) |
 
 **Pain points:**
-- Cart is in-memory only → accidental page refresh clears everything
 - No visual confirmation that item was added (just a badge count change)
 - Can't add a note/customization to an item (e.g. *"no onions"*)
 
 **Opportunities:**
-- Persist cart to `sessionStorage` so refresh doesn't lose it
 - Brief animation or toast on "Add" for tactile feedback
 - Add an optional "special instructions" text field per item
 

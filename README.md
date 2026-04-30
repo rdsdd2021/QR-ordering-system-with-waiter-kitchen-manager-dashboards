@@ -358,7 +358,7 @@ Manager → Settings → Geo-fencing. Set coordinates + radius. Customers outsid
 - **Waiter first**: `status = 'pending_waiter'` — waiter must accept before kitchen sees it
 
 ### Table sessions (billing)
-Manager → Tables tab groups all unbilled orders per table. "Bill (N)" bills all served orders at once.
+Manager → Tables tab groups all unbilled orders per table. "Bill (N)" bills all served orders at once. Pass `force=true` to auto-advance non-served orders before billing. Session closes when all non-cancelled orders are billed.
 
 ### QR codes
 Each table has a unique QR at `/r/[restaurant_id]/t/[table_id]`. Generate/print from Manager → Table Setup.

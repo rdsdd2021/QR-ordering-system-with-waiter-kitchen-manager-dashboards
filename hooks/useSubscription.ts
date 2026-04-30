@@ -84,9 +84,15 @@ export function useSubscription(restaurantId: string | null) {
   }, [restaurantId]);
 
   const plan: Plan = subscription?.plan ?? "free";
-  const isActive = subscription?.status === "active";
-  const isTrial  = subscription?.status === "trialing";
-  const isExpired = subscription?.status === "expired" || subscription?.status === "incomplete";
+  const isActive  = subscription?.status === "active";
+  const isTrial   = subscription?.status === "trialing";
+  // E1/E2: past_due and canceled are also terminal — treat them as expired
+  // so the paywall fires and the manager sees a clear upgrade prompt.
+  const isExpired =
+    subscription?.status === "expired"    ||
+    subscription?.status === "incomplete" ||
+    subscription?.status === "past_due"   ||
+    subscription?.status === "canceled";
   const isPro = (plan === "pro") && (isActive || isTrial);
   const trialEndsAt = isTrial ? subscription?.current_period_end ?? null : null;
   const limits: PlanLimits = isPro ? PRO_LIMITS : FREE_LIMITS;

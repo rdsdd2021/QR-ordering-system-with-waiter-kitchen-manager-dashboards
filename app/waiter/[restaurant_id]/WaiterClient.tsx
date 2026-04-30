@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, Wifi, WifiOff, LogOut, Volume2, VolumeX } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, LogOut, Volume2, VolumeX, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -107,6 +107,14 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
           </div>
         </div>
       </header>
+
+      {/* ── C4: Action error banner — shown when a race is lost or serve fails ── */}
+      {error && (
+        <div className="mx-4 mt-3 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span className="flex-1">{error}</span>
+        </div>
+      )}
 
       {/* ── Loading skeleton ─────────────────────────────────────────── */}
       {loading && (

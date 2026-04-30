@@ -195,7 +195,20 @@ function EndpointForm({
 // ── Secret reveal modal ───────────────────────────────────────────────────────
 
 function SecretModal({ secret, onClose }: { secret: string; onClose: () => void }) {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible]   = useState(false);
+  const [copied,  setCopied]    = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      // Fallback: select the text
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="bg-card rounded-xl border shadow-xl w-full max-w-md p-6 space-y-4">
@@ -203,9 +216,17 @@ function SecretModal({ secret, onClose }: { secret: string; onClose: () => void 
           <ShieldCheck className="h-5 w-5 text-green-600" />
           <h3 className="font-semibold text-base">Signing Secret</h3>
         </div>
+
+        {/* F4: Prominent warning banner */}
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5">
+          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800 dark:text-amber-300 font-medium">
+            This secret will <strong>never be shown again</strong>. Copy it now and store it securely before closing this dialog.
+          </p>
+        </div>
+
         <p className="text-sm text-muted-foreground">
-          Copy this secret now — it will <strong>never be shown again</strong>. Use it to verify
-          the <code className="text-xs bg-muted px-1 py-0.5 rounded">X-Webhook-Signature</code> header on incoming requests.
+          Use it to verify the <code className="text-xs bg-muted px-1 py-0.5 rounded">X-Webhook-Signature</code> header on incoming requests.
         </p>
         <div className="rounded-lg border bg-muted/40 p-3 font-mono text-xs break-all relative">
           {visible ? secret : "•".repeat(secret.length)}
@@ -216,13 +237,38 @@ function SecretModal({ secret, onClose }: { secret: string; onClose: () => void 
             {visible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </button>
         </div>
+
+        {/* Copy button */}
+        <button
+          onClick={handleCopy}
+          className={cn(
+            "w-full flex items-center justify-center gap-2 rounded-lg border py-2 text-sm font-semibold transition-colors",
+            copied
+              ? "border-green-400 bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400"
+              : "border-primary bg-primary/5 text-primary hover:bg-primary hover:text-white"
+          )}
+        >
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {copied ? "Copied!" : "Copy secret"}
+        </button>
+
+        {/* F4: Require acknowledgement before closing */}
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={e => setConfirmed(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded accent-primary cursor-pointer"
+          />
+          <span className="text-xs text-muted-foreground">
+            I have copied and securely stored the signing secret.
+          </span>
+        </label>
+
         <div className="flex items-center justify-between">
-          <CopyButton value={secret} label="Copy secret" />
-          <Button size="sm" onClick={onClose}>Done</Button>
-        </div>
-        <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
-          <p className="font-medium text-foreground">Verify signatures (Node.js)</p>
-          <pre className="overflow-x-auto whitespace-pre-wrap">{`const crypto = require('crypto');
+          <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground space-y-1 flex-1 mr-3">
+            <p className="font-medium text-foreground">Verify signatures (Node.js)</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap">{`const crypto = require('crypto');
 const sig = req.headers['x-webhook-signature'];
 const ts  = req.headers['x-webhook-timestamp'];
 const expected = 'sha256=' + crypto
@@ -231,7 +277,17 @@ const expected = 'sha256=' + crypto
   .digest('hex');
 const ok = crypto.timingSafeEqual(
   Buffer.from(sig), Buffer.from(expected));`}</pre>
+          </div>
         </div>
+
+        <Button
+          className="w-full"
+          disabled={!confirmed}
+          onClick={onClose}
+          title={confirmed ? undefined : "Please confirm you have copied the secret"}
+        >
+          {confirmed ? "Done — close" : "Confirm you've copied the secret to close"}
+        </Button>
       </div>
     </div>
   );

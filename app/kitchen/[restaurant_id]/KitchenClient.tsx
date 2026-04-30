@@ -29,7 +29,7 @@ const COLUMNS = [
 function KitchenClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
   const { notify, muted, toggleMute } = useNotificationSounds();
-  const { orders, loading, error, isConnected, advanceStatus, newOrderIds, refetch } =
+  const { orders, loading, error, isConnected, advanceStatus, rejectOrder, newOrderIds, refetch } =
     useKitchenOrders(restaurant.id, notify);
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -166,6 +166,7 @@ function KitchenClientContent({ restaurant }: Props) {
                       order={order}
                       isNew={newOrderIds.has(order.id)}
                       onAdvance={advanceStatus}
+                      onReject={rejectOrder}
                     />
                   ))
                 )}

@@ -35,17 +35,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
-  const loadUserProfile = useCallback(async (user: SupabaseUser) => {
+  const loadUserProfile = useCallback(async (user: SupabaseUser): Promise<{ deactivated?: boolean }> => {
     try {
       const { data, error } = await supabase
         .from("users")
-        .select("id, name, role, restaurant_id, email, auth_id, created_at")
+        .select("id, name, role, restaurant_id, email, auth_id, created_at, is_active")
         .eq("auth_id", user.id)
         .maybeSingle();
 
       if (error) throw error;
 
+      // Reject deactivated staff — sign them out and surface a clear error
+      if (data && data.is_active === false) {
+        await supabase.auth.signOut();
+        setState({
+          user: null,
+          profile: null,
+          loading: false,
+          error: "Your account has been deactivated. Please contact your manager.",
+        });
+        return { deactivated: true };
+      }
+
       setState({ user, profile: data as User, loading: false, error: null });
+      return {};
     } catch (err) {
       console.error("Error loading user profile:", err);
       setState({
@@ -54,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading: false,
         error: err instanceof Error ? err.message : "Failed to load profile",
       });
+      return {};
     }
   }, []);
 
@@ -83,7 +97,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       if (data.user) {
-        await loadUserProfile(data.user);
+        const result = await loadUserProfile(data.user);
+        if (result.deactivated) {
+          return { success: false, error: "Your account has been deactivated. Please contact your manager." };
+        }
         return { success: true };
       }
       return { success: false, error: "No user returned" };

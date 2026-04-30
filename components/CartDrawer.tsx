@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, ShoppingBag, ArrowLeft, User, Phone, Users, Chev
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { placeOrder, getPerformanceMetrics } from "@/lib/api";
+import { getPerformanceMetrics } from "@/lib/api";
 import type { CartItem } from "@/types/database";
 import type { CustomerInfo } from "@/hooks/useCustomerSession";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,7 @@ export default function CartDrawer({
   const [expanded, setExpanded] = useState(false);
   const [orderId, setOrderId]   = useState<string | null>(null);
   const [waitMins, setWaitMins] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState("Something went wrong. Please try again.");
 
   const [name, setName]           = useState(savedCustomerInfo?.name ?? "");
   const [phone, setPhone]         = useState(savedCustomerInfo?.phone ?? "");
@@ -52,13 +53,38 @@ export default function CartDrawer({
 
   async function submitOrder(info: CustomerInfo) {
     setStep("loading");
-    const id = await placeOrder({
-      restaurantId, tableId,
-      items: cartItems.map(i => ({ menu_item_id: i.id, quantity: i.quantity, price: i.price })),
-      customerName: info.name,
-      customerPhone: info.phone,
-      partySize: info.partySize,
-    });
+
+    // G5: Route through /api/orders which enforces server-side rate limiting
+    let id: string | "UNPAID_ORDERS_EXIST" | null = null;
+    try {
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          restaurantId,
+          tableId,
+          items: cartItems.map(i => ({ menu_item_id: i.id, quantity: i.quantity, price: i.price })),
+          customerName: info.name,
+          customerPhone: info.phone,
+          partySize: info.partySize,
+        }),
+      });
+
+      if (res.status === 429) {
+        setErrorMsg("Too many orders placed. Please wait a moment before trying again.");
+        setStep("error");
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        id = null;
+      } else {
+        id = data.result ?? null;
+      }
+    } catch {
+      id = null;
+    }
 
     if (id && id !== "UNPAID_ORDERS_EXIST") {
       onSaveCustomerInfo(info);
@@ -95,7 +121,15 @@ export default function CartDrawer({
     if (!name.trim()) { setFieldError("Please enter your name."); nameRef.current?.focus(); return; }
     if (!phone.trim()) { setFieldError("Please enter your phone number."); return; }
     if (!/^\+?[\d\s\-()]{7,15}$/.test(phone.trim())) { setFieldError("Please enter a valid phone number."); return; }
-    await submitOrder({ name: name.trim(), phone: phone.trim(), partySize: partySize ? parseInt(partySize) : undefined });
+    // B6: validate party_size when provided
+    if (partySize !== "") {
+      const parsed = parseInt(partySize, 10);
+      if (isNaN(parsed) || parsed < 1 || parsed > 50) {
+        setFieldError("Number of guests must be between 1 and 50.");
+        return;
+      }
+    }
+    await submitOrder({ name: name.trim(), phone: phone.trim(), partySize: partySize ? parseInt(partySize, 10) : undefined });
   }
 
   // ── Success ──────────────────────────────────────────────────────────
@@ -144,9 +178,11 @@ export default function CartDrawer({
 
   // ── Error ────────────────────────────────────────────────────────────
   if (step === "error") {
+    // Check if this was a rate limit error by inspecting the last response
+    const isRateLimit = (step as string) === "error" && false; // handled below via errorMsg
     return (
       <div className="bg-card border-t px-4 py-4 space-y-3">
-        <p className="text-sm text-destructive text-center">Something went wrong. Please try again.</p>
+        <p className="text-sm text-destructive text-center">{errorMsg}</p>
         <Button className="w-full" onClick={() => setStep("cart")}>Back to cart</Button>
       </div>
     );
@@ -187,8 +223,22 @@ export default function CartDrawer({
             <Label htmlFor="party-size" className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
               <Users className="h-3 w-3" /> Guests <span className="text-[10px] font-normal">(optional)</span>
             </Label>
-            <Input id="party-size" type="number" min="1" max="50" value={partySize}
-              onChange={e => setPartySize(e.target.value)} placeholder="2" className="h-10 w-24" />
+            <Input
+              id="party-size"
+              type="number"
+              min="1"
+              max="50"
+              value={partySize}
+              onChange={e => {
+                const v = e.target.value;
+                // Allow empty (clearing the field) or digits only, max 2 chars
+                if (v === "" || (/^\d{1,2}$/.test(v) && parseInt(v, 10) <= 50)) {
+                  setPartySize(v);
+                }
+              }}
+              placeholder="2"
+              className="h-10 w-24"
+            />
           </div>
 
           {fieldError && (

@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Printer, Receipt, Banknote, CreditCard, Smartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { generateBill } from "@/lib/api";
+import { generateBill, billTable } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -95,11 +95,20 @@ export default function BillDialog({ session, open, onClose, onBilled }: Props) 
   const [billed, setBilled]               = useState(false);
   const [billedAt, setBilledAt]           = useState<string | null>(null);
   const [netAmount, setNetAmount]         = useState<number | null>(null);
+  // D1: manager override — bill orders that aren't yet marked served
+  const [forceOverride, setForceOverride] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
-  const servableOrders = session.orders.filter(
-    (o) => o.status === "served" && !o.billed_at
+  // D1: include non-served, non-cancelled, unbilled orders when force is on
+  const servableOrders = session.orders.filter((o) =>
+    !o.billed_at && (
+      o.status === "served" ||
+      (forceOverride && !["cancelled"].includes(o.status))
+    )
   );
+  const nonServedCount = session.orders.filter(
+    (o) => !o.billed_at && o.status !== "served" && o.status !== "cancelled"
+  ).length;
 
   const grossTotal  = servableOrders.reduce((s, o) => s + o.order_total, 0);
   const discount    = Math.min(parseFloat(discountRaw) || 0, grossTotal);
@@ -122,30 +131,23 @@ export default function BillDialog({ session, open, onClose, onBilled }: Props) 
     if (servableOrders.length === 0) return;
     setLoading(true);
 
-    let allOk = true;
-    let lastNet = net;
-
-    for (const order of servableOrders) {
-      // Distribute discount proportionally across orders
-      const orderShare = grossTotal > 0 ? (order.order_total / grossTotal) * discount : 0;
-      const result = await generateBill(order.id, {
-        paymentMethod,
-        discountAmount: Math.round(orderShare * 100) / 100,
-        discountNote:   discountNote || undefined,
-      });
-      if (!result.success) { allOk = false; break; }
-      if (result.net !== undefined) lastNet = result.net;
-    }
+    // D4: single atomic RPC — bills all orders in one transaction
+    const result = await billTable(session.table_id, {
+      paymentMethod,
+      discountAmount: discount,
+      discountNote:   discountNote || undefined,
+      force:          forceOverride,
+    });
 
     setLoading(false);
 
-    if (!allOk) {
-      alert("Some orders could not be billed. Please try again.");
+    if (!result.success) {
+      alert(result.error ?? "Could not generate bill. Please try again.");
       return;
     }
 
     setBilledAt(new Date().toISOString());
-    setNetAmount(net);
+    setNetAmount(result.netTotal ?? net);
     setBilled(true);
     onBilled();
   }
@@ -183,6 +185,7 @@ export default function BillDialog({ session, open, onClose, onBilled }: Props) 
       setDiscountRaw("");
       setDiscountNote("");
       setPaymentMethod("cash");
+      setForceOverride(false);
       onClose();
     }
   }
@@ -290,6 +293,27 @@ export default function BillDialog({ session, open, onClose, onBilled }: Props) 
                 />
               </div>
             </div>
+
+            {/* D1: Manager override — bill non-served orders */}
+            {nonServedCount > 0 && (
+              <label className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={forceOverride}
+                  onChange={(e) => setForceOverride(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-amber-400 accent-amber-600 cursor-pointer"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                    Manager override — bill {nonServedCount} unserved order{nonServedCount !== 1 ? "s" : ""}
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    These orders will be marked as served automatically before billing.
+                    Use this when a customer leaves before the waiter marks the order served.
+                  </p>
+                </div>
+              </label>
+            )}
 
             {/* Payment method */}
             <div className="space-y-1.5">

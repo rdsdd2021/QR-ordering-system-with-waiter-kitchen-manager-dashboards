@@ -46,7 +46,9 @@ type Props = {
   hasServiceRole: boolean;
 };
 
-const ADMIN_PIN = process.env.NEXT_PUBLIC_ADMIN_PIN ?? "admin123";
+// G4: PIN is validated server-side via /api/admin/verify-pin.
+// NEXT_PUBLIC_ADMIN_PIN is no longer read client-side — the PIN value
+// is never embedded in the browser bundle.
 
 export default function AdminClient({ restaurants, subscriptions, orderCounts, hasServiceRole }: Props) {
   const router = useRouter();
@@ -54,6 +56,7 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
   const [pin, setPin]           = useState("");
   const [authed, setAuthed]     = useState(false);
   const [pinError, setPinError] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
   const [search, setSearch]     = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [localRestaurants, setLocalRestaurants] = useState(restaurants);
@@ -87,6 +90,29 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
     return res;
   }
 
+  // G4: Verify PIN server-side — never compare client-side
+  async function handlePinSubmit() {
+    if (!pin.trim()) return;
+    setPinLoading(true);
+    setPinError(false);
+    try {
+      const res = await fetch("/api/admin/verify-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (res.ok) {
+        setAuthed(true);
+      } else {
+        setPinError(true);
+      }
+    } catch {
+      setPinError(true);
+    } finally {
+      setPinLoading(false);
+    }
+  }
+
   // ── PIN gate ─────────────────────────────────────────────────────────
   if (!authed) {
     return (
@@ -103,21 +129,14 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
             type="password"
             placeholder="Admin PIN"
             value={pin}
+            disabled={pinLoading}
             onChange={(e) => { setPin(e.target.value); setPinError(false); }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                if (pin === ADMIN_PIN) setAuthed(true);
-                else setPinError(true);
-              }
-            }}
+            onKeyDown={(e) => { if (e.key === "Enter") handlePinSubmit(); }}
             className={cn(pinError && "border-destructive")}
           />
           {pinError && <p className="text-xs text-destructive">Incorrect PIN</p>}
-          <Button className="w-full" onClick={() => {
-            if (pin === ADMIN_PIN) setAuthed(true);
-            else setPinError(true);
-          }}>
-            Enter
+          <Button className="w-full" onClick={handlePinSubmit} disabled={pinLoading || !pin.trim()}>
+            {pinLoading ? "Verifying…" : "Enter"}
           </Button>
         </Card>
       </div>
@@ -126,11 +145,17 @@ export default function AdminClient({ restaurants, subscriptions, orderCounts, h
 
   // ── Stats ─────────────────────────────────────────────────────────────
   const totalOrders = Object.values(orderCounts).reduce((a, b) => a + b, 0);
-  const proCount    = subscriptions.filter((s) => s.plan === "pro" && s.status === "active").length;
+  // E1: include trialing in Pro count — trialing users have full Pro access
+  const proCount    = subscriptions.filter((s) => s.plan === "pro" && (s.status === "active" || s.status === "trialing")).length;
   const trialCount  = subscriptions.filter((s) => s.status === "trialing").length;
   const activeCount = localRestaurants.filter((r) => {
     const sub = subMap[r.id];
-    const isExpired = sub?.status === "expired" || sub?.status === "incomplete";
+    // E1/E2: past_due and canceled are also expired states
+    const isExpired =
+      sub?.status === "expired"    ||
+      sub?.status === "incomplete" ||
+      sub?.status === "past_due"   ||
+      sub?.status === "canceled";
     return r.is_active && !isExpired;
   }).length;
 

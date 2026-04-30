@@ -9,6 +9,10 @@
  *
  * allowNoRestaurant: if true, a logged-in user with no restaurant is still
  * allowed through (used by onboarding so they can complete setup).
+ *
+ * A3 fix: if a user has a valid auth session but no matching users row
+ * (partial staff creation failure), we sign them out and send them to /login
+ * with an error message rather than looping through /onboarding.
  */
 
 import { useEffect, useState } from "react";
@@ -31,15 +35,24 @@ export default function AuthRedirect({ children, allowNoRestaurant = false }: Pr
         .eq("auth_id", session.user.id)
         .maybeSingle();
 
-      // No restaurant yet — let through if caller allows it (onboarding)
-      if (!data?.restaurant_id) { 
+      // Auth session exists but no users row — broken/partial account.
+      // Sign out and redirect to login so the user isn't stuck in a loop.
+      if (!data) {
+        await supabase.auth.signOut();
+        setState("redirecting");
+        router.replace("/login?error=account_incomplete");
+        return;
+      }
+
+      // Has a users row but no restaurant yet — let through if caller allows it (onboarding)
+      if (!data.restaurant_id) {
         if (allowNoRestaurant) {
           setState("guest");
         } else {
           setState("redirecting");
           router.replace("/onboarding");
         }
-        return; 
+        return;
       }
 
       // Has a restaurant — redirect to dashboard

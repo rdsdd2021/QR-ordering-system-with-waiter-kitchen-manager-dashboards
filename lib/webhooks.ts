@@ -78,11 +78,35 @@ async function dispatchToUrl(
   secret: string,
   payload: WebhookPayload,
 ): Promise<DispatchResult> {
-  const body = JSON.stringify(payload);
+  let body = JSON.stringify(payload);
 
-  // Enforce payload size cap
+  // F3: If payload exceeds the size cap, attempt a truncated fallback before failing.
+  // Strip large array fields from data (e.g. order_items) and add a truncation notice.
   if (new TextEncoder().encode(body).length > MAX_PAYLOAD_BYTES) {
-    return { status: "failed", httpStatus: null, responseBody: null, errorMessage: "Payload exceeds 64 KB limit", durationMs: 0 };
+    const truncatedData: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload.data)) {
+      // Drop array fields that are likely the bulk of the payload
+      if (!Array.isArray(v)) {
+        truncatedData[k] = v;
+      }
+    }
+    truncatedData._truncated = true;
+    truncatedData._truncation_reason = "Payload exceeded 64 KB limit — array fields omitted";
+
+    const truncatedPayload: WebhookPayload = { ...payload, data: truncatedData };
+    const truncatedBody = JSON.stringify(truncatedPayload);
+
+    if (new TextEncoder().encode(truncatedBody).length > MAX_PAYLOAD_BYTES) {
+      // Even the truncated version is too large — fail with a clear message
+      return {
+        status: "failed", httpStatus: null, responseBody: null,
+        errorMessage: "Payload exceeds 64 KB even after truncation",
+        durationMs: 0,
+      };
+    }
+
+    // Use the truncated body
+    body = truncatedBody;
   }
 
   const timestamp = payload.timestamp;
@@ -165,7 +189,20 @@ export async function fireEvent(
 
   // Dispatch to all endpoints concurrently (capped at 10)
   const batch = endpoints.slice(0, 10);
-  await Promise.allSettled(batch.map(ep => deliverToEndpoint(ep, payload, supabase)));
+
+  // F2: Create all delivery records synchronously so they exist in the DB
+  // immediately, then dispatch HTTP calls in the background without blocking
+  // the caller. Uses `waitUntil` on Vercel Edge/Node runtimes when available,
+  // otherwise detaches via a void promise.
+  const dispatchAll = Promise.allSettled(batch.map(ep => deliverToEndpoint(ep, payload, supabase)));
+
+  // @ts-ignore — `waitUntil` is available on Vercel's extended Request context
+  if (typeof globalThis !== "undefined" && (globalThis as any)[Symbol.for("waitUntil")]) {
+    (globalThis as any)[Symbol.for("waitUntil")](dispatchAll);
+  } else {
+    // Detach — let the promise run without blocking the caller
+    dispatchAll.catch(err => console.error("[fireEvent] dispatch error:", err));
+  }
 }
 
 async function deliverToEndpoint(
