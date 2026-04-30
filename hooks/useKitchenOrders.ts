@@ -8,7 +8,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
 import { getKitchenOrders, updateOrderStatus } from "@/lib/api";
-import { secureChannel } from "@/lib/channel-token";
 import type { KitchenOrder, OrderStatus } from "@/types/database";
 import type { NotificationEvent } from "@/hooks/useNotificationSounds";
 
@@ -105,100 +104,126 @@ export function useKitchenOrders(restaurantId: string, notify?: NotifyFn) {
 
     let cancelled = false;
 
-    async function subscribe() {
-      // F5: The broadcast channel name includes a short HMAC token derived from
-      // CHANNEL_SECRET so it cannot be guessed by clients that only know the
-      // restaurant UUID. The postgres_changes subscription is already auth-gated
-      // by RLS and requires a valid session JWT.
-      const channelName = await secureChannel("kitchen", restaurantId);
+    // Fetch a single order by ID and add/update it in state.
+    // Fetches only that order — not the full list — for speed.
+    async function fetchAndUpsertOrder(orderId: string, markNew = false) {
+      if (fetchingRef.current.has(orderId)) return;
+      fetchingRef.current.add(orderId);
+      try {
+        const { data } = await supabase
+          .from("orders")
+          .select(
+            `id, restaurant_id, table_id, status, created_at, confirmed_at,
+             table:tables(table_number, floor:floors(name)),
+             waiter:users(name),
+             order_items(id, quantity, price, menu_item:menu_items(name, description, image_url))`
+          )
+          .eq("id", orderId)
+          .maybeSingle();
+
+        if (!data) return;
+
+        const order = data as unknown as KitchenOrder;
+        const KITCHEN_STATUSES: OrderStatus[] = ["pending", "confirmed", "preparing", "ready"];
+        if (!KITCHEN_STATUSES.includes(order.status)) return; // already moved past kitchen
+
+        setOrders((prev) => {
+          const idx = prev.findIndex((o) => o.id === orderId);
+          if (idx === -1) return [order, ...prev];
+          const next = [...prev];
+          next[idx] = order;
+          return next;
+        });
+
+        if (markNew) {
+          setNewOrderIds((prev) => new Set(prev).add(orderId));
+          notify?.("newOrder");
+          setTimeout(() => {
+            setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+          }, 4000);
+        }
+      } finally {
+        fetchingRef.current.delete(orderId);
+      }
+    }
+
+    function subscribe() {
       if (cancelled) return;
 
-      // F5: Only use postgres_changes (auth-gated by RLS), not broadcast (public).
-      // The DB trigger broadcasts to `kitchen:{restaurantId}` but we don't subscribe
-      // to that channel — we rely solely on postgres_changes which requires a valid
-      // JWT and is filtered by RLS policies. This prevents unauthorized clients from
-      // subscribing to sensitive order data.
-      const channel = supabase.channel(`kitchen:${restaurantId}:${reconnectKey}`);
-      channelRef.current = channel;
-
-      // Statuses the kitchen board displays
       const KITCHEN_STATUSES: OrderStatus[] = ["pending", "confirmed", "preparing", "ready"];
 
-      // Fetch a single order and add/update it in state (used for INSERT and
-      // UPDATE-into-view cases like pending_waiter → confirmed)
-      async function fetchAndUpsertOrder(orderId: string, markNew = false) {
-        if (fetchingRef.current.has(orderId)) return;
-        fetchingRef.current.add(orderId);
-        try {
-          await new Promise((r) => setTimeout(r, 300));
-          const fresh = await getKitchenOrders(restaurantId);
-          const order = fresh.find((o) => o.id === orderId);
-          if (!order) return;
-          setOrders((prev) => {
-            const idx = prev.findIndex((o) => o.id === orderId);
-            if (idx === -1) return [order, ...prev];
-            const next = [...prev];
-            next[idx] = order;
-            return next;
-          });
-          if (markNew) {
-            setNewOrderIds((prev) => new Set(prev).add(orderId));
-            notify?.("newOrder");
-            setTimeout(() => {
-              setNewOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
-            }, 4000);
+      const channel = supabase
+        .channel(`kitchen:${restaurantId}:${reconnectKey}`)
+        .on(
+          "postgres_changes" as any,
+          { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+          async (payload: any) => {
+            if (payload.eventType === "INSERT") {
+              fetchAndUpsertOrder((payload.new as any).id, true);
+            } else if (payload.eventType === "UPDATE") {
+              const u = payload.new as any;
+              const newStatus = u.status as OrderStatus;
+              setOrders((prev) => {
+                const exists = prev.some((o) => o.id === u.id);
+                if (exists) {
+                  // Remove if it moved past the kitchen board
+                  if (!KITCHEN_STATUSES.includes(newStatus)) {
+                    return prev.filter((o) => o.id !== u.id);
+                  }
+                  notify?.("orderUpdate");
+                  return prev.map((o) => o.id === u.id ? { ...o, status: newStatus } : o);
+                } else if (KITCHEN_STATUSES.includes(newStatus)) {
+                  // Order just became visible to kitchen (e.g. pending_waiter → confirmed)
+                  fetchAndUpsertOrder(u.id, true);
+                }
+                return prev;
+              });
+            }
           }
-        } finally {
-          fetchingRef.current.delete(orderId);
-        }
-      }
-
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
-        async (payload) => {
-          if (payload.eventType === "INSERT") {
-            fetchAndUpsertOrder((payload.new as any).id, true);
-          } else if (payload.eventType === "UPDATE") {
-            const u = payload.new as any;
-            const newStatus = u.status as OrderStatus;
-            setOrders((prev) => {
-              const exists = prev.some((o) => o.id === u.id);
-              if (exists) {
-                if (!KITCHEN_STATUSES.includes(newStatus)) return prev.filter((o) => o.id !== u.id);
-                notify?.("orderUpdate");
-                return prev.map((o) => o.id === u.id ? { ...o, status: newStatus } : o);
-              } else if (KITCHEN_STATUSES.includes(newStatus)) {
-                fetchAndUpsertOrder(u.id, true);
-              }
-              return prev;
-            });
+        )
+        .subscribe((status: string) => {
+          if (status === "CHANNEL_ERROR") {
+            if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
+            // Back off 5s before reconnecting to avoid rapid reconnect loops
+            setTimeout(() => { if (!cancelled) setReconnectKey((k) => k + 1); }, 5000);
+          } else if (status === "SUBSCRIBED") {
+            if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+            setIsConnected(true);
+            setError(null);
+            // Sync any orders missed during the reconnect window
+            refreshOrdersSilently();
+          } else if (status === "CLOSED") {
+            if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
+            // Back off 3s before reconnecting
+            setTimeout(() => { if (!cancelled) setReconnectKey((k) => k + 1); }, 3000);
           }
-        }
-      );
+        });
 
-      channel.subscribe((status) => {
-        if (status === "CHANNEL_ERROR") {
-          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-          disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
-          setTimeout(() => setReconnectKey((k) => k + 1), 3000);
-        } else if (status === "SUBSCRIBED") {
-          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-          setIsConnected(true);
-          setError(null);
-          refreshOrdersSilently();
-        } else if (status === "CLOSED") {
-          if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-          disconnectTimerRef.current = setTimeout(() => setIsConnected(false), 2000);
-          setTimeout(() => setReconnectKey((k) => k + 1), 1000);
-        }
-      });
+      channelRef.current = channel;
     }
 
     subscribe();
 
+    // ── Reconnect when tab becomes visible again ───────────────────
+    // Kitchen screens can be on tablets that sleep or browsers that
+    // throttle background tabs. When the page becomes visible, force
+    // a silent refresh and reconnect if the channel dropped.
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshOrdersSilently();
+        // If the channel is gone, trigger a reconnect
+        if (!channelRef.current) {
+          setReconnectKey((k) => k + 1);
+        }
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);

@@ -42,7 +42,7 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
   }, [restaurantId, waiterId]);
 
   // Fetch a single order by ID and add/update it in state
-  const fetchAndUpsertOrder = useCallback(async (orderId: string) => {
+  const fetchAndUpsertOrder = useCallback(async (orderId: string, skipIfAssignedToOther = false) => {
     // Deduplicate concurrent fetches for the same order
     if (fetchingRef.current.has(orderId)) return;
     fetchingRef.current.add(orderId);
@@ -62,12 +62,29 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
 
       if (!data) return;
 
-      // Check visibility: skip if this order belongs to another waiter's locked table
       const order = data as unknown as WaiterOrder;
       const isAssignedToMe = order.waiter_id === waiterId;
       const isUnassigned = !order.waiter_id;
 
-      if (!isAssignedToMe && !isUnassigned) return; // belongs to another waiter
+      // If the order is assigned to another waiter, never show it
+      if (!isAssignedToMe && !isUnassigned) return;
+
+      // For INSERT events: if the order is unassigned, check whether the table
+      // is owned by another waiter's open session. If so, skip — the trigger
+      // will assign it shortly and the UPDATE event will handle visibility.
+      if (isUnassigned && skipIfAssignedToOther) {
+        const { data: session } = await supabase
+          .from("table_sessions")
+          .select("waiter_id")
+          .eq("table_id", order.table_id)
+          .is("closed_at", null)
+          .maybeSingle();
+
+        if (session?.waiter_id && session.waiter_id !== waiterId) {
+          // Table belongs to another waiter — don't flash it
+          return;
+        }
+      }
 
       setOrders((prev) => {
         const exists = prev.findIndex((o) => o.id === orderId);
@@ -192,25 +209,40 @@ export function useWaiterOrders(restaurantId: string, waiterId: string, notify?:
             if (!row?.id) return;
 
             if (msg.eventType === "INSERT") {
-              fetchAndUpsertOrder(row.id);
-              notify?.("newOrder");
+              // Pass skipIfAssignedToOther=true so we check the table session
+              // before showing the order. This prevents the flash where an order
+              // briefly appears on all waiters' screens before the trigger assigns it.
+              fetchAndUpsertOrder(row.id, true).then(() => {
+                // Only notify if the order ended up in our list
+                setOrders((prev) => {
+                  if (prev.some((o) => o.id === row.id)) notify?.("newOrder");
+                  return prev;
+                });
+              });
             } else if (msg.eventType === "UPDATE") {
               const assignedToMe = row.waiter_id === waiterId;
               const assignedToOther = row.waiter_id && row.waiter_id !== waiterId;
               const isServed = row.status === "served";
+              const isCancelled = row.status === "cancelled";
+              const isBilled = !!row.billed_at;
               const isReady = row.status === "ready";
 
               setOrders((prev) => {
                 const exists = prev.some((o) => o.id === row.id);
                 if (exists) {
-                  if (isServed || assignedToOther) return prev.filter((o) => o.id !== row.id);
+                  // Remove if billed, served, cancelled, or reassigned to someone else
+                  if (isBilled || isServed || isCancelled || assignedToOther) {
+                    return prev.filter((o) => o.id !== row.id);
+                  }
                   if (isReady) notify?.("orderReady");
                   else notify?.("orderUpdate");
                   return prev.map((o) =>
                     o.id === row.id ? { ...o, status: row.status, waiter_id: row.waiter_id } : o
                   );
-                } else if (assignedToMe) {
-                  fetchAndUpsertOrder(row.id);
+                } else if (assignedToMe && !isBilled && !isServed && !isCancelled) {
+                  // Order was just assigned to me (e.g. auto-assign fired) — fetch and add
+                  // Guard: never re-add an order that is already billed/served/cancelled
+                  fetchAndUpsertOrder(row.id, false);
                   notify?.("newOrder");
                 }
                 return prev;

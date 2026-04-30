@@ -42,6 +42,7 @@ async function logAudit(
 type Props = {
   restaurantId: string;
   currentRoutingMode: "direct_to_kitchen" | "waiter_first";
+  currentAssignmentMode?: "auto_assign" | "broadcast";
   geofencingEnabled?: boolean;
   geoLatitude?: number | null;
   geoLongitude?: number | null;
@@ -52,6 +53,7 @@ type Props = {
 export default function SettingsPanel({
   restaurantId,
   currentRoutingMode,
+  currentAssignmentMode = "auto_assign",
   geofencingEnabled: initGeoEnabled = false,
   geoLatitude: initLat = null,
   geoLongitude: initLng = null,
@@ -65,8 +67,41 @@ export default function SettingsPanel({
 
   // ── Routing mode ───────────────────────────────────────────────────
   const [routingMode, setRoutingMode] = useState(currentRoutingMode);
+  const [savedRoutingMode, setSavedRoutingMode] = useState(currentRoutingMode);
   const [routingSaving, setRoutingSaving] = useState(false);
   const [routingSaved, setRoutingSaved] = useState(false);
+
+  // ── Waiter assignment mode ─────────────────────────────────────────
+  const [assignmentMode, setAssignmentMode] = useState(currentAssignmentMode);
+  const [savedAssignmentMode, setSavedAssignmentMode] = useState(currentAssignmentMode);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentSaved, setAssignmentSaved] = useState(false);
+
+  async function handleAssignmentSave() {
+    setAssignmentSaving(true);
+    setAssignmentSaved(false);
+    const { error } = await supabase
+      .from("restaurants")
+      .update({ waiter_assignment_mode: assignmentMode })
+      .eq("id", restaurantId);
+    if (!error) {
+      setSavedAssignmentMode(assignmentMode);
+      setAssignmentSaved(true);
+      logAudit('restaurant.settings_updated', 'restaurant', restaurantId, null, {
+        waiter_assignment_mode: assignmentMode,
+      });
+      // Delay refresh so the "Saved!" flash is visible before remount.
+      // Invalidate the restaurant cache first so router.refresh() gets
+      // the updated value instead of the stale cached one.
+      setTimeout(() => {
+        setAssignmentSaved(false);
+        router.refresh();
+      }, 1500);
+    } else {
+      alert("Failed to save waiter assignment setting: " + error.message);
+    }
+    setAssignmentSaving(false);
+  }
 
   // ── Auto-confirm ───────────────────────────────────────────────────
   const [autoConfirmEnabled, setAutoConfirmEnabled] = useState(initAutoConfirm !== null && initAutoConfirm > 0);
@@ -111,12 +146,15 @@ export default function SettingsPanel({
     setRoutingSaved(false);
     const success = await updateRestaurantRoutingMode(restaurantId, routingMode);
     if (success) {
+      setSavedRoutingMode(routingMode);
       setRoutingSaved(true);
-      router.refresh();
-      setTimeout(() => setRoutingSaved(false), 3000);
       logAudit('restaurant.settings_updated', 'restaurant', restaurantId, null, {
         order_routing_mode: routingMode,
       });
+      setTimeout(() => {
+        setRoutingSaved(false);
+        router.refresh();
+      }, 1500);
     } else {
       alert("Failed to update routing settings");
     }
@@ -199,7 +237,8 @@ export default function SettingsPanel({
     );
   }
 
-  const routingChanged = routingMode !== currentRoutingMode;
+  const routingChanged    = routingMode    !== savedRoutingMode;
+  const assignmentChanged = assignmentMode !== savedAssignmentMode;
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -251,7 +290,7 @@ export default function SettingsPanel({
 
           {routingChanged && (
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={() => setRoutingMode(currentRoutingMode)}>
+              <Button variant="outline" onClick={() => setRoutingMode(savedRoutingMode)}>
                 Cancel
               </Button>
               <Button onClick={handleRoutingSave} disabled={routingSaving}>
@@ -268,6 +307,68 @@ export default function SettingsPanel({
           )}
         </Card>
       </section>
+
+      {/* ── Waiter Assignment ─────────────────────────────────────── */}
+      {routingMode === "waiter_first" && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Waiter Assignment</h2>
+            <p className="text-sm text-muted-foreground">
+              Control how confirmed orders are assigned to waiters
+            </p>
+          </div>
+
+          <Card className="p-6 space-y-4">
+            {[
+              {
+                value: "auto_assign" as const,
+                label: "Auto Assign",
+                desc: "When an order is confirmed, it is automatically assigned to the least-busy available waiter.",
+              },
+              {
+                value: "broadcast" as const,
+                label: "Broadcast to All Waiters",
+                desc: "Pending orders appear on every waiter's dashboard. The first waiter to accept it gets assigned.",
+              },
+            ].map(({ value, label, desc }) => (
+              <label
+                key={value}
+                className={cn(
+                  "flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition-colors",
+                  assignmentMode === value ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                )}
+                onClick={() => setAssignmentMode(value)}
+              >
+                <input
+                  type="radio"
+                  name="assignment"
+                  value={value}
+                  checked={assignmentMode === value}
+                  onChange={() => setAssignmentMode(value)}
+                  className="mt-1 h-4 w-4 cursor-pointer"
+                />
+                <div>
+                  <p className="font-semibold">{label}</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">{desc}</p>
+                </div>
+              </label>
+            ))}
+
+            <div className="flex items-center gap-2 pt-2">
+              <Button onClick={handleAssignmentSave} disabled={assignmentSaving}>
+                {assignmentSaving ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</>
+                ) : assignmentSaved ? (
+                  <><Check className="mr-2 h-4 w-4" />Saved!</>
+                ) : "Save Changes"}
+              </Button>
+              {assignmentSaved && (
+                <p className="text-sm text-green-600">✓ Saved</p>
+              )}
+            </div>
+          </Card>
+        </section>
+      )}
 
       {/* ── Geo-fencing ───────────────────────────────────────────── */}
       <section className="space-y-4">

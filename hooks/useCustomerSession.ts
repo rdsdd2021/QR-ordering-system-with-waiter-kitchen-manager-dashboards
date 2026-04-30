@@ -38,6 +38,7 @@ const SESSION_KEY = (tableId: string) => `customer_session_${tableId}`;
 
 export function useCustomerSession(restaurantId: string, tableId: string) {
   const [customerInfo, setCustomerInfoState] = useState<CustomerInfo | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
@@ -48,6 +49,10 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
       const stored = sessionStorage.getItem(SESSION_KEY(tableId));
       if (stored) setCustomerInfoState(JSON.parse(stored));
     } catch {}
+    // Mark session as loaded regardless of whether data was found.
+    // This must happen in the same effect so the occupancy check in
+    // OrderPageClient always sees the correct customerInfo value.
+    setSessionLoaded(true);
   }, [tableId]);
 
   // ── Save customer info ─────────────────────────────────────────────
@@ -77,6 +82,7 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
       `)
       .eq("table_id", tableId)
       .is("billed_at", null)
+      .neq("status", "cancelled")
       .order("created_at", { ascending: false });
 
     if (error) { console.error(error); setLoadingOrders(false); return; }
@@ -157,10 +163,9 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
           } else if (msg.eventType === "UPDATE") {
             // Patch status in-place
             setActiveOrders((prev) => {
-              // If billed_at is now set, remove from active list
-              if (row.billed_at) {
+              // Remove from active list if billed or cancelled
+              if (row.billed_at || row.status === "cancelled") {
                 const remaining = prev.filter((o) => o.id !== row.id);
-                // If no more active orders, check if session should clear
                 if (remaining.length === 0) fetchActiveOrders();
                 return remaining;
               }
@@ -187,6 +192,7 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
     clearSession,
     activeOrders,
     loadingOrders,
+    sessionLoaded,
     hasActiveSession: customerInfo !== null,
     refetchOrders: fetchActiveOrders,
   };

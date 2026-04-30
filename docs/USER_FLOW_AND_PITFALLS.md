@@ -187,12 +187,16 @@ session exists?
 ### Table Occupancy Check (client-side)
 
 ```
-On mount (resolved via one-shot useEffect after first render cycle):
+On mount (gated on sessionLoaded from useCustomerSession):
+  useCustomerSession() reads sessionStorage and sets sessionLoaded=true in the same effect.
+  OrderPageClient waits for sessionLoaded before running the occupancy check, so
+  customerInfo is always up-to-date when the check fires.
+
   checkTableHasUnpaidOrders(table_id)
-  └─ If true AND no sessionStorage key for this table
+  └─ If true AND customerInfo is null (no session for this browser)
      → tableOccupied = true → shows "Table is occupied" screen
-  └─ If true AND sessionStorage key exists
-     → this browser owns the session → normal flow
+  └─ If true AND customerInfo is set (this browser owns the session)
+     → normal flow
   └─ If false → normal flow
 ```
 
@@ -273,13 +277,16 @@ submitOrder():
 ```
 Tab: "Orders"
   - useCustomerSession() loads active orders from sessionStorage
+    └─ Query: billed_at IS NULL AND status != 'cancelled'
+       Cancelled orders are excluded — they do not appear in the customer's active order list
   - useRealtimeOrderStatus() subscribes to channel: customer:{restaurant_id}:{table_id}
   - OrderStatusTracker shows visual progress bar:
     pending → confirmed → preparing → ready → served
-    (cancelled is a terminal state shown separately — order exits the progress bar)
+    (cancelled is a terminal state — order is excluded from the active list entirely)
   - Customers can cancel orders in 'pending' or 'pending_waiter' status via a Cancel button
     in OrderStatusTracker. The DB RLS policy 'customers_can_cancel_pending_orders' enforces this.
   - Session clears from sessionStorage when all orders have billed_at set
+    (cancelled orders are excluded from this check — they never block session clear)
 ```
 
 ### Variations
@@ -319,7 +326,8 @@ On load:
 Real-time:
   useKitchenOrders() subscribes to channel: kitchen:{restaurant_id}
   Event: order_changed
-  └─ INSERT → re-fetches single order (300ms delay for order_items to commit)
+  └─ INSERT → fetches single order directly (no artificial delay — queries the order row
+               immediately; order_items are joined in the same select)
              → concurrent fetches for the same order are deduplicated via fetchingRef
                (if a fetch is already in-flight for an order ID, the duplicate is dropped)
              → upserts into list; prepends if new, patches if already present
@@ -403,13 +411,26 @@ Real-time:
     - isConnected = true → Shows "Live" with Wifi icon (green)
     - isConnected = false → Shows "Offline" with WifiOff icon (red)
 
+  On INSERT event:
+    - Fetches the full order by ID
+    - If order is assigned to another waiter → skip (never shown)
+    - If order is unassigned → checks whether the table has an open session owned by
+      another waiter (query: table_sessions WHERE table_id=order.table_id AND closed_at IS NULL)
+      - If session.waiter_id belongs to another waiter → skip; the auto-assign trigger
+        will assign the order shortly and the UPDATE event will handle visibility
+      - Otherwise → add to list (prepend)
+
   On UPDATE event:
     - If order exists in local state:
-        - status = 'served'  → remove from list (order is done)
+        - billed_at is set → remove from list (billing is terminal for the waiter board)
+        - status = 'served' or 'cancelled' → remove from list (terminal state)
         - waiter_id changed to another waiter → remove from list (reassigned)
         - otherwise → update status/waiter_id in place
     - If order does NOT exist in local state:
-        - waiter_id = currentWaiterId → fetch full order and add to list (newly assigned)
+        - waiter_id = currentWaiterId AND billed_at is NOT set AND status is not
+          'served'/'cancelled' → fetch full order and add to list (newly assigned)
+        - Guard: orders that are already billed, served, or cancelled are never
+          re-added even if a late assignment event arrives
 ```
 
 ### Two Sections
@@ -417,15 +438,24 @@ Real-time:
 ```
 "My Orders"
   └─ orders WHERE waiter_id = currentWaiterId
+  └─ Excludes: status IN ('served', 'cancelled')
   └─ Actions: Mark Served (status: ready → served)
 
-"Available Orders"
+"Available to Accept" / "Needs Attention" / "Ready to Serve"  (label varies by mode)
   └─ orders WHERE waiter_id IS NULL
-     AND status IN ('pending_waiter', 'confirmed', 'ready')
+     AND (
+       status IN ('pending_waiter', 'ready')
+       OR status = 'confirmed'  -- broadcast mode only
+     )
   └─ Actions:
      - "Take Order" (assign to self, open table session)
      - "Accept Order" (pending_waiter → confirmed, waiter_first mode only)
 ```
+
+Section label by mode:
+- `waiter_first` + `broadcast` assignment → **"Available to Accept"**
+- `waiter_first` + other assignment → **"Needs Attention"**
+- `direct_to_kitchen` → **"Ready to Serve"**
 
 ### Order Actions
 
@@ -447,8 +477,9 @@ markServed(orderId):
 
 ### Variations
 
-- **Direct-to-kitchen mode:** Waiters still see orders in "Available" (status=`confirmed` or `ready`) to mark served. They don't need to accept.
-- **Waiter-first mode:** Waiters see `pending_waiter` orders in "Available" and must accept before kitchen sees them.
+- **Direct-to-kitchen mode:** Waiters still see orders in "Ready to Serve" (status=`confirmed` or `ready`) to mark served. They don't need to accept.
+- **Waiter-first mode (non-broadcast):** Waiters see `pending_waiter` orders in "Needs Attention" and must accept before kitchen sees them.
+- **Waiter-first mode (broadcast):** Waiters see both `pending_waiter` and `confirmed`-but-unassigned orders in "Available to Accept". Any waiter can claim an unassigned confirmed order via "Take Order".
 - **Auto-assignment:** `auto_assign_waiter_from_session` trigger fires on order INSERT — if the table already has an open `table_session` with a `waiter_id`, the new order is automatically assigned to that waiter.
 
 ### Pitfalls
@@ -494,11 +525,13 @@ Props:
   - Changing either resets to page 1
   - On mobile (< md breakpoint) the grid is always 2 columns regardless of the Cols selector; the selector only takes effect on md+ screens
 - Each table tile has one of five states:
-    free        — no active session
+    free        — no active session (or all orders at the table are cancelled)
     active      — session open, orders in progress
     awaiting    — session has pending/pending_waiter orders needing attention
     bill-ready  — all orders served and unbilled; ready to generate bill
     billed      — all orders billed (session closing)
+  Note: cancelled orders are excluded when building the session map. A table whose
+  only orders are all cancelled will not appear as "active" — it shows as "free".
 - Each occupied table shows: waiter name, order count, total amount, session duration
 - Selecting a tile opens a detail panel with customer info, order list, and "Generate Bill" action
 - "Generate Bill" button → generate_bill() for all served orders at that table
@@ -692,6 +725,8 @@ FloorsManager component
 ```
 StaffManager component
 - List all staff (waiters + kitchen); each card shows name, role, active orders, and last-active time (derived from `last_action_at` — displayed as "just now / Xm ago / Xh ago / date")
+- Active order count excludes `cancelled` orders and orders with `billed_at` set — only genuinely in-progress orders (not served, not cancelled, not billed) are counted toward a staff member's busy/available status
+- Orders are fetched via the `orders_waiter_id_fkey` foreign key relation to ensure only orders assigned to that waiter are included
 - Create staff: POST /api/staff/create
   → Creates Supabase Auth user with temp password
   → Creates users row (role, restaurant_id, auth_id)
@@ -762,7 +797,9 @@ WebhooksManager component
 - Staff deletion goes through `DELETE /api/staff/delete` (service role key). The `users` row is deleted first; the Supabase Auth account is then deleted best-effort. If the auth deletion fails, a warning is logged server-side but the operation still returns success — the profile row is already gone so the orphaned auth account will land on `/onboarding` if it tries to log in.
 - Staff email edits go through `PATCH /api/staff/update` (service role key). The `users` table is updated first; the Supabase Auth email is then synced best-effort. If the auth update fails it is logged server-side but the API still returns success — the staff member's login email may temporarily differ from their profile email until manually corrected.
 - The QR code URL is stored as `qr_code_url` in the `tables` table but is just a plain URL string — there is no actual QR image generation in the DB. The frontend must generate the QR image from this URL.
-- Changing `order_routing_mode` takes effect immediately for new orders only — the restaurant cache is invalidated on save so the next order picks up the new mode without waiting for the 5-minute TTL to expire. When switching to `direct_to_kitchen`, `migrate_pending_waiter_orders(restaurant_id)` is called automatically to migrate any orphaned `pending_waiter` orders to `pending` so they appear in the kitchen queue.
+- Changing `order_routing_mode` takes effect immediately for new orders only — `getRestaurant` no longer caches results, so every call fetches fresh data from the database. When switching to `direct_to_kitchen`, `migrate_pending_waiter_orders(restaurant_id)` is called automatically to migrate any orphaned `pending_waiter` orders to `pending` so they appear in the kitchen queue.
+- Changing `waiter_assignment_mode` takes effect immediately for the next order — `getRestaurant` always reads from the database directly so no cache invalidation step is required.
+- The routing mode Cancel button resets to `savedRoutingMode` (the last successfully persisted value), not `currentRoutingMode`. This ensures that cancelling an unsaved change always restores the actual saved state, even if the local state was mutated before saving.
 
 ### Shared UI Components
 
@@ -875,6 +912,7 @@ No automated payment processing — purely manual recording.
 - Billing is atomic: `BillDialog` calls `billTable(tableId, options)` — a single `bill_table` RPC that acquires row locks and bills all orders in one transaction. There is no per-order looping.
 - `total_amount` stored in the DB is the net amount after discount. The revenue dashboard (`TableSessions`) reads `total_amount` directly from the DB for billed orders — no client-side gross recomputation.
 - Session close is triggered when all **non-cancelled** orders are billed. Cancelled orders are ignored. If any pending/preparing/ready/served order remains unbilled, the session stays open.
+- Cancelled orders are also excluded when building the active session map in `TableSessions`. An unbilled cancelled order does not count toward a table's active session — a table with only cancelled orders (and no other unbilled orders) will appear as "free" rather than "active".
 - If `close_table_session()` is not called after billing, the table remains "occupied" in the Live Tables view indefinitely.
 
 ---
@@ -1751,10 +1789,17 @@ Kitchen and waiter clients (useKitchenOrders / useWaiterOrders):
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handler)
     .subscribe()
 
-On INSERT:
+On INSERT (kitchen):
   → Re-fetch single order (getKitchenOrders filtered by id) to get full joined data
   → Prepend to orders list
   → Add to newOrderIds set (4s highlight animation)
+
+On INSERT (waiter):
+  → Re-fetch single order by ID
+  → If order is assigned to another waiter → skip
+  → If order is unassigned → check table_sessions for an open session owned by another waiter
+    - If found → skip (auto-assign trigger will assign it; UPDATE event handles visibility)
+    - Otherwise → prepend to orders list
 
 On UPDATE:
   → Patch existing order status in-place
@@ -1810,7 +1855,9 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 ### Pitfalls
 
 - The kitchen and waiter real-time feeds now use `postgres_changes` only (auth-gated by RLS, requires valid session JWT). The public `.on("broadcast", ...)` handlers have been removed from `useKitchenOrders` and `useWaiterOrders`. Cross-restaurant isolation is enforced by the `restaurant_id` filter on the `postgres_changes` subscription.
-- If the Supabase Realtime connection drops, `useKitchenOrders` auto-reconnects: on `CHANNEL_ERROR` it retries after 3 s; on `CLOSED` it retries after 1 s. On successful `SUBSCRIBED`, it immediately re-fetches all orders to catch any events missed during the outage.
+- On INSERT events, `useWaiterOrders` checks `table_sessions` to see if the new unassigned order's table already has an open session owned by another waiter. If so, the order is skipped — it will be auto-assigned by the DB trigger and appear via the subsequent UPDATE event. This prevents a brief flash of the order in the "Available" section before assignment completes. The check adds one extra DB query per INSERT for unassigned orders.
+- If the Supabase Realtime connection drops, `useKitchenOrders` auto-reconnects: on `CHANNEL_ERROR` it retries after 5 s; on `CLOSED` it retries after 3 s. On successful `SUBSCRIBED`, it immediately re-fetches all orders to catch any events missed during the outage.
+- `useKitchenOrders` listens to the `visibilitychange` event. When the page becomes visible again (e.g. a tablet waking from sleep or a browser tab being foregrounded), it triggers a silent refresh to catch any orders missed while the tab was hidden. If the channel reference is gone at that point, it also increments `reconnectKey` to force a fresh subscription.
 - The `on_order_item_insert` trigger fires on the FIRST `order_items` INSERT for an order. If the batch insert fails after the first item, the broadcast fires with incomplete item data.
 - `REPLICA IDENTITY FULL` must be set on `orders`, `menu_items`, `order_items` for postgres_changes to include old row data. If not set, UPDATE events won't include the previous values.
 
@@ -1896,7 +1943,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 |---|-------|--------|-------|
 | B1 | ~~Cart items not removed when menu item deleted~~ | ~~Order fails at DB level (FK RESTRICT)~~ | **Fixed** — `useRealtimeMenu` DELETE handler calls `invalidateCartItem(itemId)` before removing from list; amber warning banner shown |
 | B2 | ~~Geo-fence blocks ordering if permission denied~~ | ~~Customer physically present but blocked~~ | **Fixed** — `geoBlocked` only triggers on `status === "denied"` (provably outside radius); `status === "error"` (permission denied) shows soft amber warning but does not block ordering |
-| B3 | ~~`tableOccupied` check has 300ms delay~~ | ~~Brief flash of normal UI~~ | **Fixed** — replaced `setTimeout(100ms)` with one-shot `useEffect` after first render cycle |
+| B3 | ~~`tableOccupied` check has 300ms delay~~ | ~~Brief flash of normal UI~~ | **Fixed** — `useCustomerSession` now exposes `sessionLoaded` (set in the same effect that reads sessionStorage); `OrderPageClient` gates the occupancy check on `sessionLoaded` instead of a one-shot `useEffect` workaround, guaranteeing `customerInfo` is correct when the check fires |
 | B4 | ~~Floor pricing silently falls back to base price~~ | ~~Customer charged wrong amount~~ | **Fixed** — fallback now fetches floor multiplier directly from DB; if that also fails, order is aborted (returns null) |
 | B5 | ~~No order cancellation for customers~~ | ~~Customer must contact staff~~ | **Fixed** — customers can cancel orders in `pending` or `pending_waiter` status via Cancel button in `OrderStatusTracker`; DB RLS policy `customers_can_cancel_pending_orders` enforces this |
 | B6 | ~~`party_size` is optional and client-validated~~ | ~~Analytics may have gaps~~ | **Fixed** — `CartDrawer` validates party_size (1–50) in `handleInfoSubmit`; DB CHECK constraint `orders_party_size_check` enforces the range |

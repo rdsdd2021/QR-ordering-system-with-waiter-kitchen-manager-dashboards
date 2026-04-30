@@ -33,14 +33,25 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
       label: "My Orders",
       emptyText: "No orders assigned to you",
       filter: (orders: any[], wId: string) =>
-        orders.filter(o => o.waiter_id === wId),
+        orders.filter(o => o.waiter_id === wId && o.status !== "cancelled"),
     },
     {
       key: "available",
-      label: isWaiterMode ? "Needs Attention" : "Ready to Serve",
-      emptyText: isWaiterMode ? "Nothing needs attention right now" : "No orders ready to serve",
+      label: isWaiterMode
+        ? (restaurant.waiter_assignment_mode === "broadcast" ? "Available to Accept" : "Needs Attention")
+        : "Ready to Serve",
+      emptyText: isWaiterMode
+        ? (restaurant.waiter_assignment_mode === "broadcast" ? "No orders waiting to be accepted" : "Nothing needs attention right now")
+        : "No orders ready to serve",
       filter: (orders: any[]) =>
-        orders.filter(o => !o.waiter_id && (o.status === "pending_waiter" || o.status === "ready")),
+        orders.filter(o =>
+          !o.waiter_id && (
+            o.status === "pending_waiter" ||
+            o.status === "ready" ||
+            // In broadcast mode, confirmed-but-unassigned orders also appear here
+            (restaurant.waiter_assignment_mode === "broadcast" && o.status === "confirmed")
+          )
+        ),
     },
   ];
 

@@ -22,6 +22,8 @@ CREATE TABLE public.restaurants (
   name                 text        NOT NULL,
   order_routing_mode   text        NOT NULL DEFAULT 'direct_to_kitchen'
                          CHECK (order_routing_mode = ANY (ARRAY['direct_to_kitchen', 'waiter_first'])),
+  waiter_assignment_mode text      NOT NULL DEFAULT 'broadcast'
+                         CHECK (waiter_assignment_mode = ANY (ARRAY['auto_assign', 'broadcast'])),
   geofencing_enabled   boolean     NOT NULL DEFAULT false,
   geo_latitude         numeric,
   geo_longitude        numeric,
@@ -36,6 +38,7 @@ CREATE TABLE public.restaurants (
 
 COMMENT ON TABLE  public.restaurants                    IS 'Registered restaurants using the QR ordering system.';
 COMMENT ON COLUMN public.restaurants.order_routing_mode IS 'Controls order routing: direct_to_kitchen (orders go straight to kitchen) or waiter_first (waiter must accept before kitchen sees it)';
+COMMENT ON COLUMN public.restaurants.waiter_assignment_mode IS 'When order_routing_mode is waiter_first: broadcast (all waiters see and race to accept) or auto_assign (system assigns to first available waiter). Defaults to broadcast.';
 COMMENT ON COLUMN public.restaurants.geofencing_enabled IS 'When true, customers must be within geo_radius_meters to place orders';
 COMMENT ON COLUMN public.restaurants.geo_latitude       IS 'Restaurant latitude for geo-fencing';
 COMMENT ON COLUMN public.restaurants.geo_longitude      IS 'Restaurant longitude for geo-fencing';

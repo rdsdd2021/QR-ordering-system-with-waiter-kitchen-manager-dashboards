@@ -79,10 +79,10 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
   async function fetchStaff() {
     const client = getSupabaseClient();
-    // Fetch users and their non-served orders separately to get accurate busy/available status
+    // Fetch users and their non-served, non-cancelled orders to get accurate busy/available status
     const { data, error } = await client
       .from('users')
-      .select(`id, name, email, role, is_active, active_orders:orders(id, status, served_at, ready_at, created_at)`)
+      .select(`id, name, email, role, is_active, active_orders:orders!orders_waiter_id_fkey(id, status, served_at, ready_at, created_at, billed_at)`)
       .eq('restaurant_id', restaurantId)
       .in('role', ['waiter', 'kitchen'])
       .order('name');
@@ -91,7 +91,10 @@ export default function StaffManager({ restaurantId }: { restaurantId: string })
 
     const mapped: StaffMember[] = (data ?? []).map((u: any) => {
       const allOrders = Array.isArray(u.active_orders) ? u.active_orders : [];
-      const activeCount = allOrders.filter((o: any) => o.status !== 'served').length;
+      // Only count orders that are genuinely active — exclude cancelled and billed
+      const activeCount = allOrders.filter(
+        (o: any) => o.status !== 'served' && o.status !== 'cancelled' && !o.billed_at
+      ).length;
       // Derive last action time from most recent order
       const timestamps = allOrders
         .map((o: any) => o.served_at ?? o.ready_at ?? o.created_at)

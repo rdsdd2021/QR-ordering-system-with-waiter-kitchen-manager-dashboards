@@ -235,6 +235,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M10 | Table setup | Must Have | Add/remove tables, set capacity, generate QR codes |
 | M11 | Staff management | Must Have | Create waiter/kitchen accounts, toggle active/inactive, delete |
 | M12 | Order routing mode | Must Have | Switch between direct-to-kitchen and waiter-first per restaurant |
+| M20 | Waiter assignment mode | Should Have | When `order_routing_mode` is `waiter_first`, controls how orders are assigned to waiters: `auto_assign` (system assigns the order to the first available waiter) or `broadcast` (all waiters see the order and the first to accept claims it). Defaults to `broadcast`. |
 | M13 | Geo-fencing settings | Nice to Have | Set restaurant coordinates + radius for customer location check |
 | M14 | Subscription management | Must Have | View current plan, upgrade/downgrade plan, apply coupon, view billing history |
 | M18 | Upgrade banner on sessions tab | Should Have | When a restaurant is not on Pro and not in a trial, an inline upgrade banner is shown at the top of the Live Tables (sessions) tab. The banner displays Pro plan features, a coupon input, dynamic pricing, and a CTA to start the 7-day free trial or upgrade directly. Hidden once the restaurant is on an active Pro subscription. |

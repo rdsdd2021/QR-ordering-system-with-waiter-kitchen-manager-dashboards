@@ -4,29 +4,7 @@
  */
 import { supabase } from "./supabase";
 
-// ── Restaurant config cache ───────────────────────────────────────────────────
-// Restaurant config (routing mode, geofencing, etc.) rarely changes.
-// Cache it in-memory for 5 minutes to avoid a DB round-trip on every order.
 
-type CachedRestaurant = { data: import("@/types/database").Restaurant; expiresAt: number };
-const _restaurantCache = new Map<string, CachedRestaurant>();
-const RESTAURANT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function getCachedRestaurant(id: string): import("@/types/database").Restaurant | null {
-  const entry = _restaurantCache.get(id);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { _restaurantCache.delete(id); return null; }
-  return entry.data;
-}
-
-function setCachedRestaurant(id: string, data: import("@/types/database").Restaurant) {
-  _restaurantCache.set(id, { data, expiresAt: Date.now() + RESTAURANT_CACHE_TTL_MS });
-}
-
-/** Call this whenever restaurant settings are updated so the cache stays fresh. */
-export function invalidateRestaurantCache(restaurantId: string) {
-  _restaurantCache.delete(restaurantId);
-}
 import type { 
   MenuItem, 
   Restaurant, 
@@ -80,18 +58,13 @@ async function triggerWebhook(
 
 /**
  * Fetch a restaurant by its ID.
- * Results are cached in-memory for 5 minutes — call invalidateRestaurantCache()
- * after any settings update to keep the cache consistent.
  */
 export async function getRestaurant(
   restaurantId: string
 ): Promise<Restaurant | null> {
-  const cached = getCachedRestaurant(restaurantId);
-  if (cached) return cached;
-
   const { data, error } = await supabase
     .from("restaurants")
-    .select("id, name, slug, logo_url, is_active, order_routing_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters, auto_confirm_minutes")
+    .select("id, name, slug, logo_url, is_active, order_routing_mode, waiter_assignment_mode, geofencing_enabled, geo_latitude, geo_longitude, geo_radius_meters, auto_confirm_minutes")
     .eq("id", restaurantId)
     .maybeSingle(); // maybeSingle returns null instead of error when 0 rows found
 
@@ -99,7 +72,6 @@ export async function getRestaurant(
     console.error("Error fetching restaurant:", error.message, error.code);
     return null;
   }
-  if (data) setCachedRestaurant(restaurantId, data as Restaurant);
   return data as Restaurant | null;
 }
 
@@ -604,6 +576,7 @@ export async function getWaiterOrders(
       )
       .eq("restaurant_id", restaurantId)
       .neq("status", "served")
+      .neq("status", "cancelled")
       .order("created_at", { ascending: false });
     if (error) { console.error("Error fetching waiter orders:", error.message); return []; }
     return (data ?? []) as unknown as WaiterOrder[];
@@ -622,6 +595,7 @@ export async function getWaiterOrders(
 
   // 2. Build the order query
   //    Show: orders assigned to me  OR  unassigned orders on unlocked tables
+  //    Never show cancelled or served orders.
   let query = supabase
     .from("orders")
     .select(
@@ -631,19 +605,20 @@ export async function getWaiterOrders(
        order_items(id, quantity, price, menu_item:menu_items(name))`
     )
     .eq("restaurant_id", restaurantId)
-    .neq("status", "served");
+    .neq("status", "served")
+    .neq("status", "cancelled");
 
   if (lockedTableIds.length > 0) {
     // Assigned to me  OR  (unassigned AND not on a locked table AND right status)
     query = query.or(
       `waiter_id.eq.${waiterId},` +
-      `and(waiter_id.is.null,status.in.(pending_waiter,ready),table_id.not.in.(${lockedTableIds.join(",")}))`
+      `and(waiter_id.is.null,status.in.(pending_waiter,confirmed,ready),table_id.not.in.(${lockedTableIds.join(",")}))`
     );
   } else {
-    // No locked tables — show mine + all unassigned pending_waiter/ready
+    // No locked tables — show mine + all unassigned pending_waiter/confirmed/ready
     query = query.or(
       `waiter_id.eq.${waiterId},` +
-      `and(waiter_id.is.null,status.in.(pending_waiter,ready))`
+      `and(waiter_id.is.null,status.in.(pending_waiter,confirmed,ready))`
     );
   }
 
@@ -1310,9 +1285,6 @@ export async function updateRestaurantRoutingMode(
     return false;
   }
 
-  // Invalidate cache so next order picks up the new routing mode immediately
-  invalidateRestaurantCache(restaurantId);
-
   // C2: Migrate orphaned pending_waiter orders when switching to direct_to_kitchen
   if (routingMode === "direct_to_kitchen") {
     const { error: migrateError } = await supabase.rpc("migrate_pending_waiter_orders", {
@@ -1360,8 +1332,6 @@ export async function updateRestaurantDetails(
     console.error("Error updating restaurant details:", error.message);
     return { success: false, error: error.message };
   }
-  // Invalidate cache so the updated name/slug is reflected immediately
-  invalidateRestaurantCache(restaurantId);
   return { success: true };
 }
 

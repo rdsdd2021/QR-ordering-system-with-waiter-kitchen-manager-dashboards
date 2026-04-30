@@ -11,7 +11,7 @@ import { useKitchenOrders } from "@/hooks/useKitchenOrders";
 import { useNotificationSounds } from "@/hooks/useNotificationSounds";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 type Props = {
   restaurant: Restaurant;
@@ -32,6 +32,15 @@ function KitchenClientContent({ restaurant }: Props) {
   const { orders, loading, error, isConnected, advanceStatus, rejectOrder, newOrderIds, refetch } =
     useKitchenOrders(restaurant.id, notify);
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Safety-net poll: silently re-fetch every 30s in case realtime missed an event.
+  // This is a last resort — realtime handles the real-time updates.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refetch();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [refetch]);
 
   async function markAllReady() {
     const preparing = orders.filter((o) => o.status === "preparing");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell, AlertTriangle } from "lucide-react";
 import { useCart } from "@/hooks/useCart";
 import { useRealtimeMenu } from "@/hooks/useRealtimeMenu";
@@ -52,29 +52,12 @@ export default function OrderPageClient({
     handleItemInvalidated,
   );
 
-  const { customerInfo, saveCustomerInfo, activeOrders, refetchOrders } = useCustomerSession(
+  const { customerInfo, saveCustomerInfo, activeOrders, refetchOrders, sessionLoaded } = useCustomerSession(
     restaurant.id,
     table.id
   );
 
   // ── Table occupancy check ────────────────────────────────────────────
-  // B3 fix: use a ref to track whether useCustomerSession has initialised
-  // instead of a fixed 100ms timeout. We know it's ready once the effect
-  // that reads sessionStorage has run — which happens synchronously on
-  // mount in the same microtask queue. We use a one-shot useEffect with
-  // no deps to flip the flag after the first render cycle completes.
-  const [sessionLoaded, setSessionLoaded] = useState(false);
-  const sessionLoadedRef = useRef(false);
-
-  useEffect(() => {
-    // This runs after the first render, by which point useCustomerSession
-    // has already read sessionStorage and set customerInfo.
-    if (!sessionLoadedRef.current) {
-      sessionLoadedRef.current = true;
-      setSessionLoaded(true);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [tableOccupied, setTableOccupied] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -159,9 +142,9 @@ export default function OrderPageClient({
     setActiveTab("orders");
   }
 
-  // Active orders badge count — orders not yet served
+  // Active orders badge count — orders not yet served or cancelled
   const inProgressCount = activeOrders.filter(
-    (o) => !["served"].includes(o.status)
+    (o) => !["served", "cancelled"].includes(o.status)
   ).length;
 
   // ── Call Waiter ──────────────────────────────────────────────────────

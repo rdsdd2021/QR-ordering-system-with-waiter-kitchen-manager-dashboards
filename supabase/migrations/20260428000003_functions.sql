@@ -291,6 +291,7 @@ BEGIN
       SELECT 1 FROM orders
       WHERE table_id = p_table_id
         AND billed_at IS NULL
+        AND status    != 'cancelled'
     );
   END IF;
 
@@ -298,7 +299,9 @@ BEGIN
     SELECT 1 FROM orders
     WHERE table_id = p_table_id
       AND billed_at IS NULL
+      AND status    != 'cancelled'
       AND (
+
         customer_phone IS NULL
         OR customer_phone != p_customer_phone
       )
@@ -333,6 +336,7 @@ BEGIN
   FROM orders o
   WHERE o.table_id = p_table_id
     AND o.billed_at IS NULL
+    AND o.status   != 'cancelled'
   ORDER BY o.created_at DESC;
 END;
 $$;

@@ -9,6 +9,7 @@ export type Restaurant = {
   slug?: string | null;
   is_active?: boolean;
   order_routing_mode?: 'direct_to_kitchen' | 'waiter_first';
+  waiter_assignment_mode?: 'auto_assign' | 'broadcast';
   geofencing_enabled?: boolean;
   geo_latitude?: number | null;
   geo_longitude?: number | null;

@@ -96,6 +96,8 @@ END;
 $$;
 
 -- ── D4: bill_table — atomic per-table billing ─────────────────────────────────
+-- Fix: FOR UPDATE cannot be used with aggregate functions (array_agg).
+-- Solution: lock rows in a subquery first, then aggregate the IDs.
 CREATE OR REPLACE FUNCTION public.bill_table(
   p_table_id        uuid,
   p_payment_method  text    DEFAULT NULL,
@@ -121,55 +123,115 @@ BEGIN
     RAISE EXCEPTION 'Invalid payment method: %', p_payment_method;
   END IF;
 
+  -- Lock rows in a subquery, then aggregate — FOR UPDATE is not allowed
+  -- directly alongside aggregate functions like array_agg().
   SELECT array_agg(id) INTO v_order_ids
-  FROM public.orders
-  WHERE table_id = p_table_id AND billed_at IS NULL AND status NOT IN ('cancelled')
-  FOR UPDATE;
+  FROM (
+    SELECT id
+    FROM public.orders
+    WHERE table_id = p_table_id
+      AND billed_at IS NULL
+      AND status NOT IN ('cancelled')
+    FOR UPDATE
+  ) locked_rows;
 
   IF v_order_ids IS NULL OR array_length(v_order_ids, 1) = 0 THEN
-    RETURN jsonb_build_object('success',true,'billed_count',0,'skipped_count',0,'gross_total',0,'net_total',0,'orders','[]'::jsonb);
+    -- No billable orders remain — but the session may still be open if every
+    -- order was cancelled. Close it so the table is freed.
+    UPDATE public.table_sessions
+    SET closed_at = now()
+    WHERE table_id  = p_table_id
+      AND closed_at IS NULL;
+
+    RETURN jsonb_build_object(
+      'success',      true,
+      'billed_count', 0,
+      'skipped_count',0,
+      'gross_total',  0,
+      'net_total',    0,
+      'orders',       '[]'::jsonb
+    );
   END IF;
 
+  -- First pass: compute gross total for discount proration
   FOR v_order IN
     SELECT id, status, public.calculate_order_total(id) AS order_total
     FROM public.orders WHERE id = ANY(v_order_ids)
   LOOP
-    IF v_order.status = 'served' OR (p_force AND v_order.status IN ('pending','pending_waiter','confirmed','preparing','ready')) THEN
+    IF v_order.status = 'served'
+       OR (p_force AND v_order.status IN ('pending','pending_waiter','confirmed','preparing','ready'))
+    THEN
       v_gross_total := v_gross_total + v_order.order_total;
     END IF;
   END LOOP;
 
+  -- Second pass: bill each order
   FOR v_order IN
     SELECT id, status, public.calculate_order_total(id) AS order_total
     FROM public.orders WHERE id = ANY(v_order_ids) ORDER BY created_at
   LOOP
     IF v_order.status != 'served' THEN
       IF p_force AND v_order.status IN ('pending','pending_waiter','confirmed','preparing','ready') THEN
-        UPDATE public.orders SET status='served', served_at=COALESCE(served_at,now()) WHERE id=v_order.id;
+        UPDATE public.orders
+        SET status = 'served', served_at = COALESCE(served_at, now())
+        WHERE id = v_order.id;
       ELSE
         v_skipped_count := v_skipped_count + 1;
-        v_results := v_results || jsonb_build_array(jsonb_build_object('order_id',v_order.id,'skipped',true,'reason','not_served'));
+        v_results := v_results || jsonb_build_array(
+          jsonb_build_object('order_id', v_order.id, 'skipped', true, 'reason', 'not_served')
+        );
         CONTINUE;
       END IF;
     END IF;
 
-    v_order_share := CASE WHEN v_gross_total > 0 THEN ROUND((v_order.order_total/v_gross_total)*p_discount_amount,2) ELSE 0 END;
+    v_order_share := CASE
+      WHEN v_gross_total > 0
+        THEN ROUND((v_order.order_total / v_gross_total) * p_discount_amount, 2)
+      ELSE 0
+    END;
     v_net := GREATEST(v_order.order_total - v_order_share, 0);
 
     UPDATE public.orders
-    SET total_amount=v_net, billed_at=now(), payment_method=p_payment_method,
-        discount_amount=v_order_share, discount_note=p_discount_note
-    WHERE id=v_order.id;
+    SET
+      total_amount    = v_net,
+      billed_at       = now(),
+      payment_method  = p_payment_method,
+      discount_amount = v_order_share,
+      discount_note   = p_discount_note
+    WHERE id = v_order.id;
 
     v_billed_count := v_billed_count + 1;
-    v_results := v_results || jsonb_build_array(jsonb_build_object('order_id',v_order.id,'skipped',false,'gross',v_order.order_total,'discount',v_order_share,'net',v_net));
+    v_results := v_results || jsonb_build_array(
+      jsonb_build_object(
+        'order_id', v_order.id,
+        'skipped',  false,
+        'gross',    v_order.order_total,
+        'discount', v_order_share,
+        'net',      v_net
+      )
+    );
   END LOOP;
 
-  IF NOT EXISTS (SELECT 1 FROM public.orders WHERE table_id=p_table_id AND billed_at IS NULL AND status NOT IN ('cancelled')) THEN
-    UPDATE public.table_sessions SET closed_at=now() WHERE table_id=p_table_id AND closed_at IS NULL;
+  -- Close session if all orders are now billed
+  IF NOT EXISTS (
+    SELECT 1 FROM public.orders
+    WHERE table_id = p_table_id
+      AND billed_at IS NULL
+      AND status NOT IN ('cancelled')
+  ) THEN
+    UPDATE public.table_sessions
+    SET closed_at = now()
+    WHERE table_id = p_table_id AND closed_at IS NULL;
   END IF;
 
-  RETURN jsonb_build_object('success',true,'billed_count',v_billed_count,'skipped_count',v_skipped_count,'gross_total',v_gross_total,'net_total',GREATEST(v_gross_total-p_discount_amount,0),'orders',v_results);
+  RETURN jsonb_build_object(
+    'success',      true,
+    'billed_count', v_billed_count,
+    'skipped_count',v_skipped_count,
+    'gross_total',  v_gross_total,
+    'net_total',    GREATEST(v_gross_total - p_discount_amount, 0),
+    'orders',       v_results
+  );
 END;
 $$;
 

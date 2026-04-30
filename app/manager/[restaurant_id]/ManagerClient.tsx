@@ -55,7 +55,7 @@ function buildNavGroups(pendingCount: number, onOrdersBadgeClick: () => void): N
       items: [
         { key: "menu",       label: "Menu",        icon: UtensilsCrossed },
         { key: "categories", label: "Categories",  icon: Tags            },
-        { key: "floors",     label: "Tables",      icon: Table2          },
+        { key: "floors",     label: "Floors",      icon: Table2          },
       ],
     },
     {
@@ -85,7 +85,7 @@ const PAGE_META: Record<Tab, { title: string; description: string }> = {
   analytics:  { title: "Analytics",          description: "Sales and performance metrics" },
   menu:       { title: "Menu",               description: "Manage your menu items and availability" },
   categories: { title: "Categories",         description: "Organize items into categories and tags" },
-  floors:     { title: "Tables",             description: "Floor plan and table management" },
+  floors:     { title: "Floors",             description: "Manage floors and table layout" },
   staff:      { title: "Staff",              description: "Manage your team accounts" },
   tables:     { title: "Table Setup",        description: "Configure tables and generate QR codes" },
   details:    { title: "Restaurant Details", description: "Edit your restaurant profile" },
@@ -252,6 +252,7 @@ function ManagerClientContent({ restaurant }: Props) {
             <SettingsPanel
               restaurantId={restaurant.id}
               currentRoutingMode={restaurant.order_routing_mode || "direct_to_kitchen"}
+              currentAssignmentMode={restaurant.waiter_assignment_mode || "auto_assign"}
               geofencingEnabled={restaurant.geofencing_enabled ?? false}
               geoLatitude={restaurant.geo_latitude ?? null}
               geoLongitude={restaurant.geo_longitude ?? null}

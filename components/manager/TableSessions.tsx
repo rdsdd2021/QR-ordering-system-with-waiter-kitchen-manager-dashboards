@@ -190,6 +190,9 @@ async function fetchData(restaurantId: string) {
       party_size: o.party_size, order_total: orderTotal, items,
     };
     const isBilled = !!o.billed_at;
+    // Cancelled orders are never billed — exclude them from the active session
+    // map so a table with only cancelled orders doesn't appear as Active.
+    if (!isBilled && o.status === "cancelled") continue;
     const sessionKey = isBilled
       ? `${tableId}-${new Date(o.billed_at).toISOString().split("T")[0]}`
       : tableId;
