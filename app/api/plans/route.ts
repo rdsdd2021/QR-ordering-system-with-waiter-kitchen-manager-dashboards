@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// Cache plans for 60s — they change rarely
-export const revalidate = 60;
+// Force dynamic so Next.js doesn't try to prerender this route at build time
+export const dynamic = "force-dynamic";
 
 function getServiceClient() {
   return createClient(
