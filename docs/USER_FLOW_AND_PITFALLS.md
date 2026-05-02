@@ -781,7 +781,7 @@ TablesManager component
 - Plan limit enforced via useSubscription(restaurantId):
     atLimit = !isPro && tables.length >= limits.max_tables
     → "Add Table" button disabled and UpgradeBanner shown when atLimit is true
-    → Free plan: max_tables=5; Pro/trialing: unlimited
+    → Trialing plan: max_tables=5; Pro: unlimited
 ```
 
 ### Restaurant Group
@@ -1130,7 +1130,7 @@ useSubscription(restaurantId):
      When a webhook (Stripe/PhonePe) updates the row, the hook updates state immediately
      without a page reload. Channel is removed on unmount.
   └─ get_plan_limits() RPC returns: { max_tables, max_menu_items }
-  └─ Free: max_tables=5, max_menu_items=20
+  └─ Trialing: max_tables=5, max_menu_items=20
   └─ Pro: max_tables=null (unlimited), max_menu_items=null
   └─ Returns: { isPro, isTrial, isActive, isExpired, trialEndsAt, subscription, limits, startUpgrade }
     - isActive: true when subscription.status === 'active' (paid, not trialing)
@@ -1155,7 +1155,7 @@ Manager dashboard header displays a plan label and renewal info derived from use
   - isTrial=true     → label: "Free Trial",     renewal: "Trial ends <date>" (from trialEndsAt)
   - isPro=true       → label: "Pro Plan",        renewal: formatted current_period_end
   - isExpired=true   → label: "Trial Expired",   renewal: none
-  - otherwise        → label: "Free Plan",        renewal: none
+  - otherwise        → label: "Trialing",        renewal: none
 ```
 
 ### Pitfalls

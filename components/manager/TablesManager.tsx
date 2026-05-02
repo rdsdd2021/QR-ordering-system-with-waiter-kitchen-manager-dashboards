@@ -370,7 +370,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
         <Button
           onClick={() => openDialog()}
           disabled={atLimit}
-          title={atLimit ? `Free plan limit reached (${limits.max_tables} tables). Upgrade to Pro for unlimited tables.` : undefined}
+          title={atLimit ? `Trial limit reached (${limits.max_tables} tables). Upgrade to Pro for unlimited tables.` : undefined}
         >
           {atLimit ? <><Lock className="h-4 w-4 mr-2" />Limit Reached</> : 'Add Table'}
         </Button>
@@ -379,7 +379,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
       {atLimit && (
         <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2 mb-6">
           <Lock className="h-4 w-4 shrink-0" />
-          Free plan is limited to {limits.max_tables} tables. Upgrade to Pro for unlimited tables.
+          Your trial is limited to {limits.max_tables} tables. Upgrade to Pro for unlimited tables.
         </div>
       )}
 

@@ -8,13 +8,14 @@
  *   - 10 orders per minute per table (prevents spam)
  *   - 30 orders per hour per IP (prevents cross-table abuse)
  *
- * The actual order logic delegates to placeOrder() in lib/api.ts
- * which runs with the anon key (respects RLS).
+ * Order creation is delegated to the place_order_atomic RPC which:
+ *   - Fetches prices server-side from menu_items (QW-2)
+ *   - Snapshots item names at insert time (QW-4)
+ *   - Runs all inserts in a single atomic transaction (QW-11)
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { createClient } from "@supabase/supabase-js";
-import type { OrderStatus } from "@/types/database";
 
 // ── Rate limiters ─────────────────────────────────────────────────────────────
 // Per table: 10 orders / minute — prevents a single table from spamming
@@ -101,103 +102,44 @@ export async function POST(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // Check for unpaid orders and fetch restaurant config in parallel
-  const [hasConflict, restaurantRes] = await Promise.all([
-    supabase.rpc("check_table_has_unpaid_orders", {
-      p_table_id: tableId,
-      p_customer_phone: customerPhone?.trim() || null,
-    }),
-    supabase
-      .from("restaurants")
-      .select("id, order_routing_mode")
-      .eq("id", restaurantId)
-      .maybeSingle(),
-  ]);
+  // Check for unpaid orders at this table
+  const hasConflict = await supabase.rpc("check_table_has_unpaid_orders", {
+    p_table_id: tableId,
+    p_customer_phone: customerPhone?.trim() || null,
+  });
 
   if (hasConflict.data === true) {
     return NextResponse.json({ result: "UNPAID_ORDERS_EXIST" });
   }
 
-  if (!restaurantRes.data) {
-    return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
+  // TODO QW-6: Add quantity validation here (task 8.1)
+  // QW-6: Validate each item's quantity — must be an integer in [1, 99]
+  for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) {
+      return NextResponse.json(
+        { error: "Each item quantity must be an integer between 1 and 99" },
+        { status: 400 }
+      );
+    }
   }
 
-  const routingMode = restaurantRes.data.order_routing_mode || "direct_to_kitchen";
-  const initialStatus: OrderStatus = routingMode === "waiter_first" ? "pending_waiter" : "pending";
+  // ── Single atomic RPC — fetches prices from DB, snapshots names, atomic tx ─
+  // Note: item.price from the request body is intentionally NOT passed to the
+  // RPC — the RPC fetches actual prices from menu_items server-side (QW-2).
+  const { data: orderId, error: rpcError } = await supabase.rpc("place_order_atomic", {
+    p_restaurant_id: restaurantId,
+    p_table_id: tableId,
+    p_items: JSON.stringify(
+      items.map((i) => ({ menu_item_id: i.menu_item_id, quantity: i.quantity }))
+    ),
+    p_customer_name: customerName?.trim() || null,
+    p_customer_phone: customerPhone?.trim() || null,
+    p_party_size: partySize || null,
+  });
 
-  // Insert order
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      restaurant_id: restaurantId,
-      table_id: tableId,
-      status: initialStatus,
-      customer_name: customerName?.trim() || null,
-      customer_phone: customerPhone?.trim() || null,
-      party_size: partySize || null,
-    })
-    .select("id")
-    .maybeSingle();
-
-  if (orderError || !order) {
-    console.error("[api/orders] order insert error:", orderError?.message);
+  if (rpcError || !orderId) {
+    console.error("[api/orders] place_order_atomic error:", rpcError?.message);
     return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
-  }
-
-  const orderId = (order as { id: string }).id;
-
-  // Calculate prices with floor multiplier
-  const { data: pricedItems, error: priceError } = await supabase.rpc(
-    "calculate_item_prices_batch",
-    {
-      p_items: items.map((item) => ({
-        menu_item_id: item.menu_item_id,
-        quantity: item.quantity,
-        base_price: item.price,
-      })),
-      p_table_id: tableId,
-    }
-  );
-
-  let orderItems: { order_id: string; menu_item_id: string; quantity: number; price: number }[];
-
-  if (priceError || !pricedItems) {
-    // Fallback: fetch floor multiplier directly
-    let multiplier = 1.0;
-    try {
-      const { data: floorRow } = await supabase
-        .from("tables")
-        .select("floor:floors(price_multiplier)")
-        .eq("id", tableId)
-        .maybeSingle();
-      const floor = (Array.isArray(floorRow?.floor) ? floorRow.floor[0] : floorRow?.floor) as
-        | { price_multiplier: number }
-        | null
-        | undefined;
-      if (floor?.price_multiplier) multiplier = floor.price_multiplier;
-    } catch {
-      console.error("[api/orders] Could not fetch floor multiplier — aborting");
-      return NextResponse.json({ error: "Pricing error" }, { status: 500 });
-    }
-    orderItems = items.map((item) => ({
-      order_id: orderId,
-      menu_item_id: item.menu_item_id,
-      quantity: item.quantity,
-      price: Math.round(item.price * multiplier * 100) / 100,
-    }));
-  } else {
-    orderItems = (pricedItems as { menu_item_id: string; final_price: number }[]).map((p, i) => ({
-      order_id: orderId,
-      menu_item_id: p.menu_item_id,
-      quantity: items[i].quantity,
-      price: p.final_price,
-    }));
-  }
-
-  const { error: itemsError } = await supabase.from("order_items").insert(orderItems);
-  if (itemsError) {
-    console.error("[api/orders] order_items insert error:", itemsError.message);
-    return NextResponse.json({ error: "Failed to add order items" }, { status: 500 });
   }
 
   return NextResponse.json({ result: orderId });

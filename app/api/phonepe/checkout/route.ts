@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
     if (existingSub?.status !== "trialing") {
       await supabase.from("subscriptions").upsert({
         restaurant_id:          restaurantId,
-        plan:                   "free",
+        plan:                   "trialing",
         status:                 "incomplete",
         phonepe_transaction_id: merchantOrderId,
         pending_coupon_id:      couponDbId ?? null,

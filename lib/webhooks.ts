@@ -264,6 +264,58 @@ async function deliverToEndpoint(
   }
 }
 
+// ── Webhook signature verification utility (for consumers) ───────────────────
+
+/**
+ * Verifies an incoming webhook request from this system.
+ * Webhook consumers (restaurant integrations) can use this to validate
+ * that requests are genuine and not replayed.
+ *
+ * Checks:
+ *  1. X-Webhook-Timestamp header is present
+ *  2. Timestamp is within ±5 minutes of now (replay protection)
+ *  3. HMAC-SHA256 signature matches X-Webhook-Signature header
+ *
+ * @param secret   - The endpoint secret (whsec_... value)
+ * @param body     - The raw request body string
+ * @param headers  - Request headers as a plain object (case-insensitive keys supported)
+ */
+export async function verifyWebhookSignature(
+  secret: string,
+  body: string,
+  headers: Record<string, string>,
+): Promise<{ valid: boolean; reason?: string }> {
+  // Normalise header keys to lowercase for case-insensitive lookup
+  const h: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    h[k.toLowerCase()] = v;
+  }
+
+  const timestamp = h["x-webhook-timestamp"];
+  if (!timestamp) {
+    return { valid: false, reason: "Missing timestamp" };
+  }
+
+  const tsMs = new Date(timestamp).getTime();
+  if (isNaN(tsMs)) {
+    return { valid: false, reason: "Invalid timestamp format" };
+  }
+
+  const ageSeconds = Math.abs(Date.now() - tsMs) / 1000;
+  if (ageSeconds > 300) {
+    return { valid: false, reason: "Timestamp too old or too far in future" };
+  }
+
+  const expectedSig = await signPayload(secret, body, timestamp);
+  const providedSig = (h["x-webhook-signature"] ?? "").replace(/^sha256=/, "");
+
+  if (providedSig !== expectedSig) {
+    return { valid: false, reason: "Invalid signature" };
+  }
+
+  return { valid: true };
+}
+
 // ── Retry a specific delivery ─────────────────────────────────────────────────
 
 export async function retryDelivery(deliveryId: string): Promise<{ ok: boolean; error?: string }> {
@@ -279,6 +331,15 @@ export async function retryDelivery(deliveryId: string): Promise<{ ok: boolean; 
   if (delivery.attempt >= delivery.max_attempts) return { ok: false, error: "Max retry attempts reached" };
 
   const ep = delivery.endpoint as { url: string; secret: string; is_active: boolean; failure_count: number };
+
+  // QW-9: Skip retry for inactive endpoints — mark dead and return early
+  if (!ep.is_active) {
+    await supabase.from("webhook_deliveries").update({
+      status: "dead",
+      error_message: "Endpoint is inactive",
+    }).eq("id", deliveryId);
+    return { ok: false, error: "Endpoint is inactive" };
+  }
 
   const result = await dispatchToUrl(ep.url, ep.secret, delivery.payload as WebhookPayload);
   const newAttempt = delivery.attempt + 1;

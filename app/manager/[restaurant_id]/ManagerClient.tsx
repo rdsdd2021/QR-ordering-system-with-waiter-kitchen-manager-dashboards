@@ -24,7 +24,8 @@ import WebhooksManager from "@/components/manager/WebhooksManager";
 import CategoryTagManager from "@/components/manager/CategoryTagManager";
 import BillingPanel from "@/components/manager/BillingPanel";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import { Zap, Lock } from "lucide-react";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { Zap, Lock, AlertTriangle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/lib/supabase";
@@ -131,6 +132,7 @@ function ManagerClientContent({ restaurant }: Props) {
     (searchParams.get("tab") as Tab) ?? "sessions"
   );
   const [billReadyFilter, setBillReadyFilter] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   function handleTabChange(tab: Tab) {
     setActiveTab(tab);
@@ -141,6 +143,13 @@ function ManagerClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
   const { isPro, isTrial, isExpired, trialEndsAt, subscription } = useSubscription(restaurant.id);
   const meta = PAGE_META[activeTab];
+
+  // Compute days until subscription expiry for the renewal warning banner
+  const daysUntilExpiry: number | null = (() => {
+    if (!subscription?.current_period_end) return null;
+    const msLeft = new Date(subscription.current_period_end).getTime() - Date.now();
+    return Math.ceil(msLeft / (1000 * 60 * 60 * 24));
+  })();
 
   // Live pending order count for the Orders nav badge
   const [pendingCount, setPendingCount] = useState(0);
@@ -211,6 +220,31 @@ function ManagerClientContent({ restaurant }: Props) {
       maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : activeTab === "billing" ? "2xl" : "xl"}
       mobileNav={<MobileBottomNav activeTab={activeTab} onNavigate={handleTabChange} navGroups={navGroups} />}
     >
+      {/* Expiry warning banner — shown when Pro subscription expires within 7 days */}
+      {isPro && !isExpired && !bannerDismissed && daysUntilExpiry !== null && daysUntilExpiry <= 7 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 mb-4 text-sm text-amber-800 dark:text-amber-300">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              Your Pro subscription expires in {daysUntilExpiry} day{daysUntilExpiry !== 1 ? "s" : ""}.{" "}
+              <button
+                onClick={() => handleTabChange("billing")}
+                className="underline underline-offset-2 font-medium hover:text-amber-900 dark:hover:text-amber-200 transition-colors"
+              >
+                Go to Billing to renew.
+              </button>
+            </span>
+          </div>
+          <button
+            onClick={() => setBannerDismissed(true)}
+            aria-label="Dismiss expiry warning"
+            className="shrink-0 rounded p-0.5 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Expired paywall — only Billing and Restaurant Details remain accessible */}
       {isExpired && activeTab !== "billing" && activeTab !== "details" ? (
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center gap-6 px-4">
@@ -231,36 +265,42 @@ function ManagerClientContent({ restaurant }: Props) {
       ) : (
         <>
           {activeTab === "sessions"   && (
-            <TableSessions
-              restaurantId={restaurant.id}
-              billReadyFilter={billReadyFilter}
-              onBillReadyFilterClear={() => setBillReadyFilter(false)}
-            />
+            <ErrorBoundary label="Dashboard">
+              <TableSessions
+                restaurantId={restaurant.id}
+                billReadyFilter={billReadyFilter}
+                onBillReadyFilterClear={() => setBillReadyFilter(false)}
+              />
+            </ErrorBoundary>
           )}
-          {activeTab === "orderlog"   && <OrderLog restaurantId={restaurant.id} />}
-          {activeTab === "analytics"  && <Analytics restaurantId={restaurant.id} />}
-          {activeTab === "menu"       && <MenuManager restaurantId={restaurant.id} />}
-          {activeTab === "categories" && <CategoryTagManager restaurantId={restaurant.id} />}
-          {activeTab === "floors"     && <FloorsManager restaurantId={restaurant.id} />}
-          {activeTab === "staff"      && <StaffManager restaurantId={restaurant.id} />}
-          {activeTab === "tables"     && <TablesManager restaurantId={restaurant.id} restaurantName={restaurant.name} />}
-          {activeTab === "details"    && <RestaurantDetails restaurant={restaurant} />}
+          {activeTab === "orderlog"   && <ErrorBoundary label="Orders"><OrderLog restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "analytics"  && <ErrorBoundary label="Analytics"><Analytics restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "menu"       && <ErrorBoundary label="Menu"><MenuManager restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "categories" && <ErrorBoundary label="Categories"><CategoryTagManager restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "floors"     && <ErrorBoundary label="Floors"><FloorsManager restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "staff"      && <ErrorBoundary label="Staff"><StaffManager restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "tables"     && <ErrorBoundary label="Table Setup"><TablesManager restaurantId={restaurant.id} restaurantName={restaurant.name} /></ErrorBoundary>}
+          {activeTab === "details"    && <ErrorBoundary label="Restaurant Details"><RestaurantDetails restaurant={restaurant} /></ErrorBoundary>}
           {activeTab === "billing"    && (
-            <BillingPanel restaurantId={restaurant.id} restaurantName={restaurant.name} />
+            <ErrorBoundary label="Billing">
+              <BillingPanel restaurantId={restaurant.id} restaurantName={restaurant.name} />
+            </ErrorBoundary>
           )}
           {activeTab === "settings"   && (
-            <SettingsPanel
-              restaurantId={restaurant.id}
-              currentRoutingMode={restaurant.order_routing_mode || "direct_to_kitchen"}
-              currentAssignmentMode={restaurant.waiter_assignment_mode || "auto_assign"}
-              geofencingEnabled={restaurant.geofencing_enabled ?? false}
-              geoLatitude={restaurant.geo_latitude ?? null}
-              geoLongitude={restaurant.geo_longitude ?? null}
-              geoRadiusMeters={restaurant.geo_radius_meters ?? 100}
-              autoConfirmMinutes={restaurant.auto_confirm_minutes ?? null}
-            />
+            <ErrorBoundary label="Settings">
+              <SettingsPanel
+                restaurantId={restaurant.id}
+                currentRoutingMode={restaurant.order_routing_mode || "direct_to_kitchen"}
+                currentAssignmentMode={restaurant.waiter_assignment_mode || "auto_assign"}
+                geofencingEnabled={restaurant.geofencing_enabled ?? false}
+                geoLatitude={restaurant.geo_latitude ?? null}
+                geoLongitude={restaurant.geo_longitude ?? null}
+                geoRadiusMeters={restaurant.geo_radius_meters ?? 100}
+                autoConfirmMinutes={restaurant.auto_confirm_minutes ?? null}
+              />
+            </ErrorBoundary>
           )}
-          {activeTab === "webhooks"   && <WebhooksManager restaurantId={restaurant.id} />}
+          {activeTab === "webhooks"   && <ErrorBoundary label="Integrations"><WebhooksManager restaurantId={restaurant.id} /></ErrorBoundary>}
         </>
       )}
     </DashboardShell>

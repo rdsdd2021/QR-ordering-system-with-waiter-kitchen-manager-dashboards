@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import path from "path";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   turbopack: {
@@ -32,4 +33,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  silent: true,
+  org: "",
+  project: "",
+});

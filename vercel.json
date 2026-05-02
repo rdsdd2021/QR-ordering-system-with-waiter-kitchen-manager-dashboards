@@ -1,1 +1,6 @@
-{}
+{
+  "crons": [
+    { "path": "/api/cron/audit-log-purge", "schedule": "0 2 * * *" },
+    { "path": "/api/cron/webhook-retries", "schedule": "0 2 * * *" }
+  ]
+}

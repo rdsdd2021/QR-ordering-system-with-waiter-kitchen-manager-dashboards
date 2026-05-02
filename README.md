@@ -293,7 +293,7 @@ All tables have RLS enabled. The live database currently holds 16 restaurants, 8
 
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| subscriptions | id, restaurant_id, plan, status, phonepe_transaction_id, current_period_end, trial_used, pending_coupon_id | plan: free or pro. status: active, trialing, past_due, canceled, incomplete |
+| subscriptions | id, restaurant_id, plan, status, phonepe_transaction_id, current_period_end, trial_used, pending_coupon_id | plan: trialing or pro. status: active, trialing, past_due, canceled, incomplete |
 | plans | id, name, tagline, monthly_paise, yearly_paise, features[], unavailable[], is_active, is_highlighted, cta, sort_order | Admin-managed. cta: choose, contact, or downgrade_unsupported |
 | payment_transactions | id, restaurant_id, merchant_order_id, plan, amount_paise, status, coupon_code, coupon_duration_days | One row per PhonePe checkout attempt |
 | coupons | id, code, type, value, max_uses, used_count, expires_at, is_active, applicable_plans[], duration_days | type: percentage or flat |
@@ -330,7 +330,7 @@ any active     ─────────────────────�
 
 | Plan | Max tables | Max menu items | Analytics | Advanced features |
 |------|-----------|----------------|-----------|-------------------|
-| free | 5 | 20 | No | No |
+| trialing | 5 | 20 | No | No |
 | pro | 999 | 999 | Yes | Yes |
 
 ---
@@ -397,7 +397,7 @@ All /api/admin/* routes use SUPABASE_SERVICE_ROLE_KEY which bypasses RLS entirel
 | validate_coupon(code, plan, restaurant_id) | jsonb | Validates coupon: active, not expired, usage limit, plan match, per-restaurant reuse. Normalizes pro_monthly/pro_yearly to pro |
 | record_coupon_usage(coupon_id, restaurant_id) | boolean | Atomically records coupon use with advisory lock. Idempotent via ON CONFLICT DO NOTHING |
 | get_analytics_summary(restaurant_id, range_start, range_end, prev_start, prev_end) | jsonb | Single RPC returning all analytics: curr_sales, prev_sales, top_items, daily_data, waiter_stats, payment_split, status_counts, hourly_traffic |
-| get_restaurant_plan(restaurant_id) | text | Returns current plan (free or pro) for a restaurant |
+| get_restaurant_plan(restaurant_id) | text | Returns current plan (trialing or pro) for a restaurant |
 | get_plan_limits(plan) | jsonb | Returns max_tables, max_menu_items, analytics, advanced_features for a plan |
 | search_audit_logs(...filters, cursor, page_size) | record set | Keyset-paginated audit log search with full-text search on actor_name, resource_name, metadata |
 | count_audit_logs(...filters) | bigint | Count matching audit logs (used for pagination total) |

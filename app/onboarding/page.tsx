@@ -347,7 +347,7 @@ function OnboardingForm() {
                 onClick={skipToFree}
                 className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 underline-offset-2 hover:underline"
               >
-                Skip for now, continue with free plan →
+                Skip for now, continue with trial →
               </button>
             </div>
           )}

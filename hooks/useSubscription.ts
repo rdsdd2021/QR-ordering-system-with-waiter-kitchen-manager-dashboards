@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 // Module-level counter ensures unique channel names even in React Strict Mode
 let _channelCounter = 0;
 
-export type Plan = "free" | "pro";
+export type Plan = "trialing" | "pro";
 
 export type Subscription = {
   plan: Plan;
@@ -23,7 +23,7 @@ export type PlanLimits = {
   advanced_features: boolean;
 };
 
-const FREE_LIMITS: PlanLimits = {
+const TRIAL_LIMITS: PlanLimits = {
   max_tables: 5,
   max_menu_items: 20,
   analytics: false,
@@ -52,7 +52,7 @@ export function useSubscription(restaurantId: string | null) {
         .maybeSingle();
 
       setSubscription(data as Subscription ?? {
-        plan: "free", status: "active", current_period_end: null,
+        plan: "trialing", status: "active", current_period_end: null,
         phonepe_transaction_id: null, trial_used: false,
       });
       setLoading(false);
@@ -83,19 +83,24 @@ export function useSubscription(restaurantId: string | null) {
     };
   }, [restaurantId]);
 
-  const plan: Plan = subscription?.plan ?? "free";
+  const plan: Plan = (subscription?.plan ?? "trialing") as Plan;
   const isActive  = subscription?.status === "active";
   const isTrial   = subscription?.status === "trialing";
-  // E1/E2: past_due and canceled are also terminal — treat them as expired
-  // so the paywall fires and the manager sees a clear upgrade prompt.
-  const isExpired =
-    subscription?.status === "expired"    ||
-    subscription?.status === "incomplete" ||
-    subscription?.status === "past_due"   ||
-    subscription?.status === "canceled";
+  // QW-7: past_due gets a 3-day grace period before the paywall activates.
+  // canceled is immediately expired — no grace period for deliberate cancellations.
+  const isExpired = (() => {
+    const status = subscription?.status;
+    if (status === "expired" || status === "incomplete" || status === "canceled") return true;
+    if (status === "past_due") {
+      if (!subscription?.current_period_end) return true;
+      const graceEndMs = new Date(subscription.current_period_end).getTime() + 3 * 24 * 60 * 60 * 1000;
+      return Date.now() > graceEndMs;
+    }
+    return false;
+  })();
   const isPro = (plan === "pro") && (isActive || isTrial);
   const trialEndsAt = isTrial ? subscription?.current_period_end ?? null : null;
-  const limits: PlanLimits = isPro ? PRO_LIMITS : FREE_LIMITS;
+  const limits: PlanLimits = isPro ? PRO_LIMITS : TRIAL_LIMITS;
 
   async function startUpgrade(returnUrl: string, couponCode?: string, billingCycle: "monthly" | "yearly" = "monthly", planOverride?: string) {
     if (!restaurantId) return;

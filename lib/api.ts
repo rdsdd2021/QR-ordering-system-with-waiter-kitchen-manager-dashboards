@@ -107,6 +107,7 @@ export async function getMenuItems(restaurantId: string): Promise<MenuItem[]> {
     .select("id, restaurant_id, name, price, is_available, image_url, tags, description")
     .eq("restaurant_id", restaurantId)
     .eq("is_available", true)
+    .is("deleted_at", null)
     .order("name");
 
   if (error) {
@@ -821,6 +822,7 @@ export async function getAllMenuItems(restaurantId: string): Promise<MenuItem[]>
     .from("menu_items")
     .select("id, restaurant_id, name, price, is_available, image_url, tags, description")
     .eq("restaurant_id", restaurantId)
+    .is("deleted_at", null)
     .order("name");
 
   if (error) {
@@ -832,6 +834,7 @@ export async function getAllMenuItems(restaurantId: string): Promise<MenuItem[]>
 
 /**
  * Create a new menu item.
+ * QW-10: Checks plan limits server-side before inserting.
  */
 export async function createMenuItem(params: {
   restaurantId: string;
@@ -841,6 +844,22 @@ export async function createMenuItem(params: {
   image_url?: string | null;
   tags?: string[] | null;
 }): Promise<MenuItem | null> {
+  // QW-10: Server-side plan limit check — enforce before any DB insert
+  const { data: planData } = await supabase.rpc("get_restaurant_plan", { p_restaurant_id: params.restaurantId });
+  const { data: limitsData } = await supabase.rpc("get_plan_limits", { p_plan: planData ?? "trialing" });
+  const maxMenuItems: number = (limitsData as { max_menu_items: number } | null)?.max_menu_items ?? 20;
+
+  const { count: currentCount } = await supabase
+    .from("menu_items")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", params.restaurantId)
+    .is("deleted_at", null);
+
+  if ((currentCount ?? 0) >= maxMenuItems) {
+    console.warn(`[createMenuItem] Plan limit reached: ${currentCount}/${maxMenuItems} items for restaurant ${params.restaurantId}`);
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("menu_items")
     .insert({
@@ -952,17 +971,17 @@ export async function deleteMenuItem(itemId: string, restaurantId?: string): Pro
 
   const { error } = await supabase
     .from("menu_items")
-    .delete()
+    .update({ deleted_at: new Date().toISOString() })
     .eq("id", itemId);
 
   if (error) {
-    console.error("Error deleting menu item:", error.message);
+    console.error("Error archiving menu item:", error.message);
     return false;
   }
 
-  // Fire webhook (non-blocking) — include item details captured before deletion
+  // Fire webhook (non-blocking) — include item details captured before archival
   if (restaurantId) {
-    triggerWebhook(restaurantId, "menu.item_deleted", {
+    triggerWebhook(restaurantId, "menu.item_archived", {
       item_id: itemId,
       name: deletedItem?.name ?? null,
       price: deletedItem?.price ?? null,
@@ -973,6 +992,42 @@ export async function deleteMenuItem(itemId: string, restaurantId?: string): Pro
 
   // Fire audit log (non-blocking)
   logAudit('menu_item.deleted', 'menu_item', itemId, deletedItem?.name ?? null);
+
+  return true;
+}
+
+/**
+ * Fetch archived (soft-deleted) menu items for a restaurant.
+ * Returns only items where deleted_at IS NOT NULL.
+ */
+export async function getArchivedMenuItems(restaurantId: string): Promise<MenuItem[]> {
+  const { data, error } = await supabase
+    .from("menu_items")
+    .select("id, restaurant_id, name, price, is_available, image_url, tags, description, deleted_at")
+    .eq("restaurant_id", restaurantId)
+    .not("deleted_at", "is", null)
+    .order("name");
+
+  if (error) {
+    console.error("Error fetching archived menu items:", error.message);
+    return [];
+  }
+  return (data ?? []) as MenuItem[];
+}
+
+/**
+ * Restore a soft-deleted menu item by clearing its deleted_at timestamp.
+ */
+export async function restoreMenuItem(itemId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("menu_items")
+    .update({ deleted_at: null })
+    .eq("id", itemId);
+
+  if (error) {
+    console.error("Error restoring menu item:", error.message);
+    return false;
+  }
 
   return true;
 }
@@ -1659,6 +1714,7 @@ export async function backfillQrCodes(restaurantId: string) {
 
 /**
  * Create a new table and auto-generate its QR code URL.
+ * QW-10: Checks plan limits server-side before inserting.
  */
 export async function createTable(params: {
   restaurantId: string;
@@ -1666,6 +1722,21 @@ export async function createTable(params: {
   floorId?: string;
   capacity?: number;
 }) {
+  // QW-10: Server-side plan limit check — enforce before any DB insert
+  const { data: planData } = await supabase.rpc("get_restaurant_plan", { p_restaurant_id: params.restaurantId });
+  const { data: limitsData } = await supabase.rpc("get_plan_limits", { p_plan: planData ?? "trialing" });
+  const maxTables: number = (limitsData as { max_tables: number } | null)?.max_tables ?? 5;
+
+  const { count: currentCount } = await supabase
+    .from("tables")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", params.restaurantId);
+
+  if ((currentCount ?? 0) >= maxTables) {
+    console.warn(`[createTable] Plan limit reached: ${currentCount}/${maxTables} tables for restaurant ${params.restaurantId}`);
+    return null;
+  }
+
   // Step 1: Insert the table to get its ID
   const { data, error } = await supabase
     .from("tables")

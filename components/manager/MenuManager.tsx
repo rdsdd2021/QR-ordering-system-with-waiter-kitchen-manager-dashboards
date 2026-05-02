@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Plus, Edit2, Trash2, Loader2, X, Image as ImageIcon,
   FolderOpen, Tag, Lock, Upload, Table2, Check, PencilLine,
+  ChevronDown, ChevronRight, ArchiveRestore,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,7 @@ import {
   getFoodCategories, getFoodTags,
   getMenuItemCategories, getMenuItemTags,
   setMenuItemCategories, setMenuItemTags,
+  getArchivedMenuItems, restoreMenuItem,
 } from "@/lib/api";
 import { getSupabaseClient } from "@/lib/supabase";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -80,6 +82,9 @@ function PillToggle({
 export default function MenuManager({ restaurantId }: Props) {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [archivedItems, setArchivedItems] = useState<MenuItem[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
   // Dialog (add new item)
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -114,14 +119,16 @@ export default function MenuManager({ restaurantId }: Props) {
 
   async function loadItems() {
     setLoading(true);
-    const [data, cats, tags] = await Promise.all([
+    const [data, cats, tags, archived] = await Promise.all([
       getAllMenuItems(restaurantId),
       getFoodCategories(restaurantId),
       getFoodTags(restaurantId),
+      getArchivedMenuItems(restaurantId),
     ]);
     setItems(data);
     setAllCategories(cats);
     setAllTags(tags);
+    setArchivedItems(archived);
     setLoading(false);
   }
 
@@ -202,6 +209,17 @@ export default function MenuManager({ restaurantId }: Props) {
     setItems(prev => prev.filter(i => i.id !== item.id));
     const ok = await deleteMenuItem(item.id);
     if (!ok) setItems(prev => [...prev, item].sort((a, b) => a.name.localeCompare(b.name)));
+  }
+
+  // ── Restore archived item ───────────────────────────────────────────────────
+
+  async function handleRestore(item: MenuItem) {
+    setRestoringId(item.id);
+    const ok = await restoreMenuItem(item.id);
+    if (ok) {
+      await loadItems();
+    }
+    setRestoringId(null);
   }
 
   // ── Single inline edit ──────────────────────────────────────────────────────
@@ -444,7 +462,7 @@ export default function MenuManager({ restaurantId }: Props) {
                     </Button>
                   )}
                   <Button size="sm" onClick={openAddDialog} disabled={atLimit}
-                    title={atLimit ? `Free plan limit reached (${limits.max_menu_items} items). Upgrade to Pro.` : undefined}>
+                    title={atLimit ? `Trial limit reached (${limits.max_menu_items} items). Upgrade to Pro.` : undefined}>
                     {atLimit ? <Lock className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
                     {atLimit ? "Limit Reached" : "Add Item"}
                   </Button>
@@ -456,7 +474,7 @@ export default function MenuManager({ restaurantId }: Props) {
           {atLimit && (
             <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2">
               <Lock className="h-4 w-4 shrink-0" />
-              Free plan is limited to {limits.max_menu_items} menu items. Upgrade to Pro for unlimited items.
+              Your trial is limited to {limits.max_menu_items} menu items. Upgrade to Pro for unlimited items.
             </div>
           )}
 
@@ -504,6 +522,73 @@ export default function MenuManager({ restaurantId }: Props) {
               </TableBody>
             </Table>
           </div>
+
+          {/* ── Archived Items section ── */}
+          {archivedItems.length > 0 && (
+            <div className="rounded-md border">
+              <button
+                type="button"
+                onClick={() => setShowArchived(prev => !prev)}
+                className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  {showArchived
+                    ? <ChevronDown className="h-4 w-4" />
+                    : <ChevronRight className="h-4 w-4" />
+                  }
+                  Archived Items
+                  <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {archivedItems.length}
+                  </span>
+                </span>
+              </button>
+
+              {showArchived && (
+                <div className="border-t overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="min-w-[180px]">Item</TableHead>
+                        <TableHead className="w-[110px]">Price</TableHead>
+                        <TableHead className="w-[120px] text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {archivedItems.map(item => (
+                        <TableRow key={item.id} className="text-muted-foreground">
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              {item.image_url
+                                ? <img src={item.image_url} alt={item.name} className="h-10 w-10 rounded object-cover shrink-0 opacity-50" />
+                                : <div className="h-10 w-10 rounded bg-muted flex items-center justify-center shrink-0"><ImageIcon className="h-5 w-5 text-muted-foreground" /></div>
+                              }
+                              <p className="font-medium">{item.name}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>₹{item.price.toFixed(2)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRestore(item)}
+                              disabled={restoringId === item.id}
+                              title="Restore item"
+                            >
+                              {restoringId === item.id
+                                ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                                : <ArchiveRestore className="h-4 w-4 mr-1.5" />
+                              }
+                              Restore
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          )}
         </TabsContent>
 
         {/* ── CSV Upload tab ── */}

@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
           action:        "billing.plan_changed",
           resource_type: "billing",
           resource_id:   merchantOrderId,
-          metadata:      { old_plan: "free", new_plan: "pro", merchant_order_id: merchantOrderId },
+          metadata:      { old_plan: "trialing", new_plan: "pro", merchant_order_id: merchantOrderId },
         });
       } catch (auditErr) {
         console.error("[phonepe/webhook] audit log failed:", auditErr);

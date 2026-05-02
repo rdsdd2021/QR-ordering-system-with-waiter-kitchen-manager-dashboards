@@ -71,6 +71,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
   const [transactions, setTransactions] = useState<TxRow[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [showAllTx, setShowAllTx] = useState(false);
+  const [expiryBannerDismissed, setExpiryBannerDismissed] = useState(false);
 
   // Billing address edit state
   const [editingAddress, setEditingAddress] = useState(false);
@@ -105,6 +106,12 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
   const renewalDate = (isPro && !isTrial && subscription?.current_period_end)
     ? fmtDate(subscription.current_period_end)
     : null;
+
+  // Days until subscription expiry (for warning banner)
+  const daysUntilExpiry = subscription?.current_period_end
+    ? Math.ceil((new Date(subscription.current_period_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+  const showExpiryBanner = isPro && !isExpired && daysUntilExpiry !== null && daysUntilExpiry <= 7 && !expiryBannerDismissed;
 
   // Displayed transactions — 4 rows unless "View All" clicked
   const visibleTx = showAllTx ? transactions : transactions.slice(0, 4);
@@ -145,7 +152,12 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
     if (plan.id === currentPlanId) return "Current Plan";
     if (plan.cta === "contact") return "Contact Sales";
     if (plan.cta === "downgrade_unsupported") return "Contact Support";
-    if (plan.id === "pro") return `Upgrade — ${fmtRupees(discountedProPaise)}/mo`;
+    if (plan.id === "pro") {
+      if (billing === "yearly") {
+        return `Upgrade — ₹${(proYearlyPaise / 100).toLocaleString('en-IN')}/yr`;
+      }
+      return `Upgrade — ${fmtRupees(discountedProPaise)}/mo`;
+    }
     return "Choose Plan";
   }
 
@@ -163,6 +175,30 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Expiry warning banner ──────────────────────────────────────── */}
+      {showExpiryBanner && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>
+            ⚠️ Your Pro subscription expires in{" "}
+            <strong>{daysUntilExpiry === 0 ? "less than a day" : `${daysUntilExpiry} day${daysUntilExpiry === 1 ? "" : "s"}`}</strong>.{" "}
+            <button
+              onClick={() => document.querySelector("[data-plan-section]")?.scrollIntoView({ behavior: "smooth" })}
+              className="font-semibold underline hover:no-underline"
+            >
+              Renew now
+            </button>{" "}
+            to avoid losing access.
+          </span>
+          <button
+            onClick={() => setExpiryBannerDismissed(true)}
+            className="shrink-0 rounded p-0.5 hover:bg-amber-200 transition-colors"
+            aria-label="Dismiss expiry warning"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Plan selector ─────────────────────────────────────────────── */}
       <div data-plan-section className="rounded-xl border border-border bg-card p-6 card-shadow">
@@ -195,7 +231,7 @@ export default function BillingPanel({ restaurantId, restaurantName }: Props) {
                 billing === "yearly" ? "bg-white/20 text-white" : "bg-green-100 text-green-700"
               )}>
                 {proMonthlyPaise > 0 && proYearlyPaise > 0
-                  ? `Save ${Math.round((1 - proYearlyPaise / proMonthlyPaise) * 100)}%`
+                  ? `Save ${Math.round((1 - (proYearlyPaise / 12) / proMonthlyPaise) * 100)}%`
                   : "Save 20%"}
               </span>
             </button>
@@ -473,7 +509,7 @@ ${transactions.find(t => t.id === tx.id) ? '' : ''}
             </div>
             <div className="mb-3">
               {isTrial ? (
-                <span className="text-2xl font-bold text-green-600">Free</span>
+                <span className="text-2xl font-bold text-green-600">Trial</span>
               ) : isPro ? (
                 <>
                   <span className="text-2xl font-bold">

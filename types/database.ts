@@ -44,6 +44,7 @@ export type MenuItem = {
   image_url?: string | null;
   tags?: string[];
   description?: string | null;
+  deleted_at?: string | null;
 };
 
 export type Review = {

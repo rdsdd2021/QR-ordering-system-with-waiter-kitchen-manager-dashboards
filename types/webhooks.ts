@@ -18,6 +18,7 @@ export const WEBHOOK_EVENTS = [
   "menu.item_created",
   "menu.item_updated",
   "menu.item_deleted",
+  "menu.item_archived",
   // Staff
   "staff.created",
   "staff.deactivated",
@@ -42,6 +43,7 @@ export const WEBHOOK_EVENT_LABELS: Record<WebhookEventType, string> = {
   "menu.item_created":       "Menu Item Created",
   "menu.item_updated":       "Menu Item Updated",
   "menu.item_deleted":       "Menu Item Deleted",
+  "menu.item_archived":      "Menu Item Archived",
   "staff.created":           "Staff Created",
   "staff.deactivated":       "Staff Deactivated",
   "payment.method_recorded": "Payment Method Recorded",
@@ -59,7 +61,7 @@ export const WEBHOOK_EVENT_GROUPS: { label: string; events: WebhookEventType[] }
   },
   {
     label: "Menu",
-    events: ["menu.item_created","menu.item_updated","menu.item_deleted"],
+    events: ["menu.item_created","menu.item_updated","menu.item_deleted","menu.item_archived"],
   },
   {
     label: "Staff",
