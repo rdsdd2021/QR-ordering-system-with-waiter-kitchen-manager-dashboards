@@ -990,6 +990,22 @@ Mark SUPABASE_SERVICE_ROLE_KEY, PHONEPE_CLIENT_SECRET, ADMIN_SECRET as server-on
 | poweredByHeader | false | Removes the X-Powered-By: Next.js response header |
 | allowedDevOrigins | 192.168.31.33 | Allows local-network device access to the dev server for mobile testing |
 
+### Sentry error monitoring
+
+The app is wrapped with `withSentryConfig` (org: `assistt`, project: `javascript-nextjs`). Sentry captures unhandled exceptions and performance traces on both client and server. The `sentry.client.config.ts` and `sentry.server.config.ts` files hold the DSN and sampling configuration. No additional env vars are required beyond what Sentry injects at build time via the Sentry Vercel integration.
+
+**Client-side integrations** (`sentry.client.config.ts`):
+
+| Integration | Purpose |
+|---|---|
+| `browserTracingIntegration` | Automatic page-load / navigation spans and XHR/fetch tracing |
+| `replayIntegration` | Session Replay — 5% of sessions sampled, 100% on error; all text and media masked by default |
+| `feedbackIntegration` | "Report a Bug" widget rendered in the UI (system colour scheme, no Sentry branding) |
+| `httpClientIntegration` | Captures failed HTTP requests (4xx/5xx) as Sentry errors |
+| `captureConsoleIntegration` | Forwards `console.error` calls to Sentry |
+
+Sampling rates: `tracesSampleRate: 0.1`, `replaysSessionSampleRate: 0.05`, `replaysOnErrorSampleRate: 1.0`.
+
 ### Supabase project setup
 
 1. Create project at supabase.com

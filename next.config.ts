@@ -35,6 +35,6 @@ const nextConfig: NextConfig = {
 
 export default withSentryConfig(nextConfig, {
   silent: true,
-  org: "",
-  project: "",
+  org: "assistt",
+  project: "javascript-nextjs",
 });
