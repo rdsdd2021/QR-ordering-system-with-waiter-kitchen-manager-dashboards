@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
+import { fireEvent } from "@/lib/webhooks";
 
 function getServiceClient() {
   return createClient(
@@ -57,6 +58,13 @@ export async function POST(req: NextRequest) {
       });
     } catch (err) { console.error("[floors/create] writeAuditLog failed", err); }
 
+    fireEvent(restaurantId, "floor.created", {
+      floor_id: data.id,
+      restaurant_id: restaurantId,
+      name: data.name,
+      price_multiplier: data.price_multiplier ?? 1.0,
+    }).catch(err => console.error("[floors/create] webhook error:", err));
+
     return NextResponse.json(data, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
@@ -94,6 +102,13 @@ export async function PATCH(req: NextRequest) {
       });
     } catch (err) { console.error("[floors/update] writeAuditLog failed", err); }
 
+    fireEvent(restaurantId, "floor.updated", {
+      floor_id: floorId,
+      restaurant_id: restaurantId,
+      name: existing?.name ?? null,
+      changes: updates,
+    }).catch(err => console.error("[floors/update] webhook error:", err));
+
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
@@ -129,6 +144,12 @@ export async function DELETE(req: NextRequest) {
         ip_address: getClientIp(req),
       });
     } catch (err) { console.error("[floors/delete] writeAuditLog failed", err); }
+
+    fireEvent(restaurantId, "floor.deleted", {
+      floor_id: floorId,
+      restaurant_id: restaurantId,
+      name: existing?.name ?? null,
+    }).catch(err => console.error("[floors/delete] webhook error:", err));
 
     return NextResponse.json({ success: true });
   } catch (err) {

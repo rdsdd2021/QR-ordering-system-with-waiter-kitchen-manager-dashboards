@@ -5,7 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { validateWebhookUrl } from "@/lib/webhooks";
+import { validateWebhookUrl, fireEvent } from "@/lib/webhooks";
 import { WEBHOOK_EVENTS } from "@/types/webhooks";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
@@ -134,6 +134,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     console.error("[webhooks/update] writeAuditLog failed", err);
   }
 
+  fireEvent(restaurantId, "webhook.updated" as any, {
+    endpoint_id: data.id,
+    restaurant_id: restaurantId,
+    name: data.name,
+    url: data.url,
+    events: data.events,
+    is_active: data.is_active,
+    changes: updates,
+    updated_at: data.updated_at,
+  }).catch(err => console.error("[webhooks/update] webhook.updated fire error:", err));
+
   return NextResponse.json({ endpoint: data });
 }
 
@@ -182,6 +193,13 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   } catch (err) {
     console.error("[webhooks/delete] writeAuditLog failed", err);
   }
+
+  fireEvent(restaurantId, "webhook.deleted" as any, {
+    endpoint_id: id,
+    restaurant_id: restaurantId,
+    url: epRow?.url ?? null,
+    deleted_at: new Date().toISOString(),
+  }).catch(err => console.error("[webhooks/delete] webhook.deleted fire error:", err));
 
   return NextResponse.json({ success: true });
 }

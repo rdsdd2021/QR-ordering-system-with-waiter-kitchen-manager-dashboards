@@ -294,7 +294,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
           table_number: formData.table_number,
           floor_id: formData.floor_id || null,
           capacity: formData.capacity,
-        });
+        }, restaurantId);
         logAudit('table.updated', 'table', editingTable.table_id, `Table ${formData.table_number}`, {
           table_number: formData.table_number,
           floor_id: formData.floor_id || null,
@@ -325,7 +325,7 @@ export default function TablesManager({ restaurantId, restaurantName }: { restau
   async function handleDelete(tableId: string) {
     if (confirm('Delete this table? This cannot be undone.')) {
       const tableToDelete = tables.find(t => t.table_id === tableId);
-      await deleteTable(tableId);
+      await deleteTable(tableId, restaurantId);
       logAudit('table.deleted', 'table', tableId, tableToDelete ? `Table ${tableToDelete.table_number}` : null, {
         table_number: tableToDelete?.table_number ?? null,
       });

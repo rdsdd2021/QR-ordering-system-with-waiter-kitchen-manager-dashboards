@@ -28,12 +28,15 @@ export async function GET(req: NextRequest) {
   const supabase = getServiceClient();
 
   // Find deliveries due for retry (status = retrying, next_retry_at <= now)
+  // Also pick up orphaned "pending" deliveries older than 30s — these were
+  // created but never dispatched because the serverless function was killed
+  // before the async HTTP call could complete.
   // Also fetch endpoint details needed for audit logging on permanent failure
+  const thirtySecondsAgo = new Date(Date.now() - 30_000).toISOString();
   const { data: due, error } = await supabase
     .from("webhook_deliveries")
     .select("id, attempt, max_attempts, endpoint_id, endpoint:webhook_endpoints(url, restaurant_id)")
-    .eq("status", "retrying")
-    .lte("next_retry_at", new Date().toISOString())
+    .or(`and(status.eq.retrying,next_retry_at.lte.${new Date().toISOString()}),and(status.eq.pending,created_at.lte.${thirtySecondsAgo})`)
     .limit(50); // Process up to 50 per run
 
   if (error) {

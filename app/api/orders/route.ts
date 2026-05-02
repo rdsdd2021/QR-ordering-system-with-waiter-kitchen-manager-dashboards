@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { createClient } from "@supabase/supabase-js";
+import { fireEvent } from "@/lib/webhooks";
 
 // ── Rate limiters ─────────────────────────────────────────────────────────────
 // Per table: 10 orders / minute — prevents a single table from spamming
@@ -37,6 +38,13 @@ function getIp(req: NextRequest): string {
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     req.headers.get("x-real-ip") ??
     "unknown"
+  );
+}
+
+function getServiceClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 }
 
@@ -129,9 +137,7 @@ export async function POST(req: NextRequest) {
   const { data: orderId, error: rpcError } = await supabase.rpc("place_order_atomic", {
     p_restaurant_id: restaurantId,
     p_table_id: tableId,
-    p_items: JSON.stringify(
-      items.map((i) => ({ menu_item_id: i.menu_item_id, quantity: i.quantity }))
-    ),
+    p_items: items.map((i) => ({ menu_item_id: i.menu_item_id, quantity: i.quantity })),
     p_customer_name: customerName?.trim() || null,
     p_customer_phone: customerPhone?.trim() || null,
     p_party_size: partySize || null,
@@ -141,6 +147,59 @@ export async function POST(req: NextRequest) {
     console.error("[api/orders] place_order_atomic error:", rpcError?.message);
     return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
   }
+
+  // ── Fire order.placed webhook server-side ─────────────────────────────────
+  // Must run server-side: the customer page has no staff session token, so
+  // the client-side triggerWebhook() in lib/api.ts always silently no-ops here.
+  (async () => {
+    try {
+      const svc = getServiceClient();
+      const [orderRes, restaurantRes, tableRes] = await Promise.all([
+        svc.from("orders")
+          .select("status, customer_name, customer_phone, party_size, created_at, order_items(quantity, price, name, menu_item_id)")
+          .eq("id", orderId)
+          .maybeSingle(),
+        svc.from("restaurants").select("name, slug").eq("id", restaurantId).maybeSingle(),
+        svc.from("tables").select("table_number, capacity, floor:floors(name)").eq("id", tableId).maybeSingle(),
+      ]);
+
+      const orderRow  = orderRes.data;
+      const tableData = tableRes.data as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
+
+      await fireEvent(restaurantId, "order.placed", {
+        order_id: orderId,
+        status: orderRow?.status ?? "pending",
+        created_at: orderRow?.created_at ?? new Date().toISOString(),
+        restaurant: {
+          id: restaurantId,
+          name: restaurantRes.data?.name ?? null,
+          slug: restaurantRes.data?.slug ?? null,
+        },
+        table: {
+          id: tableId,
+          table_number: tableData?.table_number ?? null,
+          floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+          capacity: tableData?.capacity ?? null,
+        },
+        customer: {
+          name: customerName?.trim() || null,
+          phone: customerPhone?.trim() || null,
+          party_size: partySize || null,
+        },
+        order_items: ((orderRow?.order_items ?? []) as { quantity: number; price: number; name: string | null; menu_item_id: string }[]).map(i => ({
+          menu_item_id: i.menu_item_id,
+          name: i.name ?? null,
+          quantity: i.quantity,
+          unit_price: i.price,
+          subtotal: i.quantity * i.price,
+        })),
+        total_amount: ((orderRow?.order_items ?? []) as { quantity: number; price: number }[])
+          .reduce((sum, i) => sum + i.quantity * i.price, 0),
+      });
+    } catch (err) {
+      console.error("[api/orders] order.placed webhook error:", err);
+    }
+  })();
 
   return NextResponse.json({ result: orderId });
 }

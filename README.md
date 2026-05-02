@@ -655,16 +655,18 @@ Flexible discount system with percentage or flat discounts, expiry, usage limits
 
 ### Overview
 
-Restaurants can register HTTPS endpoints to receive real-time event notifications. The system supports 16 event types, HMAC-SHA256 signatures, automatic retries, and delivery tracking.
+Restaurants can register HTTPS endpoints to receive real-time event notifications. The system supports 26 event types, HMAC-SHA256 signatures, automatic retries, and delivery tracking.
 
 ### Supported events
 
 | Group | Events |
 |-------|--------|
 | Orders | order.placed, order.confirmed, order.preparing, order.ready, order.served, order.billed, order.cancelled |
-| Tables | table.session_opened, table.session_closed |
-| Menu | menu.item_created, menu.item_updated, menu.item_deleted |
-| Staff | staff.created, staff.deactivated |
+| Tables | table.session_opened, table.session_closed, table.created, table.updated, table.deleted |
+| Menu | menu.item_created, menu.item_updated, menu.item_archived |
+| Floors | floor.created, floor.updated, floor.deleted |
+| Staff | staff.created, staff.updated, staff.reactivated, staff.deactivated |
+| Restaurant | restaurant.updated, restaurant.settings_changed |
 | Payment | payment.method_recorded |
 | Test | test |
 

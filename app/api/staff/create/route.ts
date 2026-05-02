@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     fireEvent(restaurantId, "staff.created", {
+      user_id: insertedUser?.id ?? null,
+      restaurant_id: restaurantId,
       name: name.trim(),
       email: email.trim().toLowerCase(),
       role,

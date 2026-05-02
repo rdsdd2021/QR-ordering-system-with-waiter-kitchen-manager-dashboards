@@ -190,19 +190,11 @@ export async function fireEvent(
   // Dispatch to all endpoints concurrently (capped at 10)
   const batch = endpoints.slice(0, 10);
 
-  // F2: Create all delivery records synchronously so they exist in the DB
-  // immediately, then dispatch HTTP calls in the background without blocking
-  // the caller. Uses `waitUntil` on Vercel Edge/Node runtimes when available,
-  // otherwise detaches via a void promise.
-  const dispatchAll = Promise.allSettled(batch.map(ep => deliverToEndpoint(ep, payload, supabase)));
-
-  // @ts-ignore — `waitUntil` is available on Vercel's extended Request context
-  if (typeof globalThis !== "undefined" && (globalThis as any)[Symbol.for("waitUntil")]) {
-    (globalThis as any)[Symbol.for("waitUntil")](dispatchAll);
-  } else {
-    // Detach — let the promise run without blocking the caller
-    dispatchAll.catch(err => console.error("[fireEvent] dispatch error:", err));
-  }
+  // Await all dispatches so delivery records are fully updated before the
+  // serverless function returns. Detaching via void/waitUntil caused deliveries
+  // to be stuck in "pending" because the process was killed before the async
+  // HTTP call and subsequent DB update could complete.
+  await Promise.allSettled(batch.map(ep => deliverToEndpoint(ep, payload, supabase)));
 }
 
 async function deliverToEndpoint(

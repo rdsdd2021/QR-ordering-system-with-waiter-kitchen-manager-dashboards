@@ -766,8 +766,8 @@ StaffManager component
   → Updates name and/or email in the users table
   → If email changes, also updates the Supabase Auth account via service role key (best-effort; profile update is not rolled back if auth update fails)
   → Scoped to the restaurant via restaurantId + userId ownership check
-- Toggle is_active (soft disable)
-- Delete staff: `DELETE /api/staff/delete` — removes the `users` row then deletes the Supabase Auth account via the service role key; scoped to the restaurant to prevent cross-tenant deletes; manager accounts are blocked from deletion via this route; fires `staff.deactivated` webhook event (non-blocking) with `{ user_id, role }` payload
+- Toggle is_active (soft disable): `PATCH /api/staff/toggle-active` — fires `staff.reactivated` or `staff.deactivated` webhook event (non-blocking) depending on the new state, with payload `{ user_id, restaurant_id, name, role, is_active, restaurant: { id, name } }`
+- Delete staff: `DELETE /api/staff/delete` — removes the `users` row then deletes the Supabase Auth account via the service role key; scoped to the restaurant to prevent cross-tenant deletes; manager accounts are blocked from deletion via this route
 ```
 
 **Table Setup (`tables` tab)**
@@ -1306,12 +1306,12 @@ Rotate secret:
 fireEvent(restaurantId, eventType, data):
   1. Fetch active endpoints subscribed to this event
   2. Build WebhookPayload: { id, event, restaurant_id, timestamp, data }
-  3. Dispatch to up to 10 endpoints concurrently — NON-BLOCKING
-     HTTP calls are detached from the caller immediately:
-       - On Vercel Edge/Node runtimes: registered via waitUntil so the
-         runtime keeps the function alive until all dispatches complete.
-       - On other runtimes: detached via a void promise (fire-and-forget).
-     fireEvent() returns immediately without awaiting delivery outcomes.
+  3. Dispatch to up to 10 endpoints concurrently — BLOCKING (awaited)
+     All HTTP calls are awaited via Promise.allSettled() before fireEvent()
+     returns. This ensures delivery records are fully written before the
+     serverless function exits. (Detaching via waitUntil/void caused
+     deliveries to be stuck in "pending" because the process was killed
+     before the async HTTP call and DB update could complete.)
   4. Per endpoint:
      a. Create webhook_deliveries row (status='pending')
      b. POST to endpoint URL with headers:
@@ -1407,6 +1407,50 @@ The payload is assembled asynchronously and non-blocking — if the DB fetch fai
 
 Note: `order.placed` and `order.billed` are not fired from this path — they are triggered separately at order creation and billing time.
 
+### Direct Webhook Firing (Order Placement)
+
+`order.placed` is fired server-side from `POST /api/orders` immediately after `place_order_atomic` succeeds. It **cannot** be fired client-side because the customer page has no staff session token, so `triggerWebhook()` in `lib/api.ts` would silently no-op.
+
+The call is non-blocking (fire-and-forget IIFE). If the DB fetch or dispatch fails, the error is logged but the order response is unaffected.
+
+**`order.placed` payload:**
+
+```jsonc
+{
+  "order_id": "<uuid>",
+  "status": "pending",
+  "created_at": "<ISO-8601>",
+  "restaurant": {
+    "id": "<uuid>",
+    "name": "My Restaurant",
+    "slug": "my-restaurant"
+  },
+  "table": {
+    "id": "<uuid>",
+    "table_number": 4,
+    "floor": "Ground Floor",   // null if no floor assigned
+    "capacity": 4              // null if not set
+  },
+  "customer": {
+    "name": "Alice",           // null if not collected
+    "phone": "+91...",         // null if not collected
+    "party_size": 2            // null if not collected
+  },
+  "order_items": [
+    {
+      "menu_item_id": "<uuid>",
+      "name": "Paneer Tikka",  // null if not set
+      "quantity": 2,
+      "unit_price": 150.00,
+      "subtotal": 300.00
+    }
+  ],
+  "total_amount": 300.00
+}
+```
+
+Payload data is fetched via a service-role client (bypasses RLS) after the order is created, so `order_items` reflects the server-side prices stored by `place_order_atomic`.
+
 ### Direct Webhook Firing (Billing)
 
 `order.billed` and `payment.method_recorded` are fired from `billOrder()` in `lib/api.ts` after the `generate_bill` RPC succeeds and served-but-unbilled items are confirmed. Both calls are non-blocking (`triggerWebhook()` is not awaited).
@@ -1453,15 +1497,59 @@ POST /api/webhooks/[id]/retry:
 | Group | Events |
 |-------|--------|
 | Orders | `order.placed`, `order.confirmed`, `order.preparing`, `order.ready`, `order.served`, `order.billed`, `order.cancelled` |
-| Tables | `table.session_opened`, `table.session_closed` |
-| Menu | `menu.item_created`, `menu.item_updated`, `menu.item_deleted` |
-| Staff | `staff.created`, `staff.deactivated` |
+| Tables | `table.session_opened`, `table.session_closed`, `table.created`, `table.updated`, `table.deleted` |
+| Menu | `menu.item_created`, `menu.item_updated`, `menu.item_archived` |
+| Floors | `floor.created`, `floor.updated`, `floor.deleted` |
+| Staff | `staff.created`, `staff.updated`, `staff.reactivated`, `staff.deactivated` |
+| Restaurant | `restaurant.updated`, `restaurant.settings_changed` |
 | Payment | `payment.method_recorded` |
 | Test | `test` |
 
+### Table Event Payloads
+
+**`table.updated`** — fired from `updateTable()` in `lib/api.ts` after a successful DB update, when a `restaurantId` is provided to the function. The call is non-blocking (fire-and-forget). The payload is assembled by re-fetching the row after the update, so it reflects the committed state.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `table_id` | string (uuid) | The updated table UUID |
+| `restaurant_id` | string (uuid) | The restaurant UUID |
+| `table_number` | number \| null | Table number after update |
+| `floor_id` | string (uuid) \| null | Floor assignment after update, or `null` if unassigned |
+| `capacity` | number \| null | Capacity after update |
+| `qr_code_url` | string \| null | QR code URL after update |
+| `changes` | object | The `updates` object passed to `updateTable()` — contains only the fields that were changed |
+
+### Floor Event Payloads
+
+**`floor.created`** — fired from `POST /api/floors` after a successful DB insert. Non-blocking (fire-and-forget).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `floor_id` | string (uuid) | The new floor UUID |
+| `restaurant_id` | string (uuid) | The restaurant UUID |
+| `name` | string | Floor name |
+| `price_multiplier` | number | Price multiplier for this floor (defaults to `1.0`) |
+
+**`floor.updated`** — fired from `PATCH /api/floors` after a successful DB update. Non-blocking (fire-and-forget).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `floor_id` | string (uuid) | The updated floor UUID |
+| `restaurant_id` | string (uuid) | The restaurant UUID |
+| `name` | string \| null | Floor name at time of update |
+| `changes` | object | The `updates` object passed to the PATCH — contains only the fields that were changed |
+
+**`floor.deleted`** — fired from `DELETE /api/floors` after a successful DB delete. Non-blocking (fire-and-forget).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `floor_id` | string (uuid) | The deleted floor UUID |
+| `restaurant_id` | string (uuid) | The restaurant UUID |
+| `name` | string \| null | Floor name at time of deletion |
+
 ### Menu Event Payloads
 
-All three menu events share the same payload shape:
+All menu events share the same payload shape:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -1471,7 +1559,7 @@ All three menu events share the same payload shape:
 | `description` | string \| null | Item description |
 | `tags` | string[] \| null | Item tags (e.g. `["veg", "spicy"]`) |
 
-For `menu.item_deleted`, the item details (`name`, `price`, `description`, `tags`) are fetched from the DB immediately before deletion so they are available in the payload even though the record no longer exists by the time the webhook fires.
+Note: `menu.item_deleted` has been replaced by `menu.item_archived` — items are now soft-deleted (archived) rather than hard-deleted.
 
 ### Pitfalls
 
@@ -1479,7 +1567,7 @@ For `menu.item_deleted`, the item details (`name`, `price`, `description`, `tags
 - SSRF protection is enforced at two layers: the URL input field rejects private/loopback addresses (`localhost`, `127.x`, `10.x`, `192.168.x`, `172.16–31.x`, `0.0.0.0`) and non-public hostnames client-side before submission; the server also blocks these at dispatch time. Webhooks cannot be tested against local servers without a tunnel (ngrok, etc.).
 - Payload size is capped at 64 KB. Before hard-failing, `dispatchToUrl` strips array fields from `data` and adds `_truncated: true`. Only fails if the truncated version is still too large.
 - The retry cron runs every minute (`"* * * * *"`). Retries are automatic — no manual trigger required.
-- `fireEvent()` detaches dispatch immediately (non-blocking). On Vercel runtimes it uses `waitUntil` to keep the function alive; on other runtimes it uses a detached promise. `fireEvent()` returns immediately without awaiting delivery outcomes. Errors are logged server-side but not surfaced to the caller.
+- `fireEvent()` awaits all dispatches via `Promise.allSettled()` before returning. This ensures delivery records are fully updated before the serverless function exits. Detaching via `waitUntil` or a void promise caused deliveries to be stuck in `"pending"` because the process was killed before the async HTTP call and subsequent DB update could complete.
 
 ---
 
@@ -2021,7 +2109,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
 | F1 | No automatic retry execution | Retries only happen on manual trigger | **Fixed** — cron schedule changed from `"0 1 * * *"` (daily) to `"* * * * *"` (every minute); retries now run automatically |
-| F2 | `fireEvent()` is synchronous in API routes | Slow endpoints delay API response (up to 80s for 10 endpoints) | **Fixed** — `fireEvent` now detaches dispatch immediately; uses `waitUntil` on Vercel runtimes, falls back to detached promise on others |
+| F2 | `fireEvent()` is synchronous in API routes | Slow endpoints delay API response (up to 80s for 10 endpoints) | **Fixed → Reverted** — detached dispatch (`waitUntil`/void promise) caused deliveries to be stuck in `"pending"` because the serverless process was killed before the HTTP call and DB update completed. `fireEvent` now awaits all dispatches via `Promise.allSettled()` before returning. |
 | F3 | Payload capped at 64 KB | Large orders silently fail | **Fixed** — before hard-failing, `dispatchToUrl` strips array fields from `data` and adds `_truncated: true`; only fails if truncated version is still too large |
 | F4 | Secret shown only once | If lost, must rotate | **Fixed** — `SecretModal` now requires a checkbox confirmation before Done button is enabled; dedicated Copy button with clipboard feedback; amber warning banner shown at top |
 | F5 | ~~Channel names not authenticated for broadcast~~ | ~~Any client can subscribe to the broadcast channel~~ | **Fixed** — kitchen and waiter hooks now use only `postgres_changes` (auth-gated by RLS, requires valid JWT); public `.on("broadcast", ...)` handlers removed from `useKitchenOrders` and `useWaiterOrders` |

@@ -14,14 +14,26 @@ export const WEBHOOK_EVENTS = [
   // Table sessions
   "table.session_opened",
   "table.session_closed",
+  // Tables
+  "table.created",
+  "table.updated",
+  "table.deleted",
   // Menu
   "menu.item_created",
   "menu.item_updated",
-  "menu.item_deleted",
   "menu.item_archived",
+  // Floors
+  "floor.created",
+  "floor.updated",
+  "floor.deleted",
   // Staff
   "staff.created",
+  "staff.updated",
+  "staff.reactivated",
   "staff.deactivated",
+  // Restaurant
+  "restaurant.updated",
+  "restaurant.settings_changed",
   // Payment
   "payment.method_recorded",
   // Test
@@ -31,23 +43,32 @@ export const WEBHOOK_EVENTS = [
 export type WebhookEventType = (typeof WEBHOOK_EVENTS)[number];
 
 export const WEBHOOK_EVENT_LABELS: Record<WebhookEventType, string> = {
-  "order.placed":            "Order Placed",
-  "order.confirmed":         "Order Confirmed",
-  "order.preparing":         "Order Preparing",
-  "order.ready":             "Order Ready",
-  "order.served":            "Order Served",
-  "order.billed":            "Order Billed",
-  "order.cancelled":         "Order Cancelled",
-  "table.session_opened":    "Table Session Opened",
-  "table.session_closed":    "Table Session Closed",
-  "menu.item_created":       "Menu Item Created",
-  "menu.item_updated":       "Menu Item Updated",
-  "menu.item_deleted":       "Menu Item Deleted",
-  "menu.item_archived":      "Menu Item Archived",
-  "staff.created":           "Staff Created",
-  "staff.deactivated":       "Staff Deactivated",
-  "payment.method_recorded": "Payment Method Recorded",
-  "test":                    "Test Ping",
+  "order.placed":                "Order Placed",
+  "order.confirmed":             "Order Confirmed",
+  "order.preparing":             "Order Preparing",
+  "order.ready":                 "Order Ready",
+  "order.served":                "Order Served",
+  "order.billed":                "Order Billed",
+  "order.cancelled":             "Order Cancelled",
+  "table.session_opened":        "Table Session Opened",
+  "table.session_closed":        "Table Session Closed",
+  "table.created":               "Table Created",
+  "table.updated":               "Table Updated",
+  "table.deleted":               "Table Deleted",
+  "menu.item_created":           "Menu Item Created",
+  "menu.item_updated":           "Menu Item Updated",
+  "menu.item_archived":          "Menu Item Archived",
+  "floor.created":               "Floor Created",
+  "floor.updated":               "Floor Updated",
+  "floor.deleted":               "Floor Deleted",
+  "staff.created":               "Staff Created",
+  "staff.updated":               "Staff Updated",
+  "staff.reactivated":           "Staff Reactivated",
+  "staff.deactivated":           "Staff Deactivated",
+  "restaurant.updated":          "Restaurant Updated",
+  "restaurant.settings_changed": "Restaurant Settings Changed",
+  "payment.method_recorded":     "Payment Method Recorded",
+  "test":                        "Test Ping",
 };
 
 export const WEBHOOK_EVENT_GROUPS: { label: string; events: WebhookEventType[] }[] = [
@@ -57,15 +78,23 @@ export const WEBHOOK_EVENT_GROUPS: { label: string; events: WebhookEventType[] }
   },
   {
     label: "Tables",
-    events: ["table.session_opened","table.session_closed"],
+    events: ["table.session_opened","table.session_closed","table.created","table.updated","table.deleted"],
   },
   {
     label: "Menu",
-    events: ["menu.item_created","menu.item_updated","menu.item_deleted","menu.item_archived"],
+    events: ["menu.item_created","menu.item_updated","menu.item_archived"],
+  },
+  {
+    label: "Floors",
+    events: ["floor.created","floor.updated","floor.deleted"],
   },
   {
     label: "Staff",
-    events: ["staff.created","staff.deactivated"],
+    events: ["staff.created","staff.updated","staff.reactivated","staff.deactivated"],
+  },
+  {
+    label: "Restaurant",
+    events: ["restaurant.updated","restaurant.settings_changed"],
   },
   {
     label: "Payment",

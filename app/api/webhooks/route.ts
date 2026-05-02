@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { generateSecret, validateWebhookUrl } from "@/lib/webhooks";
+import { generateSecret, validateWebhookUrl, fireEvent } from "@/lib/webhooks";
 import { WEBHOOK_EVENTS } from "@/types/webhooks";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
@@ -101,6 +101,16 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[webhooks/create] writeAuditLog failed", err);
   }
+
+  fireEvent(restaurantId, "webhook.created" as any, {
+    endpoint_id: data.id,
+    restaurant_id: restaurantId,
+    name: data.name,
+    url: data.url,
+    events: data.events,
+    is_active: data.is_active,
+    created_at: data.created_at,
+  }).catch(err => console.error("[webhooks/create] webhook.created fire error:", err));
 
   // Return secret ONCE — never returned again
   return NextResponse.json({ endpoint: data, secret }, { status: 201 });

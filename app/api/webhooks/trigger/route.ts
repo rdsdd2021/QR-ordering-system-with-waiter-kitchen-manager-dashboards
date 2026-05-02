@@ -46,10 +46,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid event type" }, { status: 400 });
   }
 
-  // Fire async — don't block the response
-  fireEvent(restaurantId, event as WebhookEventType, data ?? {}).catch(err =>
-    console.error("[webhooks/trigger] fireEvent error:", err)
-  );
+  // Fire and await — fireEvent awaits all dispatches internally
+  try {
+    await fireEvent(restaurantId, event as WebhookEventType, data ?? {});
+  } catch (err) {
+    console.error("[webhooks/trigger] fireEvent error:", err);
+  }
 
   return NextResponse.json({ queued: true });
 }

@@ -284,55 +284,9 @@ export async function placeOrder(params: {
     return null;
   }
 
-  // Fire webhook (non-blocking) — enrich with restaurant, table, and item names
-  (async () => {
-    try {
-      const [restaurantRes, tableRes, menuItemsRes] = await Promise.all([
-        supabase.from("restaurants").select("name, slug").eq("id", restaurantId).maybeSingle(),
-        supabase.from("tables").select("table_number, capacity, floor:floors(name)").eq("id", tableId).maybeSingle(),
-        supabase.from("menu_items").select("id, name, description, tags").in("id", orderItems.map(i => i.menu_item_id)),
-      ]);
-
-      const menuItemMap = Object.fromEntries(
-        (menuItemsRes.data ?? []).map((m: { id: string; name: string; description: string | null; tags: string[] | null }) => [m.id, m])
-      );
-      const tableData = tableRes.data as { table_number: number; capacity: number | null; floor: { name: string } | null } | null;
-
-      triggerWebhook(restaurantId, "order.placed", {
-        order_id: orderId,
-        status: initialStatus,
-        created_at: new Date().toISOString(),
-        restaurant: {
-          id: restaurantId,
-          name: restaurantRes.data?.name ?? null,
-          slug: restaurantRes.data?.slug ?? null,
-        },
-        table: {
-          id: tableId,
-          table_number: tableData?.table_number ?? null,
-          floor: (tableData?.floor as { name: string } | null)?.name ?? null,
-          capacity: tableData?.capacity ?? null,
-        },
-        customer: {
-          name: customerName?.trim() || null,
-          phone: customerPhone?.trim() || null,
-          party_size: partySize || null,
-        },
-        order_items: orderItems.map(i => ({
-          menu_item_id: i.menu_item_id,
-          name: menuItemMap[i.menu_item_id]?.name ?? null,
-          description: menuItemMap[i.menu_item_id]?.description ?? null,
-          tags: menuItemMap[i.menu_item_id]?.tags ?? null,
-          quantity: i.quantity,
-          unit_price: i.price,
-          subtotal: i.quantity * i.price,
-        })),
-        total_amount: orderItems.reduce((sum, i) => sum + i.quantity * i.price, 0),
-      });
-    } catch {
-      // Non-fatal
-    }
-  })();
+  // Note: order.placed webhook is fired server-side in /api/orders/route.ts
+  // (the customer page has no staff session, so client-side triggerWebhook
+  // would silently no-op here).
 
   return orderId;
 }
@@ -749,6 +703,17 @@ export async function acceptOrder(
             })),
             total_amount: orderRow.total_amount,
           });
+
+          // Fire table.session_opened — a session is opened when a waiter accepts the first order
+          triggerWebhook(orderRow.restaurant_id, "table.session_opened", {
+            table_id: orderRow.table_id,
+            restaurant_id: orderRow.restaurant_id,
+            table_number: tableData?.table_number ?? null,
+            floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+            capacity: tableData?.capacity ?? null,
+            waiter: { id: waiterId },
+            opened_at: new Date().toISOString(),
+          });
         } catch {
           // Non-fatal
         }
@@ -883,12 +848,14 @@ export async function createMenuItem(params: {
   // Fire webhook (non-blocking) — include full item details
   triggerWebhook(params.restaurantId, "menu.item_created", {
     item_id: item.id,
+    restaurant_id: params.restaurantId,
     name: item.name,
     price: item.price,
     description: item.description ?? null,
     tags: item.tags ?? null,
     image_url: item.image_url ?? null,
     is_available: item.is_available,
+    category_id: params.categoryId ?? null,
   });
 
   // Fire audit log (non-blocking)
@@ -934,6 +901,7 @@ export async function updateMenuItem(
       .then(({ data: currentItem }) => {
         triggerWebhook(rid, "menu.item_updated", {
           item_id: itemId,
+          restaurant_id: rid,
           name: currentItem?.name ?? null,
           price: currentItem?.price ?? null,
           description: currentItem?.description ?? null,
@@ -983,6 +951,7 @@ export async function deleteMenuItem(itemId: string, restaurantId?: string): Pro
   if (restaurantId) {
     triggerWebhook(restaurantId, "menu.item_archived", {
       item_id: itemId,
+      restaurant_id: restaurantId,
       name: deletedItem?.name ?? null,
       price: deletedItem?.price ?? null,
       description: deletedItem?.description ?? null,
@@ -1149,6 +1118,9 @@ export async function generateBill(
 
       if ((stillActive ?? []).length === 0) {
         await supabase.rpc("close_table_session", { p_table_id: tableId });
+
+        // Fire table.session_closed — enriched after we fetch full order details below
+        // (deferred to after fullOrder fetch so we have table/waiter context)
       }
 
       // Fetch full order details for rich webhook payload
@@ -1243,6 +1215,19 @@ export async function generateBill(
               name: fullOrder.customer_name ?? null,
               phone: fullOrder.customer_phone ?? null,
             },
+          });
+        }
+
+        // Fire table.session_closed if the session was just closed
+        if ((stillActive ?? []).length === 0) {
+          triggerWebhook(fullOrder.restaurant_id, "table.session_closed", {
+            table_id: tableId,
+            restaurant_id: fullOrder.restaurant_id,
+            table_number: tableData?.table_number ?? null,
+            floor: (tableData?.floor as { name: string } | null)?.name ?? null,
+            capacity: tableData?.capacity ?? null,
+            waiter: waiterData3 ? { name: waiterData3.name } : null,
+            closed_at: new Date().toISOString(),
           });
         }
       }
@@ -1351,6 +1336,13 @@ export async function updateRestaurantRoutingMode(
     }
   }
 
+  triggerWebhook(restaurantId, "restaurant.settings_changed", {
+    restaurant_id: restaurantId,
+    setting: "order_routing_mode",
+    value: routingMode,
+    changes: { order_routing_mode: routingMode },
+  });
+
   return true;
 }
 
@@ -1387,6 +1379,15 @@ export async function updateRestaurantDetails(
     console.error("Error updating restaurant details:", error.message);
     return { success: false, error: error.message };
   }
+
+  triggerWebhook(restaurantId, "restaurant.updated", {
+    restaurant_id: restaurantId,
+    changes: {
+      ...(updates.name !== undefined && { name: updates.name.trim() }),
+      ...(updates.slug !== undefined && { slug: updates.slug?.trim() || null }),
+    },
+  });
+
   return { success: true };
 }
 
@@ -1675,7 +1676,8 @@ export async function updateTable(
     table_number?: number;
     floor_id?: string | null;
     capacity?: number;
-  }
+  },
+  restaurantId?: string
 ) {
   const { error } = await supabase
     .from("tables")
@@ -1686,6 +1688,27 @@ export async function updateTable(
     console.error("Error updating table:", error.message);
     return false;
   }
+
+  if (restaurantId) {
+    // Fetch updated state for the payload
+    supabase
+      .from("tables")
+      .select("table_number, floor_id, capacity, qr_code_url")
+      .eq("id", tableId)
+      .maybeSingle()
+      .then(({ data: t }) => {
+        triggerWebhook(restaurantId, "table.updated", {
+          table_id: tableId,
+          restaurant_id: restaurantId,
+          table_number: t?.table_number ?? null,
+          floor_id: t?.floor_id ?? null,
+          capacity: t?.capacity ?? null,
+          qr_code_url: t?.qr_code_url ?? null,
+          changes: updates,
+        });
+      });
+  }
+
   return true;
 }
 
@@ -1767,22 +1790,55 @@ export async function createTable(params: {
     console.error("Error saving QR URL:", updateError.message);
   }
 
-  return { ...data, qr_code_url: qrUrl };
+  const tableResult = { ...data, qr_code_url: qrUrl };
+
+  // Fire webhook (non-blocking)
+  triggerWebhook(params.restaurantId, "table.created", {
+    table_id: tableResult.id,
+    restaurant_id: params.restaurantId,
+    table_number: tableResult.table_number,
+    floor_id: tableResult.floor_id ?? null,
+    capacity: tableResult.capacity ?? null,
+    qr_code_url: qrUrl,
+  });
+
+  return tableResult;
 }
 
 /**
  * Delete a table.
  */
-export async function deleteTable(tableId: string) {
+export async function deleteTable(tableId: string, restaurantId?: string) {
+  // Fetch table details before deletion for the webhook payload
+  let tableRow: { table_number: number; floor_id: string | null; capacity: number | null } | null = null;
+  if (restaurantId) {
+    const { data } = await supabase
+      .from("tables")
+      .select("table_number, floor_id, capacity")
+      .eq("id", tableId)
+      .maybeSingle();
+    tableRow = data;
+  }
+
   const { error } = await supabase.from("tables").delete().eq("id", tableId);
 
   if (error) {
     console.error("Error deleting table:", error.message);
     return false;
   }
+
+  if (restaurantId) {
+    triggerWebhook(restaurantId, "table.deleted", {
+      table_id: tableId,
+      restaurant_id: restaurantId,
+      table_number: tableRow?.table_number ?? null,
+      floor_id: tableRow?.floor_id ?? null,
+      capacity: tableRow?.capacity ?? null,
+    });
+  }
+
   return true;
 }
-
 /**
  * Toggle waiter active status.
  */

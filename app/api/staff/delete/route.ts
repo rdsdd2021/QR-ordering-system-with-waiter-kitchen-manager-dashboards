@@ -76,6 +76,7 @@ export async function DELETE(req: NextRequest) {
 
     fireEvent(restaurantId, "staff.deactivated", {
       user_id: userId,
+      restaurant_id: restaurantId,
       name: userRow.name ?? null,
       role: userRow.role,
       restaurant: {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
+import { fireEvent } from "@/lib/webhooks";
 
 function getServiceClient() {
   return createClient(
@@ -90,6 +91,25 @@ export async function PATCH(req: NextRequest) {
     } catch (err) {
       console.error("[staff/update] writeAuditLog failed", err);
     }
+
+    // Fetch restaurant name for webhook context
+    const { data: restaurantRow } = await supabase
+      .from("restaurants")
+      .select("name")
+      .eq("id", userRow.restaurant_id)
+      .maybeSingle();
+
+    fireEvent(userRow.restaurant_id, "staff.updated", {
+      user_id: userId,
+      restaurant_id: userRow.restaurant_id,
+      name: updates.name ?? null,
+      email: updates.email ?? null,
+      changes: updates,
+      restaurant: {
+        id: userRow.restaurant_id,
+        name: restaurantRow?.name ?? null,
+      },
+    }).catch(err => console.error("[staff/update] webhook error:", err));
 
     return NextResponse.json({ success: true });
   } catch (err) {

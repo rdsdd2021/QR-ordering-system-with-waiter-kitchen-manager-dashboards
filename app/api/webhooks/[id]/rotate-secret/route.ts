@@ -3,7 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { generateSecret } from "@/lib/webhooks";
+import { generateSecret, fireEvent } from "@/lib/webhooks";
 import { writeAuditLog, getClientIp } from "@/lib/audit-log";
 import { getUserFromToken, extractBearerToken } from "@/lib/server-auth";
 
@@ -70,6 +70,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   } catch (err) {
     console.error("[webhooks/rotate-secret] writeAuditLog failed", err);
   }
+
+  fireEvent(restaurantId, "webhook.secret_rotated" as any, {
+    endpoint_id: id,
+    restaurant_id: restaurantId,
+    url: ep.url,
+    rotated_at: new Date().toISOString(),
+  }).catch(err => console.error("[webhooks/rotate-secret] webhook fire error:", err));
 
   // Return new secret ONCE
   return NextResponse.json({ secret: newSecret });

@@ -92,7 +92,7 @@
   - [x] 4.2 Update /api/orders/route.ts to call place_order_atomic
     - Remove the 3-step flow: INSERT orders, RPC calculate_item_prices_batch, INSERT order_items
     - Remove the routing mode fetch (now handled inside the RPC via get_initial_order_status)
-    - Replace with single: supabase.rpc('place_order_atomic', { p_restaurant_id, p_table_id, p_items: JSON.stringify(items.map(i => ({ menu_item_id: i.menu_item_id, quantity: i.quantity }))), p_customer_name, p_customer_phone, p_party_size })
+    - Replace with single: supabase.rpc('place_order_atomic', { p_restaurant_id, p_table_id, p_items: items.map(i => ({ menu_item_id: i.menu_item_id, quantity: i.quantity })), p_customer_name, p_customer_phone, p_party_size })
     - Keep all pre-checks in the route: rate limiting, party size validation, quantity validation (QW-6 added in task 5), check_table_has_unpaid_orders
     - Note: item.price from the request body is intentionally NOT passed to the RPC — the RPC fetches prices from DB
     - _Requirements: 11.2, 11.3_
