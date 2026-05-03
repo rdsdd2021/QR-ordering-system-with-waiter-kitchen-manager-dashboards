@@ -16,7 +16,8 @@ type Props = {
   restaurantId: string;
   tableId: string;
   onUpdateQuantity: (itemId: string, quantity: number) => void;
-  onOrderSuccess: () => void;
+  onOrderSuccess: () => void;   // called after success delay — switches to orders tab
+  onClearCart: () => void;      // called immediately on success — clears cart items
   savedCustomerInfo: CustomerInfo | null;
   onSaveCustomerInfo: (info: CustomerInfo) => void;
 };
@@ -34,6 +35,7 @@ export default function CartDrawer({
   tableId,
   onUpdateQuantity,
   onOrderSuccess,
+  onClearCart,
   savedCustomerInfo,
   onSaveCustomerInfo,
 }: Props) {
@@ -97,6 +99,7 @@ export default function CartDrawer({
       });
       setStep("success");
       setExpanded(false);
+      onClearCart(); // clear cart immediately — don't wait for the success screen to dismiss
       setTimeout(() => { onOrderSuccess(); setStep("cart"); }, 4000);
     } else if (id === "UNPAID_ORDERS_EXIST") {
       setStep("occupied");

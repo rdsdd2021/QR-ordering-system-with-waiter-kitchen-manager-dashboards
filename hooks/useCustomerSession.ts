@@ -31,10 +31,27 @@ export type ActiveOrder = {
   status: string;
   created_at: string;
   waiter_name: string | null;
-  items: Array<{ name: string; quantity: number }>;
+  items: Array<{ menu_item_id: string; name: string; quantity: number }>;
 };
 
 const SESSION_KEY = (tableId: string) => `customer_session_${tableId}`;
+
+// Use localStorage (not sessionStorage) so the session persists across tabs
+// in the same browser. A customer opening the same QR link in a second tab
+// should see their existing session, not the "table occupied" screen.
+// The session is explicitly cleared when billing completes, so there is no
+// stale-data risk.
+const storage = {
+  get: (key: string): string | null => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  },
+  set: (key: string, value: string): void => {
+    try { localStorage.setItem(key, value); } catch {}
+  },
+  remove: (key: string): void => {
+    try { localStorage.removeItem(key); } catch {}
+  },
+};
 
 export function useCustomerSession(restaurantId: string, tableId: string) {
   const [customerInfo, setCustomerInfoState] = useState<CustomerInfo | null>(null);
@@ -43,10 +60,10 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
   const [loadingOrders, setLoadingOrders] = useState(true);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseClient>["channel"]> | null>(null);
 
-  // ── Load session from sessionStorage on mount ──────────────────────
+  // ── Load session from localStorage on mount ───────────────────────
   useEffect(() => {
     try {
-      const stored = sessionStorage.getItem(SESSION_KEY(tableId));
+      const stored = storage.get(SESSION_KEY(tableId));
       if (stored) setCustomerInfoState(JSON.parse(stored));
     } catch {}
     // Mark session as loaded regardless of whether data was found.
@@ -58,17 +75,13 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
   // ── Save customer info ─────────────────────────────────────────────
   const saveCustomerInfo = useCallback((info: CustomerInfo) => {
     setCustomerInfoState(info);
-    try {
-      sessionStorage.setItem(SESSION_KEY(tableId), JSON.stringify(info));
-    } catch {}
+    storage.set(SESSION_KEY(tableId), JSON.stringify(info));
   }, [tableId]);
 
   // ── Clear session (called when billing is complete) ────────────────
   const clearSession = useCallback(() => {
     setCustomerInfoState(null);
-    try {
-      sessionStorage.removeItem(SESSION_KEY(tableId));
-    } catch {}
+    storage.remove(SESSION_KEY(tableId));
   }, [tableId]);
 
   // ── Fetch active orders for this table ─────────────────────────────
@@ -78,7 +91,7 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
       .select(`
         id, status, created_at, billed_at,
         waiter:users(name),
-        order_items(quantity, menu_item:menu_items(name))
+        order_items(quantity, menu_item_id, menu_item:menu_items(name))
       `)
       .eq("table_id", tableId)
       .is("billed_at", null)
@@ -93,6 +106,7 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
       created_at: o.created_at,
       waiter_name: o.waiter?.name ?? null,
       items: (o.order_items ?? []).map((oi: any) => ({
+        menu_item_id: oi.menu_item_id ?? "",
         name: oi.menu_item?.name ?? "Item",
         quantity: oi.quantity,
       })),
@@ -103,15 +117,11 @@ export function useCustomerSession(restaurantId: string, tableId: string) {
 
     // If all orders are billed (none left), clear the session
     if (orders.length === 0) {
-      // Only clear if the customer had a session AND their orders were billed
-      // (not just because old sessions from previous customers exist)
-      const stored = sessionStorage.getItem(SESSION_KEY(tableId));
+      const stored = storage.get(SESSION_KEY(tableId));
       if (stored) {
         let sessionData: { name: string; phone: string; since?: string } | null = null;
         try { sessionData = JSON.parse(stored); } catch {}
 
-        // Check if there are billed orders for THIS customer's phone number
-        // scoped to orders placed after the session was created
         const { data: billedCheck } = await supabase
           .from("orders")
           .select("id")

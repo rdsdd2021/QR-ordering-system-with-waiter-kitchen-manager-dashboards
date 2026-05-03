@@ -183,7 +183,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **Action** | Sees success screen for 2.5 seconds, cart clears, returns to menu |
 | **Touchpoint** | `CartDrawer` — success step |
 | **Emotion** | 😊 Relieved, satisfied |
-| **System** | `setTimeout` → `onOrderSuccess()` → `clearCart()` → step resets to "cart" |
+| **System** | On success: `onClearCart()` called immediately (clears cart items) → 4s success screen → `onOrderSuccess()` (switches to Orders tab) → step resets to "cart" |
 
 **Pain points:**
 - 2.5 second success screen is too brief — Sneha might miss it
@@ -251,18 +251,16 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 |-------|--------|------------|---------|-------|
 | **Return to menu** | Switches back to "Menu" tab | Menu tab | 😊 | Familiar now |
 | **Add items** | Adds dessert items to cart | `MenuItemCard` | 😊 | Same as before |
-| **Place order** | Taps "Place Order" | `CartDrawer` | 😊 Delighted | No form shown — `savedCustomerInfo` from `sessionStorage` skips directly to `submitOrder()` |
+| **Place order** | Taps "Place Order" | `CartDrawer` | 😊 Delighted | No form shown — `savedCustomerInfo` from `localStorage` skips directly to `submitOrder()` |
 | **Confirmation** | Sees success screen | Success step | 😊 | Fast, frictionless |
 | **Track** | Checks Orders tab | `OrderStatusTracker` | 😊 | Both orders visible |
 
-**What works well:** The session memory (name + phone stored in `sessionStorage`) makes repeat orders seamless — this is a key UX win.
+**What works well:** The session memory (name + phone stored in `localStorage`) makes repeat orders seamless across tabs — this is a key UX win.
 
 **Pain points:**
-- If Sneha opens the QR link in a new browser tab, `sessionStorage` is lost → form appears again
-- If she closes and reopens the same tab, `sessionStorage` persists — but this isn't obvious to her
+- If she closes the browser entirely and returns later, `localStorage` persists until billing completes — the form is skipped on return, which is the desired behaviour within a dining session
 
 **Opportunities:**
-- Consider `localStorage` with a TTL (e.g. 4 hours) so session survives tab closes within a dining window
 - Show a subtle "Ordering as Sneha" indicator so she knows her info is saved
 
 ---
@@ -539,7 +537,7 @@ Stage → Action → Touchpoint → Emotion → Pain Points → Opportunities
 | **Action** | Monitors Live Tables tab — sees which tables are occupied, what's ordered, who's serving |
 | **Touchpoint** | `TableSessions` component |
 | **Emotion** | 😊 Real-time visibility without walking the floor |
-| **System** | Supabase realtime channel `manager:{restaurant_id}` — subscribes to `orders` table changes and refreshes silently |
+| **System** | Supabase realtime channel `restaurant:{restaurant_id}` — subscribes to `orders` table changes and refreshes silently |
 
 **UI features (implemented):**
 - Stat bar: Active Tables · Bill Ready · Awaiting Attention · Today's Revenue · Avg. Order Value

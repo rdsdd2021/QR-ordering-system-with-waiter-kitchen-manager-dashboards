@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Plus, Edit2, Trash2, Loader2, X, Image as ImageIcon,
   FolderOpen, Tag, Lock, Upload, Table2, Check, PencilLine,
-  ChevronDown, ChevronRight, ArchiveRestore,
+  ChevronDown, ChevronRight, ArchiveRestore, Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,11 +24,12 @@ import {
   getMenuItemCategories, getMenuItemTags,
   setMenuItemCategories, setMenuItemTags,
   getArchivedMenuItems, restoreMenuItem,
+  getMenuItemRatings,
 } from "@/lib/api";
 import { getSupabaseClient } from "@/lib/supabase";
 import { useSubscription } from "@/hooks/useSubscription";
 import { cn } from "@/lib/utils";
-import type { MenuItem, FoodCategory, FoodTag } from "@/types/database";
+import type { MenuItem, FoodCategory, FoodTag, MenuItemRating } from "@/types/database";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,7 @@ export default function MenuManager({ restaurantId }: Props) {
   const [archivedItems, setArchivedItems] = useState<MenuItem[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [ratingsMap, setRatingsMap] = useState<Map<string, MenuItemRating>>(new Map());
 
   // Dialog (add new item)
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -119,16 +121,18 @@ export default function MenuManager({ restaurantId }: Props) {
 
   async function loadItems() {
     setLoading(true);
-    const [data, cats, tags, archived] = await Promise.all([
+    const [data, cats, tags, archived, ratings] = await Promise.all([
       getAllMenuItems(restaurantId),
       getFoodCategories(restaurantId),
       getFoodTags(restaurantId),
       getArchivedMenuItems(restaurantId),
+      getMenuItemRatings(restaurantId),
     ]);
     setItems(data);
     setAllCategories(cats);
     setAllTags(tags);
     setArchivedItems(archived);
+    setRatingsMap(new Map(ratings.map((r) => [r.menu_item_id, r])));
     setLoading(false);
   }
 
@@ -343,6 +347,7 @@ export default function MenuManager({ restaurantId }: Props) {
             onToggle={id => onPatch({ tagIds: edit.tagIds.includes(id) ? edit.tagIds.filter(x => x !== id) : [...edit.tagIds, id] })}
             getLabel={i => i.name} disabled={edit.saving} />
         </TableCell>
+        <TableCell className="py-2 text-xs text-muted-foreground">—</TableCell>
         <TableCell className="py-2">{renderAvailabilityToggle(item)}</TableCell>
         <TableCell className="py-2 text-right">
           <div className="flex justify-end gap-1">
@@ -359,6 +364,7 @@ export default function MenuManager({ restaurantId }: Props) {
   }
 
   function renderReadRow(item: MenuItem) {
+    const rating = ratingsMap.get(item.id);
     return (
       <TableRow key={item.id} className="group">
         <TableCell>
@@ -380,6 +386,17 @@ export default function MenuManager({ restaurantId }: Props) {
           {item.tags && item.tags.length > 0
             ? <div className="flex flex-wrap gap-1">{item.tags.map(t => <span key={t} className="text-xs px-1.5 py-0.5 rounded bg-muted">{t}</span>)}</div>
             : <span className="text-xs text-muted-foreground">—</span>}
+        </TableCell>
+        <TableCell>
+          {rating && rating.review_count > 0 ? (
+            <div className="flex items-center gap-1">
+              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold tabular-nums">{Number(rating.avg_rating).toFixed(1)}</span>
+              <span className="text-xs text-muted-foreground">({rating.review_count})</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
         </TableCell>
         <TableCell>{renderAvailabilityToggle(item)}</TableCell>
         <TableCell className="text-right">
@@ -406,6 +423,7 @@ export default function MenuManager({ restaurantId }: Props) {
       <TableHead className="w-[90px]">Image</TableHead>
       <TableHead className="min-w-[160px]">Categories</TableHead>
       <TableHead className="min-w-[160px]">Tags</TableHead>
+      <TableHead className="w-[90px]">Rating</TableHead>
       <TableHead className="w-[90px]">Available</TableHead>
       <TableHead className="w-[90px] text-right">Actions</TableHead>
     </TableRow>

@@ -9,8 +9,10 @@ import { useAuth } from "@/hooks/useAuth";
 import WaiterOrderCard from "@/components/waiter/WaiterOrderCard";
 import { useWaiterOrders } from "@/hooks/useWaiterOrders";
 import { useNotificationSounds } from "@/hooks/useNotificationSounds";
+import { useToast } from "@/hooks/useToast";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
+import { useRef, useEffect } from "react";
 
 type Props = {
   restaurant: Restaurant;
@@ -25,6 +27,7 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
   profileName: string | undefined;
 }) {
   const { notify, muted, toggleMute } = useNotificationSounds();
+  const { toast } = useToast();
   const isWaiterMode = restaurant.order_routing_mode === "waiter_first";
 
   const SECTIONS = [
@@ -57,6 +60,49 @@ function WaiterDashboard({ restaurant, waiterId, onSignOut, profileName }: {
 
   const { orders, loading, error, isConnected, takeOrder, acceptOrder, markServed, refetch } =
     useWaiterOrders(restaurant.id, waiterId, notify);
+
+  // Toast on new order assigned to this waiter, and when an order becomes ready.
+  // isInitialLoadRef prevents toasting for orders that already exist on page load.
+  const prevOrderIdsRef    = useRef<Set<string>>(new Set());
+  const prevOrderStatusRef = useRef<Map<string, string>>(new Map());
+  const isInitialLoadRef   = useRef(true);
+
+  useEffect(() => {
+    // Skip the first run — these are orders that were already there on mount,
+    // not genuinely new arrivals. Seed the refs silently.
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      orders.forEach((order) => {
+        prevOrderIdsRef.current.add(order.id);
+        prevOrderStatusRef.current.set(order.id, order.status);
+      });
+      return;
+    }
+
+    orders.forEach((order) => {
+      const isNew      = !prevOrderIdsRef.current.has(order.id);
+      const prevStatus = prevOrderStatusRef.current.get(order.id);
+
+      if (isNew && order.waiter_id === waiterId) {
+        toast({
+          title:       "New order assigned",
+          description: `Table ${order.table?.table_number ?? "?"}`,
+          variant:     "warning",
+          duration:    5000,
+        });
+      } else if (prevStatus && prevStatus !== order.status && order.status === "ready") {
+        toast({
+          title:       "Order ready to serve 🚀",
+          description: `Table ${order.table?.table_number ?? "?"}`,
+          variant:     "success",
+          duration:    5000,
+        });
+      }
+
+      prevOrderStatusRef.current.set(order.id, order.status);
+    });
+    prevOrderIdsRef.current = new Set(orders.map((o) => o.id));
+  }, [orders, waiterId, toast]);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">

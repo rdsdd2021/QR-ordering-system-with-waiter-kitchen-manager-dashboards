@@ -9,9 +9,10 @@ import { useAuth } from "@/hooks/useAuth";
 import OrderCard from "@/components/kitchen/OrderCard";
 import { useKitchenOrders } from "@/hooks/useKitchenOrders";
 import { useNotificationSounds } from "@/hooks/useNotificationSounds";
+import { useToast } from "@/hooks/useToast";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import type { Restaurant } from "@/types/database";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 type Props = {
   restaurant: Restaurant;
@@ -29,9 +30,31 @@ const COLUMNS = [
 function KitchenClientContent({ restaurant }: Props) {
   const { signOut, profile } = useAuth();
   const { notify, muted, toggleMute } = useNotificationSounds();
+  const { toast } = useToast();
   const { orders, loading, error, isConnected, advanceStatus, rejectOrder, newOrderIds, refetch } =
     useKitchenOrders(restaurant.id, notify);
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Toast on new order — fires when a new order ID appears in newOrderIds.
+  // newOrderIds is managed by useKitchenOrders and only contains genuinely
+  // new arrivals (not orders that existed on page load), so no initial-load guard needed.
+  const prevNewOrderIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const prev = prevNewOrderIdsRef.current;
+    newOrderIds.forEach((id) => {
+      if (!prev.has(id)) {
+        const order = orders.find((o) => o.id === id);
+        const tableNum = order?.table?.table_number;
+        toast({
+          title:       "New order received",
+          description: tableNum ? `Table ${tableNum}` : undefined,
+          variant:     "warning",
+          duration:    5000,
+        });
+      }
+    });
+    prevNewOrderIdsRef.current = new Set(newOrderIds);
+  }, [newOrderIds, orders, toast]);
 
   // Safety-net poll: silently re-fetch every 30s in case realtime missed an event.
   // This is a last resort — realtime handles the real-time updates.

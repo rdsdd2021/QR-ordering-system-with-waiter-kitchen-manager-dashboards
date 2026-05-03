@@ -58,6 +58,8 @@ Super Admin (PIN-gated)
 
 **Auth architecture:** `AuthProvider` (from `contexts/AuthContext`) wraps the entire app in `app/layout.tsx`. It initialises a Supabase auth session listener on mount and exposes `useAuth()` to all client components. The context provides: `user`, `profile`, `loading`, `error`, `signIn`, `signUp`, `signOut`, `redirectToDashboard`, and boolean helpers `isAuthenticated`, `isManager`, `isWaiter`, `isKitchen`.
 
+**Toast system:** `ToastProvider` (from `hooks/useToast`) and `<Toaster />` (from `components/Toaster`) are co-located in a single client component, `ToastProviderWithToaster` (from `components/ToastProviderWithToaster`), which is mounted globally in `app/layout.tsx` inside `AuthProvider`. Wrapping both in one client component boundary is required in the Next.js App Router — rendering them as separate client components from a server component would give them isolated React trees and break context sharing. Any client component can call `useToast()` to imperatively fire in-app notifications. Toasts stack bottom-right on desktop and bottom-center on mobile, auto-dismiss after 4 s by default (pass `duration: 0` for persistent), and support five variants: `default`, `success`, `warning`, `error`, `info`. A maximum of 5 toasts are shown at once — oldest is dropped when the limit is exceeded.
+
 ---
 
 ## 2. User Roles
@@ -188,16 +190,49 @@ session exists?
 
 ```
 On mount (gated on sessionLoaded from useCustomerSession):
-  useCustomerSession() reads sessionStorage and sets sessionLoaded=true in the same effect.
+  useCustomerSession() reads localStorage and sets sessionLoaded=true in the same effect.
   OrderPageClient waits for sessionLoaded before running the occupancy check, so
   customerInfo is always up-to-date when the check fires.
 
-  checkTableHasUnpaidOrders(table_id)
+  checkTableHasUnpaidOrders(table_id, customer_phone)
   └─ If true AND customerInfo is null (no session for this browser)
      → tableOccupied = true → shows "Table is occupied" screen
   └─ If true AND customerInfo is set (this browser owns the session)
      → normal flow
   └─ If false → normal flow
+
+Real-time occupancy updates:
+  A second useEffect subscribes to a Supabase postgres_changes channel:
+    channel: occupancy:{table_id}
+    event: * (INSERT, UPDATE, DELETE)
+    table: orders
+    filter: table_id=eq.{table_id}
+
+  On any change → re-runs checkTableHasUnpaidOrders() immediately.
+  This means:
+  - The "Table is occupied" screen disappears the moment the table is cleared
+    (e.g. manager bills the previous party) without requiring a page refresh.
+  - If a different customer places an order while this page is open, the occupied
+    screen appears in real time.
+  Channel is cleaned up (removeChannel) on component unmount.
+```
+
+### Welcome-Back Banner (returning customers)
+
+```
+Triggered after useCustomerSession() resolves (sessionLoaded=true) and customerInfo.phone is set.
+
+  supabase.rpc("get_customer_welcome", { p_restaurant_id, p_phone })
+  └─ Returns: { name, visit_count, last_seen_at, top_items[] }
+  └─ Only shown when visit_count > 1 (first-time visitors are not greeted)
+  └─ Stored in welcomeData state; dismissed via welcomeDismissed flag
+  └─ Fetched once per session load — the effect depends on [customerInfo?.phone, sessionLoaded]
+     so it does not re-fire on unrelated re-renders
+
+  Session reset: if customerInfo becomes null (billing cleared the session), welcomeData
+  and welcomeDismissed are both reset so the next customer at the same table gets a fresh
+  experience. The effect depends on [customerInfo, sessionLoaded] — the full object, not
+  just customerInfo?.phone — so the reset fires reliably on session clear.
 ```
 
 ### Geo-fencing (if enabled)
@@ -250,7 +285,7 @@ On "Place Order":
     → Validate: name non-empty, phone non-empty, party_size in range 1–50 (enforced in handleInfoSubmit)
     → submitOrder()
 
-  Case B — Saved customer info (sessionStorage):
+  Case B — Saved customer info (localStorage):
     → Skip form, call submitOrder() directly
 
 submitOrder():
@@ -268,15 +303,24 @@ submitOrder():
         └─ Falls back to fetching floor multiplier directly from DB if RPC fails
         └─ If DB fetch also fails, order is aborted (returns null) — no silent base-price fallback
      e. INSERT into order_items
-  3. On success → save customer info to sessionStorage
-               → show success screen (2.5s) → clear cart → back to menu
+  3. After the order row is committed, a background async block fires (non-blocking):
+     a. upsert_customer(restaurant_id, phone, name) RPC — only when both phone and name are present
+        └─ Creates or updates the customer profile row (unique on restaurant_id + phone)
+        └─ Increments visit_count on each call (tracks how many order sessions this customer has had)
+        └─ Errors are swallowed — failure does not affect the order response
+     b. Fires the order.placed webhook event (see Flow 10)
+  4. On success → save customer info to localStorage
+               → `onClearCart()` called immediately (clears cart items)
+               → show success screen (4s)
+               → `onOrderSuccess()` called after delay (switches to Orders tab)
+               → step resets to "cart"
 ```
 
 ### Order Status Tracking
 
 ```
 Tab: "Orders"
-  - useCustomerSession() loads active orders from sessionStorage
+  - useCustomerSession() loads active orders from localStorage
     └─ Query: billed_at IS NULL AND status != 'cancelled'
        Cancelled orders are excluded — they do not appear in the customer's active order list
   - useRealtimeOrderStatus() subscribes to channel: customer:{restaurant_id}:{table_id}
@@ -284,9 +328,48 @@ Tab: "Orders"
     pending → confirmed → preparing → ready → served
     (cancelled is a terminal state — order is excluded from the active list entirely)
   - Customers can cancel orders in 'pending' or 'pending_waiter' status via a Cancel button
-    in OrderStatusTracker. The DB RLS policy 'customers_can_cancel_pending_orders' enforces this.
-  - Session clears from sessionStorage when all orders have billed_at set
+    in OrderStatusTracker. Cancellation calls the cancel_order_by_customer(p_order_id, p_customer_phone)
+    RPC, which verifies ownership and cancellable status server-side. Returns 'ok', 'wrong_owner',
+    'not_cancellable', or 'not_found'. The component requires a non-null customerPhone prop;
+    if it is null the cancel is blocked with an error message.
+  - Session clears from localStorage when all orders have billed_at set
     (cancelled orders are excluded from this check — they never block session clear)
+  - On every status change, OrderPageClient fires a toast notification (5 s duration)
+    regardless of which tab the customer is currently viewing:
+      confirmed  → "Order confirmed ✓"        (success)
+      preparing  → "Kitchen is cooking 🍳"    (info)
+      ready      → "Your order is ready! 🚀"  (success)
+      served     → "Enjoy your meal! 😊"      (success)
+      cancelled  → "Order cancelled"           (warning)
+    Guard: if tableOccupied is true (table belongs to a different session), the entire
+    effect returns early — no toasts are fired and no reviews are queued.
+```
+
+### Review Prompt (C13)
+
+```
+When an order transitions to status = 'served':
+  - OrderPageClient detects the status change via a useEffect watching activeOrders
+  - Guard: if tableOccupied is true the effect returns early — no review is queued
+  - The order is pushed onto a reviewQueue (ReviewableOrder[])
+    └─ Deduplication: order IDs already in the queue are skipped
+  - The first un-dismissed entry in the queue is shown as a ReviewPrompt section
+    (rendered in the Orders tab area, above the order list)
+
+ReviewPrompt behaviour:
+  - Rendered as a compact inline section (no separate card chrome) attached below the served order
+  - All ordered items are shown at once; customer rates each with small (h-4 w-4) stars
+  - Optional comment field per item (toggled by a "+ add comment" link after rating)
+  - Single "Submit" button submits all rated items in parallel via createReview() in lib/api.ts
+    └─ Items left at 0 stars are skipped — only rated items are saved
+    └─ POST creates a review row: order_id + menu_item_id + rating + comment + customer_phone
+    └─ Unique DB index enforces one review per (order_id, menu_item_id) pair
+  - Footer shows a status hint ("Tap stars to rate" / "X unrated" / "All rated") or inline error
+  - Submit is disabled until at least one item is rated
+  - If all submissions fail → shows inline error in footer; partial success is treated as success
+  - When submitted → shows a compact "Thanks for your feedback!" confirmation row (green tint)
+  - Dismissable at any time via the × button (non-blocking — skipping is always allowed)
+  - After dismiss or completion → next queued review is shown (if any)
 ```
 
 ### Variations
@@ -299,13 +382,14 @@ Tab: "Orders"
 ### Pitfalls
 
 - Cart is persisted to `sessionStorage` (key: `cart_{tableId}`) and survives page refreshes within the same tab. It is cleared on successful order placement or when `tableId` is not provided.
-- `tableOccupied` check is resolved via a one-shot `useEffect` after the first render cycle — no arbitrary delay. Fast loads will not flash the normal UI before the occupied screen appears.
+- `tableOccupied` check is resolved via a one-shot `useEffect` after the first render cycle — no arbitrary delay. Fast loads will not flash the normal UI before the occupied screen appears. A second `useEffect` subscribes to `postgres_changes` on the `orders` table (filtered to the current `table_id`) so the occupied/free state updates in real time: the blocked screen disappears the moment the table is cleared, and reappears if another customer places an order while the page is open.
 - Geo-fencing relies on browser geolocation. `geoBlocked` only triggers when `status === "denied"` (provably outside the radius). If the user denies permission (`status === "error"`), a soft amber warning is shown but ordering is not blocked.
-- `sessionStorage` is tab-scoped. Opening the QR link in a new tab loses the session — the table will appear occupied to the new tab.
+- Customer session (name, phone, active orders) is stored in `localStorage` and shared across all tabs in the same browser. Opening the QR link in a second tab correctly resumes the existing session rather than showing the "Table is occupied" screen. The session is explicitly cleared when billing completes, so there is no stale-data risk. Note: the cart (`useCart`) is still stored in `sessionStorage` and remains tab-scoped.
 - If `calculate_item_prices_batch()` RPC is unavailable, the floor multiplier is fetched directly from the DB. If that also fails, the order is aborted (returns null) — no silent base-price fallback.
 - `party_size` is validated in `CartDrawer.handleInfoSubmit` (range 1–50). A DB CHECK constraint `orders_party_size_check` also enforces this range server-side.
 - Menu items with `is_available=false` are hidden from customers but can still be in the DB. If a manager marks an item unavailable after a customer adds it to cart, the cart still shows it — the order will succeed (price is stored at order time), but the kitchen will see an item that's technically unavailable.
 - **Rate limiting (G5):** Order submission goes through `POST /api/orders` (server-side) rather than calling `placeOrder()` directly from the client. This allows the server to enforce rate limiting. If the server returns HTTP 429, `CartDrawer` transitions to the error step immediately — no retry is attempted. The customer must wait before trying again.
+- **Review phone capture:** `ReviewableOrder` captures `customerPhone` at the moment the order transitions to `served` (inside the `useEffect` in `OrderPageClient`). `OrderStatusTracker` passes `review.customerPhone` — not the live `customerPhone` prop — to `ReviewPrompt`. This is intentional: billing can clear the customer session (and thus the live prop) before the customer submits a review, so using the snapshot ensures the phone is always attached to the review row.
 
 ---
 
@@ -481,6 +565,17 @@ markServed(orderId):
 - **Waiter-first mode (non-broadcast):** Waiters see `pending_waiter` orders in "Needs Attention" and must accept before kitchen sees them.
 - **Waiter-first mode (broadcast):** Waiters see both `pending_waiter` and `confirmed`-but-unassigned orders in "Available to Accept". Any waiter can claim an unassigned confirmed order via "Take Order".
 - **Auto-assignment:** `auto_assign_waiter_from_session` trigger fires on order INSERT — if the table already has an open `table_session` with a `waiter_id`, the new order is automatically assigned to that waiter.
+
+### In-Component Toast Notifications
+
+`WaiterClient` fires toast notifications inside a `useEffect` that runs whenever the `orders` array changes (tracked via `prevOrderIdsRef` and `prevOrderStatusRef`):
+
+| Event | Toast variant | Message |
+|-------|--------------|---------|
+| New order appears with `waiter_id === currentWaiterId` | `warning` | "New order assigned" + table number |
+| Existing order transitions to `status = 'ready'` | `success` | "Order ready to serve 🚀" + table number |
+
+**Initial-load suppression:** A third ref, `isInitialLoadRef`, is set to `true` on mount. The first time the effect runs it silently seeds `prevOrderIdsRef` and `prevOrderStatusRef` with the orders that were already present, then flips the flag to `false` and returns without toasting. This prevents spurious "New order assigned" toasts for orders that existed before the waiter opened the page. All subsequent effect runs compare against the seeded refs and toast only for genuinely new arrivals or status transitions.
 
 ### Pitfalls
 
@@ -688,6 +783,37 @@ Analytics component
 > **Architecture:** All analytics aggregation is performed server-side via a single `get_analytics_summary(p_restaurant_id, p_range_start, p_range_end, p_prev_start, p_prev_end)` Postgres RPC. This replaces the previous approach of 9 parallel client-side Supabase queries. The RPC returns a single JSON object with keys: `curr_sales`, `prev_sales`, `top_items`, `daily_data`, `waiter_stats`, `payment_split`, `status_counts`, `hourly_traffic`. If the RPC returns an error the load function logs it and returns early — no partial state is applied.
 
 > **Note:** All scoping (date range, restaurant) is enforced inside the RPC. Hourly traffic hours with no orders render as zero bars. The `get_analytics_summary` RPC must exist in the database; if it is missing the component will log an RPC error and show no data (no silent fallback to raw queries).
+
+**Customers (`customers` tab)**
+```
+CustomersManager component
+- Calls the get_customer_list(p_restaurant_id) Postgres RPC on mount and on manual refresh.
+  Returns one row per unique customer phone number with billed orders in the restaurant.
+- Summary stat cards (top of view):
+    Total Customers  — unique phone numbers
+    Repeat Rate      — % of customers with visit_count > 1 (+ absolute count)
+    Total Revenue    — sum of total_spend across all customers
+    Avg Order Value  — mean of avg_order_value across all customers
+- Toolbar: free-text search (name or phone), refresh button, result count
+- Sortable columns: Last Seen (default desc), Visits, Spend, Avg Order — toggling the same
+  column reverses direction; switching columns resets to desc
+- Each row shows: name, phone, visit count badge (green ≥4, blue ≥2, grey =1),
+  total spend, avg order value, last-seen relative label + absolute date, favourite item
+- Rows are expandable (click anywhere on the row) to reveal:
+    First visit date, orders placed count, avg order value, favourite item
+- Empty state: shown when no customers exist or no search results match
+- Data shape (Customer type):
+    phone, name, visit_count, first_seen_at, last_seen_at, total_spend,
+    avg_order_value, order_count, top_item_name, days_since_last
+```
+
+Pitfalls:
+- `get_customer_list` must exist in the database. If the RPC is missing or returns an error,
+  the component silently shows an empty list (no error banner).
+- `visit_count` is incremented by `upsert_customer()` on each order session, not on each
+  individual order — a customer who places 3 orders in one sitting counts as 1 visit.
+- `total_spend` and `avg_order_value` reflect billed orders only (orders with `billed_at` set).
+  Unbilled or cancelled orders are excluded from the customer profile.
 
 ### Menu Group
 
@@ -911,7 +1037,7 @@ After billing:
   - billed_at is set → order excluded from "unpaid" checks
   - When ALL non-cancelled orders at a table have billed_at set:
     → close_table_session() is called automatically
-    → Customer sessionStorage session clears
+    → Customer localStorage session clears
     → Table shows as "free" in Live Tables
   - Cancelled orders are excluded from this check — they never block session close
 
@@ -1554,10 +1680,14 @@ All menu events share the same payload shape:
 | Field | Type | Notes |
 |-------|------|-------|
 | `item_id` | string (uuid) | The menu item UUID |
+| `restaurant_id` | string (uuid) | The restaurant UUID |
 | `name` | string \| null | Item name |
 | `price` | number \| null | Item price |
 | `description` | string \| null | Item description |
 | `tags` | string[] \| null | Item tags (e.g. `["veg", "spicy"]`) |
+| `image_url` | string \| null | Item image URL |
+| `is_available` | boolean \| null | Availability flag at time of event |
+| `category_id` | string (uuid) \| null | Category assigned to the item, or `null` if uncategorized. Present on `menu.item_created`; omitted on `menu.item_updated` and `menu.item_archived`. |
 
 Note: `menu.item_deleted` has been replaced by `menu.item_archived` — items are now soft-deleted (archived) rather than hard-deleted.
 
@@ -1793,7 +1923,7 @@ Same structure as `food_categories` minus `parent_id`.
 | `log_order_status_change` | trigger function | Inserts row into `order_status_logs` on every status change |
 | `calculate_order_total` | `(p_order_id)` | Returns SUM(quantity * price) for all order_items |
 | `generate_bill` | `(p_order_id, p_force boolean DEFAULT false)` | Requires status=`served` by default. When `p_force=true`, auto-advances non-served orders to `served` before billing. Sets `total_amount` + `billed_at`. Returns order details. |
-
+| `cancel_order_by_customer` | `(p_order_id uuid, p_customer_phone text)` | Verifies the order belongs to `p_customer_phone` and is in a cancellable status (`pending` or `pending_waiter`), then sets status to `cancelled`. Returns `'ok'`, `'wrong_owner'`, `'not_cancellable'`, or `'not_found'`. |
 ### Pricing
 
 | Function | Signature | Description |
@@ -1894,7 +2024,8 @@ Same structure as `food_categories` minus `parent_id`.
 |---------|-------------|---------|
 | `kitchen:{restaurant_id}:{reconnectKey}` | Kitchen dashboard | Order INSERT/UPDATE via `postgres_changes` (auth-gated by RLS, requires valid JWT) |
 | `waiter:{restaurant_id}` | Waiter dashboard | Order INSERT/UPDATE via `postgres_changes` (auth-gated by RLS, requires valid JWT) |
-| `manager:{restaurant_id}` | Manager dashboard | Order INSERT/UPDATE, menu changes |
+| `manager:{restaurant_id}` | Manager dashboard (`MenuManager`) | Menu broadcast events (`menu_changed`) |
+| `restaurant:{restaurant_id}` | Manager dashboard (`TableSessions`) | Order INSERT/UPDATE via `postgres_changes`; also used for `table_reminder` broadcasts |
 | `customer:{restaurant_id}:{table_id}` | Customer order tracker | Order UPDATE for that table |
 
 > **Kitchen channel note:** `useKitchenOrders` subscribes to `kitchen:{restaurantId}:{reconnectKey}` (no HMAC token in the Supabase channel name). The DB trigger broadcasts to `kitchen:{restaurantId}` — the reconnect key suffix is appended client-side to force a fresh subscription on reconnect. Security for the kitchen feed relies on the `postgres_changes` subscription, which is auth-gated by RLS and requires a valid session JWT. The public `.on("broadcast", ...)` handlers have been removed from `useKitchenOrders` and `useWaiterOrders` — both hooks now use `postgres_changes` only.
@@ -2060,7 +2191,7 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 | # | Issue | Impact | Notes |
 |---|-------|--------|-------|
 | A1 | Cart persisted per-tab in `sessionStorage` | Refresh preserves cart; new tab = new cart | Cart keyed by `cart_{tableId}` — cleared on order success or when `tableId` absent |
-| A2 | `sessionStorage` is tab-scoped | New tab = new session = table appears occupied | Customer must use same tab throughout |
+| A2 | ~~`sessionStorage` is tab-scoped for customer session~~ | ~~New tab = new session = table appears occupied~~ | **Fixed** — `useCustomerSession` now uses `localStorage` so the session is shared across all tabs in the same browser. Session is explicitly cleared on billing completion. Cart (`useCart`) remains in `sessionStorage` and is still tab-scoped. |
 | A3 | ~~Staff with no `users` row loops to `/onboarding`~~ | ~~Confusing UX~~ | **Fixed** — `AuthRedirect` now signs the user out and redirects to `/login?error=account_incomplete` instead of looping |
 | A4 | ~~`is_active=false` users can still log in~~ | ~~Soft-disabled staff can access dashboards~~ | **Fixed** — `loadUserProfile` selects `is_active`, signs out deactivated users immediately, returns `{ deactivated: true }`; `signIn` checks this and returns an error |
 | A5 | ~~Duplicate `users` rows for same `auth_id`~~ | ~~`maybeSingle()` returns first silently~~ | **Fixed** — `UNIQUE` constraint `users_auth_id_unique` added to `users.auth_id` |
@@ -2071,10 +2202,11 @@ useRealtimeOrderStatus() subscribes to customer:{restaurant_id}:{table_id}
 |---|-------|--------|-------|
 | B1 | ~~Cart items not removed when menu item deleted~~ | ~~Order fails at DB level (FK RESTRICT)~~ | **Fixed** — `useRealtimeMenu` DELETE handler calls `invalidateCartItem(itemId)` before removing from list; amber warning banner shown |
 | B2 | ~~Geo-fence blocks ordering if permission denied~~ | ~~Customer physically present but blocked~~ | **Fixed** — `geoBlocked` only triggers on `status === "denied"` (provably outside radius); `status === "error"` (permission denied) shows soft amber warning but does not block ordering |
-| B3 | ~~`tableOccupied` check has 300ms delay~~ | ~~Brief flash of normal UI~~ | **Fixed** — `useCustomerSession` now exposes `sessionLoaded` (set in the same effect that reads sessionStorage); `OrderPageClient` gates the occupancy check on `sessionLoaded` instead of a one-shot `useEffect` workaround, guaranteeing `customerInfo` is correct when the check fires |
+| B3 | ~~`tableOccupied` check has 300ms delay~~ | ~~Brief flash of normal UI~~ | **Fixed** — `useCustomerSession` now exposes `sessionLoaded` (set in the same effect that reads localStorage); `OrderPageClient` gates the occupancy check on `sessionLoaded` instead of a one-shot `useEffect` workaround, guaranteeing `customerInfo` is correct when the check fires |
 | B4 | ~~Floor pricing silently falls back to base price~~ | ~~Customer charged wrong amount~~ | **Fixed** — fallback now fetches floor multiplier directly from DB; if that also fails, order is aborted (returns null) |
-| B5 | ~~No order cancellation for customers~~ | ~~Customer must contact staff~~ | **Fixed** — customers can cancel orders in `pending` or `pending_waiter` status via Cancel button in `OrderStatusTracker`; DB RLS policy `customers_can_cancel_pending_orders` enforces this |
+| B5 | ~~No order cancellation for customers~~ | ~~Customer must contact staff~~ | **Fixed** — customers can cancel orders in `pending` or `pending_waiter` status via Cancel button in `OrderStatusTracker`. Cancellation now goes through the `cancel_order_by_customer(p_order_id, p_customer_phone)` RPC, which verifies ownership and cancellable status atomically server-side. `OrderStatusTracker` requires a `customerPhone` prop (passed from `OrderPageClient`); if it is `null` the cancel is blocked client-side with an error message. The RPC returns `'ok'`, `'wrong_owner'`, `'not_cancellable'`, or `'not_found'` — each maps to a distinct error message in the UI. |
 | B6 | ~~`party_size` is optional and client-validated~~ | ~~Analytics may have gaps~~ | **Fixed** — `CartDrawer` validates party_size (1–50) in `handleInfoSubmit`; DB CHECK constraint `orders_party_size_check` enforces the range |
+| B7 | ~~`OrderStatusTracker` rendered with empty orders when only a review prompt is visible~~ | ~~Empty tracker shown alongside review prompt~~ | **Fixed** — Orders tab now renders `OrderStatusTracker` only when `activeOrders.length > 0`; renders `null` when `activeOrders` is empty but `currentReview` is still showing |
 
 ### Order Status & Routing
 

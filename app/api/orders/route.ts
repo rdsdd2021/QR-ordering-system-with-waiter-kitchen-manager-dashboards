@@ -154,6 +154,18 @@ export async function POST(req: NextRequest) {
   (async () => {
     try {
       const svc = getServiceClient();
+
+      // ── Upsert customer profile ──────────────────────────────────────────
+      // Increment visit_count only when this is a new order session (first order
+      // from this phone at this restaurant today). Simple approach: always upsert
+      // and increment — the unique constraint on (restaurant_id, phone) handles dedup.
+      if (customerPhone?.trim() && customerName?.trim()) {
+        await svc.rpc("upsert_customer", {
+          p_restaurant_id: restaurantId,
+          p_phone:         customerPhone.trim(),
+          p_name:          customerName.trim(),
+        });
+      }
       const [orderRes, restaurantRes, tableRes] = await Promise.all([
         svc.from("orders")
           .select("status, customer_name, customer_phone, party_size, created_at, order_items(quantity, price, name, menu_item_id)")

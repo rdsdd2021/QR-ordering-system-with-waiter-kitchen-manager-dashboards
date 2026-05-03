@@ -188,6 +188,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | C10 | Table occupancy guard | Must Have | If another customer has unpaid orders at the table, new customers are blocked from ordering |
 | C11 | Call waiter | Should Have | Customer can broadcast a "call waiter" signal from the ordering page. Sends a Supabase broadcast event (`call_waiter`) on the `restaurant:{id}` channel with `table_id`, `table_number`, and optional `customer_name`. Button is disabled for 60 seconds after use to prevent spam. Non-blocking — failure is silently swallowed. |
 | C12 | Estimated wait time | Should Have | After placing an order, the cart drawer fetches `getPerformanceMetrics()` and displays an estimated wait time (derived from `avgPrepSeconds`) with a `Clock` icon. Addresses the customer pain point of not knowing how long "Preparing" will take. |
+| C13 | Menu item reviews | Should Have | After an order is served, customers can rate individual items (1–5 stars) and leave an optional comment. All items are shown at once in a compact inline section attached to the served order card — the customer rates each, then submits everything with a single "Submit" button. Items left at 0 stars are skipped. Reviews are linked to the order (`order_id` + `menu_item_id`) to verify the customer actually ordered the item. One review per (order, item) pair — enforced by a unique DB index. Submitted via `createReview()` in `lib/api.ts`. |
 
 ---
 
@@ -243,6 +244,7 @@ Features are categorized as **Must Have (MVP)**, **Should Have**, or **Nice to H
 | M16 | Restaurant details | Must Have | Edit restaurant name and slug. Upload a logo image (stored in Supabase `restaurant-logos` bucket, `{restaurant_id}/logo.{ext}`); `logo_url` is saved to the `restaurants` table and the page reloads to reflect the new logo. |
 | M17 | Manager-initiated orders | Should Have | Manager can place a new order on behalf of a customer directly from the Live Tables detail panel. Opens an "Add Order" modal with menu search, cart, and running total. Uses the same `placeOrder()` API as the customer ordering page, pre-filling session customer info. |
 | M19 | Activity Log | Should Have | Manager can view a tamper-evident audit log of all significant actions in their restaurant from the Settings tab. Opens in a centered modal dialog (92 vw × 88 vh) with date range presets, severity/actor/action filters, free-text search, pagination, and CSV export. Scoped to the manager's own restaurant only. |
+| M21 | Customer analytics | Should Have | Dedicated "Customers" tab in the manager dashboard. Displays a sortable, searchable list of all customers (unique phone numbers) who have placed billed orders, sourced from the `get_customer_list` Postgres RPC. Summary cards show total customers, repeat rate, total revenue, and avg order value. Each row shows name, phone, visit count, total spend, avg order value, last-seen date, and favourite item. Rows are expandable to reveal first-visit date, order count, and avg order value detail. Sortable by last seen, visit count, total spend, and avg order value. |
 
 ---
 
@@ -504,7 +506,7 @@ These are explicitly not being built in the current version. They are documented
 | R3 | Kitchen staff find the interface too complex | Low | High | Kitchen UI is intentionally minimal — large text, one-tap actions only. |
 | R4 | Stripe payment failure during onboarding | Low | Medium | Free plan available as fallback. Stripe errors shown clearly. |
 | R5 | Restaurant deactivated mid-service | Low | High | Admin deactivation is immediate. No grace period currently. Customers scanning QR codes will see a friendly "Restaurant is currently closed" screen instead of a 404. |
-| R6 | Two customers scan same QR simultaneously | Medium | Medium | Billing safety check + sessionStorage scoping handles this. |
+| R6 | Two customers scan same QR simultaneously | Medium | Medium | Billing safety check + localStorage session scoping handles this. Customer session persists across tabs so the same customer opening a second tab resumes their session rather than seeing the table as occupied. |
 | R7 | Menu item deleted while in customer cart | Low | Low | `useRealtimeMenu()` DELETE event calls `invalidateCartItem()` on `useCart`, which removes the item from the cart and fires the optional `onItemInvalidated` callback so the UI can show a toast/banner. Cart is kept consistent before order submission. |
 | R8 | Geo-fencing blocks legitimate customers | Medium | Medium | Customers can request staff to place order manually. Geo-fence is optional. |
 | R9 | `orders` public UPDATE RLS policy | High | High | Any unauthenticated user can update order status. Needs to be tightened. |

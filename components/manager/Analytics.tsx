@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { getPerformanceMetrics } from "@/lib/api";
+import { getPerformanceMetrics, getRestaurantReviews } from "@/lib/api";
 import {
   Loader2, TrendingUp, TrendingDown, ShoppingCart, Clock,
   ChefHat, Zap, CreditCard, RefreshCw,
@@ -10,6 +10,7 @@ import {
   BarChart3, Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { ReviewWithItem } from "@/types/database";
 
 type Props = { restaurantId: string };
 
@@ -346,6 +347,7 @@ export default function Analytics({ restaurantId }: Props) {
   const [payments, setPayments]       = useState<PaymentSplit[]>([]);
   const [statusCounts, setStatusCounts] = useState<OrderStatusCount[]>([]);
   const [hourly, setHourly]             = useState<HourlyBucket[]>([]);
+  const [reviews, setReviews]           = useState<ReviewWithItem[]>([]);
 
   // Debounce ref — prevents firing a new load while one is already in-flight
   // when the user rapidly switches range tabs.
@@ -371,7 +373,7 @@ export default function Analytics({ restaurantId }: Props) {
       prevEnd.setDate(prevEnd.getDate() - 1);
 
       // Single RPC call replaces 9 separate queries — all aggregation happens in Postgres
-      const [summaryResult, metricsData] = await Promise.all([
+      const [summaryResult, metricsData, reviewsData] = await Promise.all([
         supabase.rpc("get_analytics_summary", {
           p_restaurant_id: restaurantId,
           p_range_start:   rangeStartStr,
@@ -380,6 +382,7 @@ export default function Analytics({ restaurantId }: Props) {
           p_prev_end:      prevEnd.toISOString().split("T")[0],
         }),
         getPerformanceMetrics(restaurantId),
+        getRestaurantReviews(restaurantId, 20),
       ]);
 
       if (summaryResult.error) {
@@ -406,6 +409,7 @@ export default function Analytics({ restaurantId }: Props) {
       setPayments(s.payment_split ?? []);
       setStatusCounts(s.status_counts ?? []);
       setMetrics(metricsData);
+      setReviews(reviewsData);
 
       // Build full 24-hour array from sparse hourly data
       const hMap = new Map((s.hourly_traffic ?? []).map((h) => [h.hour, h.orders]));
@@ -769,6 +773,83 @@ export default function Analytics({ restaurantId }: Props) {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Customer reviews ───────────────────────────────────────── */}
+      <div className="rounded-lg border bg-card p-5">
+        <SectionHeader title="Recent Customer Reviews" />
+        {reviews.length === 0 ? (
+          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed">
+            <p className="text-sm text-muted-foreground">No reviews yet — they appear here after customers rate their orders</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Summary row */}
+            {(() => {
+              const total = reviews.length;
+              const avg = reviews.reduce((s, r) => s + r.rating, 0) / total;
+              const dist = [5, 4, 3, 2, 1].map((star) => ({
+                star,
+                count: reviews.filter((r) => r.rating === star).length,
+              }));
+              return (
+                <div className="flex items-center gap-6 pb-4 border-b">
+                  {/* Big average */}
+                  <div className="text-center shrink-0">
+                    <p className="text-4xl font-bold tabular-nums">{avg.toFixed(1)}</p>
+                    <div className="flex items-center justify-center gap-0.5 mt-1">
+                      {[1,2,3,4,5].map((s) => (
+                        <Star key={s} className={cn("h-3.5 w-3.5", s <= Math.round(avg) ? "fill-amber-400 text-amber-400" : "fill-transparent text-muted-foreground/30")} />
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{total} review{total !== 1 ? "s" : ""}</p>
+                  </div>
+                  {/* Distribution bars */}
+                  <div className="flex-1 space-y-1.5">
+                    {dist.map(({ star, count }) => {
+                      const pct = total > 0 ? (count / total) * 100 : 0;
+                      return (
+                        <div key={star} className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground w-3 text-right shrink-0">{star}</span>
+                          <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-amber-400 transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground w-4 tabular-nums shrink-0">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Individual reviews */}
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+              {reviews.map((r) => (
+                <div key={r.id} className="flex items-start gap-3 py-2 border-b border-border/50 last:border-0">
+                  <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
+                    {[1,2,3,4,5].map((s) => (
+                      <Star key={s} className={cn("h-3 w-3", s <= r.rating ? "fill-amber-400 text-amber-400" : "fill-transparent text-muted-foreground/20")} />
+                    ))}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold truncate">{r.item_name}</p>
+                    {r.comment && (
+                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{r.comment}</p>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground shrink-0 mt-0.5">
+                    {new Date(r.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

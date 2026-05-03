@@ -287,7 +287,7 @@ All tables have RLS enabled. The live database currently holds 16 restaurants, 8
 | order_items | id, order_id, menu_item_id, quantity, price | Price stored at order time |
 | order_status_logs | id, order_id, old_status, new_status, changed_by, created_at | Full audit trail of every status change |
 | table_sessions | id, restaurant_id, table_id, waiter_id, opened_at, closed_at | Unique on (table_id, closed_at) - one open session per table |
-| reviews | id, menu_item_id, rating (1-5), comment, created_at | Customer reviews for menu items |
+| reviews | id, menu_item_id, order_id, restaurant_id, customer_phone, rating (1-5), comment, created_at | Customer reviews for menu items; linked to order and restaurant for manager display |
 
 ### Billing tables
 
@@ -756,6 +756,21 @@ When a critical audit event is written, dispatchCriticalAlert() fires fire-and-f
 3. Broadcasts critical_alert event on critical-alerts:{restaurant_id} Realtime channel
 4. Retries up to 3 times with 10-second intervals on failure
 5. Marks notification delivered or failed
+
+#### Manager UI — CriticalAlertToast
+
+`ManagerClient` subscribes to the `critical-alerts:{restaurant_id}` Realtime channel. When a
+`critical_alert` event arrives, it renders a `CriticalAlertToast` overlay at the top of the
+manager dashboard. The toast shows:
+
+- A `ShieldAlert` icon and "Security Alert" heading
+- The actor name, a human-readable action label (underscores → spaces, dots → " — "), and the
+  affected resource name when available
+- A dismiss button (×) to clear the alert
+
+Alerts are queued in component state (capped at 5 simultaneous toasts, newest first). Each alert
+auto-dismisses after 12 seconds or can be dismissed manually. Alerts render above all other page
+content including the subscription expiry banner.
 
 ### Querying audit logs
 

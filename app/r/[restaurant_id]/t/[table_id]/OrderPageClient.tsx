@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell, AlertTriangle } from "lucide-react";
+import { MapPin, Loader2, UtensilsCrossed, ClipboardList, Lock, Bell, AlertTriangle, Sparkles } from "lucide-react";
 import { useCart } from "@/hooks/useCart";
 import { useRealtimeMenu } from "@/hooks/useRealtimeMenu";
 import { useGeofence } from "@/hooks/useGeofence";
@@ -9,12 +9,28 @@ import { useCustomerSession } from "@/hooks/useCustomerSession";
 import MenuItemCard from "@/components/MenuItemCard";
 import CartDrawer from "@/components/CartDrawer";
 import OrderStatusTracker from "@/components/OrderStatusTracker";
+import ReviewPrompt from "@/components/ReviewPrompt";
 import { getSupabaseClient } from "@/lib/supabase";
 import { checkTableHasUnpaidOrders } from "@/lib/api";
+import { useToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
 import type { MenuItem, Restaurant, RestaurantTable, Floor } from "@/types/database";
 
+type WelcomeData = {
+  name: string;
+  visit_count: number;
+  last_seen_at: string;
+  top_items: string[];
+};
+
 type Tab = "menu" | "orders";
+
+// An order that has been served and is ready for review
+type ReviewableOrder = {
+  orderId: string;
+  customerPhone: string | null;
+  items: Array<{ menu_item_id: string; name: string; quantity: number }>;
+};
 
 type Props = {
   restaurant: Restaurant;
@@ -46,7 +62,7 @@ export default function OrderPageClient({
     });
   }, []);
 
-  const { cartItems, addToCart, updateQuantity, clearCart, invalidateCartItem, totalPrice, totalItems } = useCart(
+  const { cartItems, addToCart, updateQuantity, clearCart, invalidateCartItem, totalPrice } = useCart(
     floorInfo?.price_multiplier ?? 1.0,
     table.id,
     handleItemInvalidated,
@@ -57,23 +73,127 @@ export default function OrderPageClient({
     table.id
   );
 
+  const { toast } = useToast();
+
+  // ── Welcome-back data ────────────────────────────────────────────────
+  const [welcomeData, setWelcomeData] = useState<WelcomeData | null>(null);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+
+  useEffect(() => {
+    // Session cleared (billing complete) — reset welcome banner so next
+    // customer at this table gets a fresh experience.
+    if (!customerInfo) {
+      setWelcomeData(null);
+      setWelcomeDismissed(false);
+      return;
+    }
+    if (!customerInfo.phone || !sessionLoaded) return;
+    const supabase = getSupabaseClient();
+    supabase
+      .rpc("get_customer_welcome", {
+        p_restaurant_id: restaurant.id,
+        p_phone: customerInfo.phone,
+      })
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const row = data[0];
+          // Only show welcome banner for returning customers (visit_count > 1)
+          if (row.visit_count > 1) setWelcomeData(row as WelcomeData);
+        }
+      });
+  }, [customerInfo, sessionLoaded, restaurant.id]);
+
   // ── Table occupancy check ────────────────────────────────────────────
   const [tableOccupied, setTableOccupied] = useState<boolean | null>(null);
 
+  const checkOccupancy = useCallback(async () => {
+    const hasUnpaidByOther = await checkTableHasUnpaidOrders(
+      table.id,
+      customerInfo?.phone ?? null
+    );
+    setTableOccupied(hasUnpaidByOther);
+  }, [table.id, customerInfo?.phone]);
+
+  // Initial check once session is loaded
   useEffect(() => {
     if (!sessionLoaded) return;
-
-    async function checkOccupancy() {
-      const hasUnpaid = await checkTableHasUnpaidOrders(table.id);
-      if (hasUnpaid) {
-        setTableOccupied(!customerInfo);
-      } else {
-        setTableOccupied(false);
-      }
-    }
-
     checkOccupancy();
-  }, [table.id, sessionLoaded, customerInfo]);
+  }, [sessionLoaded, checkOccupancy]);
+
+  // Re-check in real-time whenever any order on this table changes —
+  // so the occupied screen disappears the moment the table is cleared,
+  // and reappears if someone else places an order while this page is open.
+  useEffect(() => {
+    const client = getSupabaseClient();
+    const channel = client
+      .channel(`occupancy:${table.id}`)
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "*",
+          schema: "public",
+          table: "orders",
+          filter: `table_id=eq.${table.id}`,
+        },
+        () => { checkOccupancy(); }
+      )
+      .subscribe();
+    return () => { client.removeChannel(channel); };
+  }, [table.id, checkOccupancy]);
+
+  // ── Review prompt ────────────────────────────────────────────────────
+  // When an order transitions to "served", queue it for review.
+  // We track which order IDs have already been queued to avoid duplicates.
+  const [reviewQueue, setReviewQueue] = useState<ReviewableOrder[]>([]);
+  const [dismissedReviews, setDismissedReviews] = useState<Set<string>>(new Set());
+  const orderStatusMapRef = useState<Map<string, string>>(() => new Map())[0];
+
+  useEffect(() => {
+    // Don't fire toasts or queue reviews when the table is occupied by someone
+    // else — this user has no active session here.
+    if (tableOccupied) return;
+
+    activeOrders.forEach((order) => {
+      const prev = orderStatusMapRef.get(order.id);
+
+      if (prev && prev !== order.status) {
+        // Always fire a toast on status change so the customer notices
+        // even if they're browsing the menu tab
+        const STATUS_TOASTS: Record<string, { title: string; description: string; variant: "success" | "info" | "warning" }> = {
+          confirmed:  { title: "Order confirmed ✓",        description: "The kitchen has your order.",          variant: "success" },
+          preparing:  { title: "Kitchen is cooking 🍳",    description: "Your order is being prepared.",        variant: "info"    },
+          ready:      { title: "Your order is ready! 🚀",  description: "A waiter is bringing it to you.",      variant: "success" },
+          served:     { title: "Enjoy your meal! 😊",      description: "Your order has been served.",          variant: "success" },
+          cancelled:  { title: "Order cancelled",          description: "Your order was cancelled.",            variant: "warning" },
+        };
+        const cfg = STATUS_TOASTS[order.status];
+        if (cfg) toast({ ...cfg, duration: 5000 });
+
+        // Detect transition TO "served" → queue for review
+        if (prev !== "served" && order.status === "served") {
+          setReviewQueue((q) => {
+            if (q.some((r) => r.orderId === order.id)) return q;
+            return [
+              ...q,
+              {
+                orderId: order.id,
+                // Capture phone now — customerInfo may be cleared by billing
+                // before the customer gets a chance to submit the review.
+                customerPhone: customerInfo?.phone ?? null,
+                items: order.items.map((i) => ({
+                  menu_item_id: i.menu_item_id ?? "",
+                  name: i.name,
+                  quantity: i.quantity,
+                })),
+              },
+            ];
+          });
+        }
+      }
+
+      orderStatusMapRef.set(order.id, order.status);
+    });
+  }, [activeOrders, orderStatusMapRef, toast]);
 
   const { status: geoStatus, message: geoMessage } = useGeofence({
     enabled: restaurant.geofencing_enabled ?? false,
@@ -135,10 +255,21 @@ export default function OrderPageClient({
 
   const cartQty = Object.fromEntries(cartItems.map((c) => [c.id, c.quantity]));
 
-  // Switch to orders tab automatically when an order is placed
-  function handleOrderSuccess() {
+  // Track whether the cart drawer is showing its success screen so we keep it
+  // mounted even after the cart is cleared (otherwise it unmounts immediately
+  // and the success screen never shows).
+  const [cartShowingSuccess, setCartShowingSuccess] = useState(false);
+
+  // Called immediately when order is placed — clears cart without switching tabs
+  function handleClearCart() {
     clearCart();
     setRemovedItemNames([]);
+    setCartShowingSuccess(true);
+  }
+
+  // Called after the 4-second success screen — switches to orders tab
+  function handleOrderSuccess() {
+    setCartShowingSuccess(false);
     setActiveTab("orders");
   }
 
@@ -257,6 +388,45 @@ export default function OrderPageClient({
         </div>
       )}
 
+      {/* ── Welcome-back banner ─────────────────────────────────────── */}
+      {welcomeData && !welcomeDismissed && (
+        <div className="mx-auto max-w-lg w-full px-4 pt-3">
+          <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-300">
+            <Sparkles className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">
+                Welcome back, {welcomeData.name}! 👋
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Visit #{welcomeData.visit_count} · Last here{" "}
+                {(() => {
+                  const days = Math.floor(
+                    (Date.now() - new Date(welcomeData.last_seen_at).getTime()) / 86400000
+                  );
+                  if (days === 0) return "today";
+                  if (days === 1) return "yesterday";
+                  if (days < 7)  return `${days} days ago`;
+                  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+                  return `${Math.floor(days / 30)} months ago`;
+                })()}
+              </p>
+              {welcomeData.top_items.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Your favourites: {welcomeData.top_items.join(", ")}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setWelcomeDismissed(true)}
+              className="text-muted-foreground hover:text-foreground transition-colors text-xs shrink-0"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Geo-fencing banners ─────────────────────────────────────── */}
       {(restaurant.geofencing_enabled ?? false) && geoStatus === "checking" && (
         <div className="mx-auto max-w-lg w-full px-4 pt-3">
@@ -329,8 +499,49 @@ export default function OrderPageClient({
 
         {/* ORDERS TAB */}
         {activeTab === "orders" && (
-          <div className="px-4 pt-4">
-            {activeOrders.length === 0 ? (
+          <div className="px-4 pt-4 space-y-4">
+            {activeOrders.length > 0 && (
+              // B5: pass restaurantId and refetchOrders so the tracker can cancel orders
+              <OrderStatusTracker
+                orders={activeOrders}
+                restaurantId={restaurant.id}
+                customerPhone={customerInfo?.phone ?? null}
+                onOrderCancelled={refetchOrders}
+                reviewQueue={reviewQueue}
+                dismissedReviews={dismissedReviews}
+                onDismissReview={(orderId) =>
+                  setDismissedReviews((d) => new Set([...d, orderId]))
+                }
+              />
+            )}
+
+            {/* Pending reviews for orders that have since been billed and removed
+                from activeOrders — show them standalone so they're not lost */}
+            {activeOrders.length === 0 && reviewQueue
+              .filter((r) => !dismissedReviews.has(r.orderId))
+              .map((r) => (
+                <div key={r.orderId} className="rounded-xl border bg-card overflow-hidden">
+                  {/* Minimal header so the customer knows which order this is for */}
+                  <div className="px-4 py-2.5 bg-muted/30 border-b flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-muted-foreground/40 shrink-0" />
+                    <span className="text-xs text-muted-foreground font-mono">
+                      #{r.orderId.slice(0, 6).toUpperCase()} · Served
+                    </span>
+                  </div>
+                  <ReviewPrompt
+                    orderId={r.orderId}
+                    restaurantId={restaurant.id}
+                    customerPhone={r.customerPhone}
+                    items={r.items}
+                    onDismiss={() =>
+                      setDismissedReviews((d) => new Set([...d, r.orderId]))
+                    }
+                  />
+                </div>
+              ))
+            }
+
+            {activeOrders.length === 0 && reviewQueue.filter((r) => !dismissedReviews.has(r.orderId)).length === 0 && (
               <div className="flex flex-col items-center justify-center py-24 text-center">
                 <p className="text-4xl mb-3">📋</p>
                 <p className="font-medium text-sm">No orders yet</p>
@@ -344,13 +555,6 @@ export default function OrderPageClient({
                   Browse menu →
                 </button>
               </div>
-            ) : (
-              // B5: pass restaurantId and refetchOrders so the tracker can cancel orders
-              <OrderStatusTracker
-                orders={activeOrders}
-                restaurantId={restaurant.id}
-                onOrderCancelled={refetchOrders}
-              />
             )}
           </div>
         )}
@@ -360,13 +564,14 @@ export default function OrderPageClient({
       <div className="fixed bottom-0 left-0 right-0 z-30 mx-auto max-w-lg">
 
         {/* Cart drawer — sits above the nav, only on menu tab */}
-        {!geoBlocked && activeTab === "menu" && cartItems.length > 0 && (
+        {!geoBlocked && activeTab === "menu" && (cartItems.length > 0 || cartShowingSuccess) && (
           <CartDrawer
             cartItems={cartItems}
             totalPrice={totalPrice}
             restaurantId={restaurant.id}
             tableId={table.id}
             onUpdateQuantity={updateQuantity}
+            onClearCart={handleClearCart}
             onOrderSuccess={handleOrderSuccess}
             savedCustomerInfo={customerInfo}
             onSaveCustomerInfo={saveCustomerInfo}

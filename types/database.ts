@@ -50,9 +50,17 @@ export type MenuItem = {
 export type Review = {
   id: string;
   menu_item_id: string;
+  order_id: string | null;
+  restaurant_id: string | null;
+  customer_phone: string | null;
   rating: number;
   comment?: string | null;
   created_at: string;
+};
+
+/** A review enriched with the item name, for manager display */
+export type ReviewWithItem = Review & {
+  item_name: string;
 };
 
 export type MenuItemWithRating = MenuItem & {

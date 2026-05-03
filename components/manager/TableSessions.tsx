@@ -15,6 +15,7 @@ import { getTableAvailability, getFloors, getMenuItems, placeOrder } from "@/lib
 import { cn } from "@/lib/utils";
 import BillDialog from "@/components/manager/BillDialog";
 import { useNotificationSounds } from "@/hooks/useNotificationSounds";
+import { useToast } from "@/hooks/useToast";
 import type { MenuItem } from "@/types/database";
 
 type Props = {
@@ -483,6 +484,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
   const [waiterCalls, setWaiterCalls] = useState<Record<string, { table_number: number; customer_name: string | null; at: number }>>({});
   const [showBillReadyOnly, setShowBillReadyOnly] = useState(initBillReadyFilter);
   const { notify } = useNotificationSounds();
+  const { toast } = useToast();
 
   // Sync external billReadyFilter prop
   useEffect(() => {
@@ -536,7 +538,7 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
     const client = getSupabaseClient();
     if (channelRef.current) { client.removeChannel(channelRef.current); channelRef.current = null; }
     const channel = client
-      .channel(`manager:${restaurantId}`)
+      .channel(`restaurant:${restaurantId}`)
       .on("postgres_changes" as any,
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         () => load(true))
@@ -544,6 +546,12 @@ export default function TableSessions({ restaurantId, billReadyFilter: initBillR
         const p = msg.payload ?? {};
         if (!p.table_id) return;
         notify("waiterCall");
+        toast({
+          title:       `Table ${String(p.table_number ?? "?").padStart(2, "0")} calling for a waiter`,
+          description: p.customer_name ? `Customer: ${p.customer_name}` : undefined,
+          variant:     "warning",
+          duration:    0, // persistent — must be manually dismissed
+        });
         setWaiterCalls((prev) => ({
           ...prev,
           [p.table_id]: { table_number: p.table_number, customer_name: p.customer_name ?? null, at: Date.now() },

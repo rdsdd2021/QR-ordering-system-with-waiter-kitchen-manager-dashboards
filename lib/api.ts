@@ -21,6 +21,9 @@ import type {
   FoodTag,
   CategorySuggestion,
   TagSuggestion,
+  Review,
+  ReviewWithItem,
+  MenuItemRating,
 } from "@/types/database";
 import { isValidStatusTransition } from "@/types/database";
 import type { WebhookEventType } from "@/types/webhooks";
@@ -121,9 +124,13 @@ export async function getMenuItems(restaurantId: string): Promise<MenuItem[]> {
  * Check if a table has any unpaid orders.
  * Returns true if there are existing orders that haven't been billed yet.
  */
-export async function checkTableHasUnpaidOrders(tableId: string): Promise<boolean> {
+export async function checkTableHasUnpaidOrders(
+  tableId: string,
+  customerPhone?: string | null
+): Promise<boolean> {
   const { data, error } = await supabase.rpc("check_table_has_unpaid_orders", {
-    p_table_id: tableId,
+    p_table_id:      tableId,
+    p_customer_phone: customerPhone ?? null,
   });
 
   if (error) {
@@ -808,6 +815,7 @@ export async function createMenuItem(params: {
   description?: string | null;
   image_url?: string | null;
   tags?: string[] | null;
+  categoryId?: string | null;
 }): Promise<MenuItem | null> {
   // QW-10: Server-side plan limit check — enforce before any DB insert
   const { data: planData } = await supabase.rpc("get_restaurant_plan", { p_restaurant_id: params.restaurantId });
@@ -2071,4 +2079,114 @@ export async function setMenuItemTags(menuItemId: string, tagIds: string[]): Pro
 
   if (insErr) { console.error("setMenuItemTags insert:", insErr.message); return false; }
   return true;
+}
+
+// ============================================================================
+// REVIEWS
+
+/**
+ * Submit a review for a menu item.
+ * The review is linked to the order so we can verify the customer actually
+ * ordered the item. One review per (order_id, menu_item_id) — enforced by
+ * a unique index in the DB.
+ */
+export async function createReview(params: {
+  menuItemId: string;
+  orderId: string;
+  restaurantId: string;
+  customerPhone: string | null;
+  rating: number;          // 1–5
+  comment?: string | null;
+}): Promise<Review | null> {
+  const { data, error } = await supabase
+    .from("reviews")
+    .insert({
+      menu_item_id:   params.menuItemId,
+      order_id:       params.orderId,
+      restaurant_id:  params.restaurantId,
+      customer_phone: params.customerPhone,
+      rating:         params.rating,
+      comment:        params.comment ?? null,
+    })
+    .select("id, menu_item_id, order_id, restaurant_id, customer_phone, rating, comment, created_at")
+    .maybeSingle();
+
+  if (error) {
+    // Unique constraint violation = already reviewed this item for this order
+    if (error.code === "23505") return null;
+    console.error("[createReview] error:", error.message);
+    return null;
+  }
+
+  return data as Review;
+}
+
+/**
+ * Fetch all reviews for a restaurant, newest first.
+ * Used by the manager dashboard Reviews section.
+ */
+export async function getRestaurantReviews(
+  restaurantId: string,
+  limit = 50
+): Promise<ReviewWithItem[]> {
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("id, menu_item_id, order_id, restaurant_id, customer_phone, rating, comment, created_at, menu_items(name)")
+    .eq("restaurant_id", restaurantId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[getRestaurantReviews] error:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((r: any) => ({
+    id:             r.id,
+    menu_item_id:   r.menu_item_id,
+    order_id:       r.order_id,
+    restaurant_id:  r.restaurant_id,
+    customer_phone: r.customer_phone,
+    rating:         r.rating,
+    comment:        r.comment,
+    created_at:     r.created_at,
+    item_name:      r.menu_items?.name ?? "Unknown item",
+  })) as ReviewWithItem[];
+}
+
+/**
+ * Fetch aggregated ratings for all menu items in a restaurant.
+ * Used by MenuManager to show star ratings next to each item.
+ */
+export async function getMenuItemRatings(
+  restaurantId: string
+): Promise<MenuItemRating[]> {
+  const { data, error } = await supabase
+    .from("menu_item_ratings")
+    .select("menu_item_id, restaurant_id, item_name, review_count, avg_rating, min_rating, max_rating")
+    .eq("restaurant_id", restaurantId)
+    .gt("review_count", 0);
+
+  if (error) {
+    console.error("[getMenuItemRatings] error:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as MenuItemRating[];
+}
+
+/**
+ * Check which items in an order have already been reviewed by this customer.
+ * Returns a Set of menu_item_ids that already have a review for this order.
+ */
+export async function getReviewedItemsForOrder(
+  orderId: string
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("menu_item_id")
+    .eq("order_id", orderId);
+
+  if (error || !data) return new Set();
+  return new Set(data.map((r: { menu_item_id: string }) => r.menu_item_id));
 }

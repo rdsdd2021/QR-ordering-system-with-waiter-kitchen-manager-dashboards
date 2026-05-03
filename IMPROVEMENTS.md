@@ -707,16 +707,16 @@ See Data Integrity Gaps #4.
 | 10 | Add is_active check before retrying webhook deliveries | 30 min | Stops retrying to disabled endpoints | ✅ Done |
 | 11 | Add server-side plan limit check in table/menu creation | 3 hours | Closes client-side bypass | ✅ Done |
 | 12 | Wrap order creation in an atomic Postgres RPC | 4 hours | Eliminates orphaned orders | ✅ Done |
-| 13 | Add missing FK indexes (5 tables) | 30 min | Fixes seq scans on order_items, orders, restaurants | 🔴 Open |
-| 14 | Fix RLS auth.uid() per-row re-evaluation (25 policies) | 2 hours | Major query performance improvement at scale | 🔴 Open |
-| 15 | Drop duplicate indexes on order_items and orders | 15 min | Reduces write overhead, saves storage | 🔴 Open |
-| 16 | Revoke anon EXECUTE on sensitive SECURITY DEFINER functions | 2 hours | Closes direct RPC access for unauthenticated callers | 🔴 Open |
-| 17 | Add SET search_path to all 43 Postgres functions | 3 hours | Closes search_path injection vector | 🔴 Open |
-| 18 | Enable JWT verification on subscription-reminders Edge Function | 15 min | Prevents unauthenticated trigger of reminder processing | 🔴 Open |
-| 19 | Enable leaked password protection in Supabase Auth | 5 min | Blocks known-compromised passwords for staff accounts | 🔴 Open |
-| 20 | Consolidate duplicate RLS policies on menu_items and orders | 2 hours | Reduces per-query policy evaluation overhead | 🔴 Open |
+| 13 | Add missing FK indexes (5 tables) | 30 min | Fixes seq scans on order_items, orders, restaurants | ✅ Done |
+| 14 | Fix RLS auth.uid() per-row re-evaluation (25 policies) | 2 hours | Major query performance improvement at scale | ✅ Done |
+| 15 | Drop duplicate indexes on order_items and orders | 15 min | Reduces write overhead, saves storage | ✅ Done |
+| 16 | Revoke anon EXECUTE on sensitive SECURITY DEFINER functions | 2 hours | Closes direct RPC access for unauthenticated callers | ✅ Done |
+| 17 | Add SET search_path to all 43 Postgres functions | 3 hours | Closes search_path injection vector | ✅ Done |
+| 18 | Enable JWT verification on subscription-reminders Edge Function | 15 min | Prevents unauthenticated trigger of reminder processing | ✅ Done (shared secret via CRON_SECRET env var) |
+| 19 | Enable leaked password protection in Supabase Auth | 5 min | Blocks known-compromised passwords for staff accounts | ⚠️ Manual — Dashboard only |
+| 20 | Consolidate duplicate RLS policies on menu_items and orders | 2 hours | Reduces per-query policy evaluation overhead | ✅ Done |
 
-**QW-1 through QW-12 are complete. QW-13 through QW-20 are the next recommended batch.**
+**QW-1 through QW-20 are complete (QW-19 requires a manual dashboard toggle).**
 
 ---
 
@@ -736,15 +736,13 @@ See Data Integrity Gaps #4.
 | UX/Product | 6 | 0 | 5 | 1 |
 | **Total** | **72** | **10** | **58** | **14** |
 
-**14 issues resolved by the quick-wins implementation.** The most urgent remaining items are:
+**22 issues resolved (QW-1 through QW-20, minus QW-19 which is a dashboard toggle).** The most urgent remaining items are:
 
-1. **QW-13** — Add 5 missing FK indexes (30 min, high performance impact)
-2. **QW-14** — Fix RLS `auth.uid()` per-row re-evaluation (2 hours, major scale improvement)
-3. **QW-15** — Drop duplicate indexes (15 min, free write performance)
-4. **QW-16** — Revoke `anon` EXECUTE on sensitive SECURITY DEFINER functions (2 hours, security)
-5. **QW-18** — Enable JWT verification on `subscription-reminders` Edge Function (15 min, security)
-6. **QW-19** — Enable leaked password protection in Supabase Auth (5 min, security)
-7. Order placement idempotency (prevents duplicate orders on network retry)
-8. Distributed rate limiting via Upstash Redis (replaces in-memory Map)
-9. JWT signature verification in `lib/server-auth.ts`
-10. Email notifications for billing events via Resend/SendGrid
+1. **QW-19** — Enable leaked password protection in Supabase Auth: Dashboard → Authentication → Password Security → "Check for leaked passwords" (5 min, manual)
+2. **Security definer views** — Recreate all 8 views without SECURITY DEFINER property (see DB Security Advisories #11)
+3. **Set CRON_SECRET** — Add `CRON_SECRET` env var in Supabase Edge Function secrets and update the cron caller to send `Authorization: Bearer <secret>` (required for QW-18 to work)
+4. Order placement idempotency (prevents duplicate orders on network retry)
+5. Distributed rate limiting via Upstash Redis (replaces in-memory Map)
+6. JWT signature verification in `lib/server-auth.ts`
+7. Email notifications for billing events via Resend/SendGrid
+8. Storage bucket listing policies — remove broad SELECT from `menu-images` and `restaurant-logos`

@@ -5,6 +5,7 @@ import { Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSupabaseClient } from "@/lib/supabase";
 import type { ActiveOrder } from "@/hooks/useCustomerSession";
+import ReviewPrompt from "@/components/ReviewPrompt";
 
 const STATUS_CONFIG: Record<string, {
   label: string; color: string; dot: string; bg: string; description: string;
@@ -20,7 +21,7 @@ const STATUS_CONFIG: Record<string, {
 
 const STEPS = ["pending", "confirmed", "preparing", "ready", "served"] as const;
 
-// B5: only allow cancellation while the order hasn't been picked up by the kitchen
+// Statuses where the cancel button is shown to the customer
 const CANCELLABLE_STATUSES = new Set(["pending", "pending_waiter"]);
 
 function stepIndex(status: string) {
@@ -32,13 +33,23 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+type ReviewableOrder = {
+  orderId: string;
+  customerPhone: string | null;
+  items: Array<{ menu_item_id: string; name: string; quantity: number }>;
+};
+
 type Props = {
   orders: ActiveOrder[];
   restaurantId: string;
+  customerPhone: string | null;
   onOrderCancelled?: () => void;
+  reviewQueue: ReviewableOrder[];
+  dismissedReviews: Set<string>;
+  onDismissReview: (orderId: string) => void;
 };
 
-export default function OrderStatusTracker({ orders, restaurantId, onOrderCancelled }: Props) {
+export default function OrderStatusTracker({ orders, restaurantId, customerPhone, onOrderCancelled, reviewQueue, dismissedReviews, onDismissReview }: Props) {
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
@@ -50,29 +61,27 @@ export default function OrderStatusTracker({ orders, restaurantId, onOrderCancel
     try {
       const supabase = getSupabaseClient();
 
-      // Optimistic: only cancel if still in a cancellable status (race-condition guard)
-      const { data: current } = await supabase
-        .from("orders")
-        .select("status")
-        .eq("id", orderId)
-        .maybeSingle();
-
-      if (!current || !CANCELLABLE_STATUSES.has(current.status)) {
-        setCancelError("This order can no longer be cancelled — it's already being prepared.");
+      if (!customerPhone) {
+        setCancelError("Can't verify your identity. Please refresh and try again.");
         setCancelling(null);
         return;
       }
 
-      const { error } = await supabase
-        .from("orders")
-        .update({ status: "cancelled" })
-        .eq("id", orderId)
-        .in("status", Array.from(CANCELLABLE_STATUSES)); // server-side guard
+      const { data: result, error } = await supabase.rpc("cancel_order_by_customer", {
+        p_order_id:       orderId,
+        p_customer_phone: customerPhone,
+      });
 
       if (error) {
         setCancelError("Couldn't cancel the order. Please ask a staff member.");
-      } else {
+      } else if (result === "ok") {
         onOrderCancelled?.();
+      } else if (result === "wrong_owner") {
+        setCancelError("You can only cancel your own orders.");
+      } else if (result === "not_cancellable") {
+        setCancelError("This order can no longer be cancelled — it's already being prepared.");
+      } else {
+        setCancelError("Order not found.");
       }
     } catch {
       setCancelError("Something went wrong. Please try again.");
@@ -164,6 +173,21 @@ export default function OrderStatusTracker({ orders, restaurantId, onOrderCancel
                 ))}
               </div>
             )}
+
+            {/* Inline review prompt — only for served orders with a pending review */}
+            {order.status === "served" && (() => {
+              const review = reviewQueue.find((r) => r.orderId === order.id && !dismissedReviews.has(r.orderId));
+              if (!review) return null;
+              return (
+                <ReviewPrompt
+                  orderId={review.orderId}
+                  restaurantId={restaurantId}
+                  customerPhone={review.customerPhone}
+                  items={review.items}
+                  onDismiss={() => onDismissReview(order.id)}
+                />
+              );
+            })()}
           </div>
         );
       })}

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   LayoutGrid, ClipboardList, UtensilsCrossed, Users, Settings,
-  BarChart3, Layers, Table2, Store, Webhook, Tags, CreditCard,
+  BarChart3, Layers, Table2, Store, Webhook, Tags, CreditCard, UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import type { Restaurant } from "@/types/database";
@@ -23,9 +23,10 @@ import RestaurantDetails from "@/components/manager/RestaurantDetails";
 import WebhooksManager from "@/components/manager/WebhooksManager";
 import CategoryTagManager from "@/components/manager/CategoryTagManager";
 import BillingPanel from "@/components/manager/BillingPanel";
+import CustomersManager from "@/components/manager/CustomersManager";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import { Zap, Lock, AlertTriangle, X } from "lucide-react";
+import { Zap, Lock, AlertTriangle, X, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/lib/supabase";
@@ -34,10 +35,59 @@ import { cn } from "@/lib/utils";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Tab =
-  | "sessions" | "orderlog" | "analytics"
+  | "sessions" | "orderlog" | "analytics" | "customers"
   | "menu" | "floors" | "categories"
   | "staff" | "tables"
   | "details" | "settings" | "webhooks" | "billing";
+
+type CriticalAlert = {
+  id: string;
+  action: string;
+  actor_name: string;
+  resource_type: string;
+  resource_name: string | null;
+  created_at: string;
+};
+
+// ── Critical alert toast ──────────────────────────────────────────────────────
+
+function CriticalAlertToast({
+  alert,
+  onDismiss,
+}: {
+  alert: CriticalAlert;
+  onDismiss: () => void;
+}) {
+  // Human-readable label for the action
+  const label = alert.action
+    .replace(/_/g, " ")
+    .replace(/\./g, " — ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 dark:bg-destructive/10 px-4 py-3 shadow-md animate-in slide-in-from-top-2 duration-300">
+      <ShieldAlert className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-destructive">Security Alert</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          <span className="font-medium text-foreground">{alert.actor_name}</span>
+          {" · "}
+          {label}
+          {alert.resource_name && (
+            <span className="text-muted-foreground"> ({alert.resource_name})</span>
+          )}
+        </p>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+        aria-label="Dismiss alert"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
@@ -49,6 +99,7 @@ function buildNavGroups(pendingCount: number, onOrdersBadgeClick: () => void): N
         { key: "sessions",  label: "Dashboard",   icon: LayoutGrid    },
         { key: "orderlog",  label: "Orders",       icon: ClipboardList, badge: pendingCount > 0 ? pendingCount : undefined, onBadgeClick: pendingCount > 0 ? onOrdersBadgeClick : undefined },
         { key: "analytics", label: "Analytics",    icon: BarChart3     },
+        { key: "customers", label: "Customers",    icon: UserCheck     },
       ],
     },
     {
@@ -84,6 +135,7 @@ const PAGE_META: Record<Tab, { title: string; description: string }> = {
   sessions:   { title: "Dashboard",          description: "Live overview of your restaurant" },
   orderlog:   { title: "Orders",             description: "Full order history and management" },
   analytics:  { title: "Analytics",          description: "Sales and performance metrics" },
+  customers:  { title: "Customers",          description: "Customer profiles, visit history and spend" },
   menu:       { title: "Menu",               description: "Manage your menu items and availability" },
   categories: { title: "Categories",         description: "Organize items into categories and tags" },
   floors:     { title: "Floors",             description: "Manage floors and table layout" },
@@ -177,6 +229,33 @@ function ManagerClientContent({ restaurant }: Props) {
     setBillReadyFilter(true);
   });
 
+  // ── Critical alert notifications ──────────────────────────────────
+  const [criticalAlerts, setCriticalAlerts] = useState<CriticalAlert[]>([]);
+
+  useEffect(() => {
+    const client = getSupabaseClient();
+    const channel = client
+      .channel(`critical-alerts:${restaurant.id}`)
+      .on("broadcast", { event: "critical_alert" }, (msg: any) => {
+        const payload = msg.payload as Omit<CriticalAlert, "id">;
+        const alert: CriticalAlert = {
+          id: `${Date.now()}-${Math.random()}`,
+          action:        payload.action        ?? "unknown",
+          actor_name:    payload.actor_name    ?? "Unknown",
+          resource_type: payload.resource_type ?? "",
+          resource_name: payload.resource_name ?? null,
+          created_at:    payload.created_at    ?? new Date().toISOString(),
+        };
+        setCriticalAlerts((prev) => [alert, ...prev].slice(0, 5));
+        // Auto-dismiss after 12 seconds
+        setTimeout(() => {
+          setCriticalAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+        }, 12_000);
+      })
+      .subscribe();
+    return () => { client.removeChannel(channel); };
+  }, [restaurant.id]);
+
   const planLabel = isTrial ? "Trial" : isPro ? "Pro" : isExpired ? "Trial Expired" : "Trial Expired";
   const planRenewal = isTrial && trialEndsAt
     ? `Trial ends ${new Date(trialEndsAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
@@ -220,6 +299,21 @@ function ManagerClientContent({ restaurant }: Props) {
       maxWidth={activeTab === "sessions" || activeTab === "orderlog" ? "full" : activeTab === "billing" ? "2xl" : "xl"}
       mobileNav={<MobileBottomNav activeTab={activeTab} onNavigate={handleTabChange} navGroups={navGroups} />}
     >
+      {/* Critical security alerts — broadcast from audit-alert.ts */}
+      {criticalAlerts.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {criticalAlerts.map((alert) => (
+            <CriticalAlertToast
+              key={alert.id}
+              alert={alert}
+              onDismiss={() =>
+                setCriticalAlerts((prev) => prev.filter((a) => a.id !== alert.id))
+              }
+            />
+          ))}
+        </div>
+      )}
+
       {/* Expiry warning banner — shown when Pro subscription expires within 7 days */}
       {isPro && !isExpired && !bannerDismissed && daysUntilExpiry !== null && daysUntilExpiry <= 7 && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 mb-4 text-sm text-amber-800 dark:text-amber-300">
@@ -275,6 +369,7 @@ function ManagerClientContent({ restaurant }: Props) {
           )}
           {activeTab === "orderlog"   && <ErrorBoundary label="Orders"><OrderLog restaurantId={restaurant.id} /></ErrorBoundary>}
           {activeTab === "analytics"  && <ErrorBoundary label="Analytics"><Analytics restaurantId={restaurant.id} /></ErrorBoundary>}
+          {activeTab === "customers"  && <ErrorBoundary label="Customers"><CustomersManager restaurantId={restaurant.id} /></ErrorBoundary>}
           {activeTab === "menu"       && <ErrorBoundary label="Menu"><MenuManager restaurantId={restaurant.id} /></ErrorBoundary>}
           {activeTab === "categories" && <ErrorBoundary label="Categories"><CategoryTagManager restaurantId={restaurant.id} /></ErrorBoundary>}
           {activeTab === "floors"     && <ErrorBoundary label="Floors"><FloorsManager restaurantId={restaurant.id} /></ErrorBoundary>}
